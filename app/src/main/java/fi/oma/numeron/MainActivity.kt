@@ -1038,14 +1038,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun completeAutoStampSuccess(message: String) {
+        private fun completeAutoStampSuccess(message: String) {
+        val wasEnding = pendingStampIsEnding
         pendingAutoStamp = false
         autoStampClickDone = false
         VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-        showStampOverlay(" ✓  $message", "Suljetaan sovellus...", showSpinner = false)
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-        webView.postDelayed({ finishAndRemoveTask() }, 1400)
-    }
+
+        val freeDayGreeting = if (wasEnding) {
+            VuorovahtiHelper.getFreeDayGreetingIfApplicable(this)
+        } else null
+
+        val statusText = if (freeDayGreeting != null) {
+            "$freeDayGreeting\n\nSuljetaan sovellus..."
+        } else {
+            "Suljetaan sovellus..."
+        }
+
+        val toastText = if (freeDayGreeting != null) {
+            "$message $freeDayGreeting"
+        } else {
+            message
+        }
+
+        showStampOverlay(" ✓  $message", statusText, showSpinner = false)
+        Toast.makeText(this, toastText, if (freeDayGreeting != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+        webView.postDelayed({ finishAndRemoveTask() }, if (freeDayGreeting != null) 2600L else 1400L)
+        }
+        
 
     private fun checkPermissionsAndSync() {
         val needed = mutableListOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
