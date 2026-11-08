@@ -878,9 +878,7 @@ class MainActivity : AppCompatActivity() {
                         lastAutoLoginAttempt = now
                         if (pendingAutoStamp || isBackgroundListSync) {
                             showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään, odota hetki...")
-                        } else {
-                            Toast.makeText(this, "Istunto uusittu automaattisesti", Toast.LENGTH_SHORT).show()
-                        }
+                        } 
                     }
                     if (pendingAutoStamp) webView.postDelayed({ scheduleAutoStampCheck(1500) }, 2200)
                 }
