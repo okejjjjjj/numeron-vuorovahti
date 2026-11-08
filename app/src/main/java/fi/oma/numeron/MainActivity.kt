@@ -1278,7 +1278,7 @@ class MainActivity : AppCompatActivity() {
         nm.notify(3004, notif)
     }
 
-    private fun scheduleNextThreeWeekListCheck() {
+        private fun scheduleNextThreeWeekListCheck() {
         try {
             val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
             val intent = Intent(this, ShiftAlarmReceiver::class.java).apply { putExtra("ACTION_TYPE", "CHECK_NEW_LIST") }
@@ -1294,9 +1294,10 @@ class MainActivity : AppCompatActivity() {
                 nextPublishDate = nextPublishDate.plusWeeks(3)
             }
             val triggerMillis = nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMillis, pi)
+            VuorovahtiHelper.scheduleAlarmSafe(alarmManager, triggerMillis, pi)
         } catch (e: Exception) { e.printStackTrace() }
     }
+
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
         val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
@@ -1457,6 +1458,7 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
         return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro")
     }
 
+    
     private fun scheduleShiftAlarms(startMillis: Long, endMillis: Long, startStr: String, endStr: String, title: String) {
         if (!SettingsManager.isStampNotificationEnabled(this)) return
         try {
@@ -1468,7 +1470,7 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
                     putExtra("SHIFT_TITLE", title); putExtra("SHIFT_TIME", startStr); putExtra("IS_ENDING", false)
                 }
                 val startPi = PendingIntent.getBroadcast(this, (startAlarmTime / 60000L).toInt(), startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, startAlarmTime, startPi)
+                VuorovahtiHelper.scheduleAlarmSafe(alarmManager, startAlarmTime, startPi)
             }
             val endAlarmTime = endMillis - (30 * 60 * 1000L)
             if (endAlarmTime > now) {
@@ -1476,7 +1478,7 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
                     putExtra("SHIFT_TITLE", title); putExtra("SHIFT_TIME", endStr); putExtra("IS_ENDING", true)
                 }
                 val endPi = PendingIntent.getBroadcast(this, (endAlarmTime / 60000L).toInt() + 1, endIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endAlarmTime, endPi)
+                VuorovahtiHelper.scheduleAlarmSafe(alarmManager, endAlarmTime, endPi)
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
