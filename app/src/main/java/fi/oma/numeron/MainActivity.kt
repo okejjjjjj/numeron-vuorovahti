@@ -455,10 +455,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         lastKnownBaseUrl = SettingsManager.getBaseUrl(this)
 
-        val rootFrame = FrameLayout(this).apply {
+                val rootFrame = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(-1, -1)
             setBackgroundColor(Color.parseColor("#0F172A"))
+            fitsSystemWindows = true
         }
+
 
         mainColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
