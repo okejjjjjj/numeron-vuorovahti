@@ -103,7 +103,6 @@ object VuorovahtiHelper {
 
         val now = System.currentTimeMillis()
         val twoWeeksAhead = now + 14L * 24 * 60 * 60 * 1000L
-
         val projection = arrayOf(
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DESCRIPTION,
