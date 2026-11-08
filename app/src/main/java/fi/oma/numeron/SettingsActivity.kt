@@ -420,6 +420,7 @@ class SettingsActivity : AppCompatActivity() {
         nextReminderStatusText.text = "Seuraava muistutus: ${VuorovahtiHelper.getNextScheduledReminderText(this)}"
     }
 
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun verifyCredentialsLive(
         orgRaw: String,
@@ -460,7 +461,6 @@ class SettingsActivity : AppCompatActivity() {
         mainHandler.removeCallbacksAndMessages(null)
         (testWebView?.parent as? ViewGroup)?.removeView(testWebView)
         testWebView?.destroy()
-        CookieManager.getInstance().removeAllCookies(null)
 
         val safeU = user.replace("\\", "\\\\").replace("'", "\\'")
         val safeP = pass.replace("\\", "\\\\").replace("'", "\\'")
@@ -468,6 +468,7 @@ class SettingsActivity : AppCompatActivity() {
         var loginSubmitted = false
         var testFinished = false
         var pollCount = 0
+        var postSubmitPolls = 0
 
         fun finishTest(success: Boolean, message: String) {
             if (testFinished) return
@@ -491,7 +492,7 @@ class SettingsActivity : AppCompatActivity() {
             settings.databaseEnabled = true
         }
 
-        CookieManager.getInstance().apply {
+        val cookieManager = CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
@@ -502,7 +503,9 @@ class SettingsActivity : AppCompatActivity() {
         fun pollLoginState() {
             if (testFinished || testWebView == null) return
             pollCount++
-            if (pollCount > 22) {
+            if (loginSubmitted) postSubmitPolls++
+
+            if (pollCount > 28) {
                 finishTest(false, "✗ Aikakatkaisu: Palvelin ei vastannut tai kirjautuminen jäi odottamaan vahvistusta.")
                 return
             }
@@ -518,16 +521,20 @@ class SettingsActivity : AppCompatActivity() {
                         if (!passInputs[p].disabled) { passEl = passInputs[p]; break; }
                     }
 
+                    // 1. Onnistunut sisäänkirjautuminen: ei salasanakenttää ja ollaan Numeronin sisäsivulla
                     if (!passEl && href.indexOf('login') === -1 && href.indexOf('auth') === -1 &&
-                        (bodyTxt.indexOf('leimaa') !== -1 || bodyTxt.indexOf('työaika') !== -1 ||
-                         bodyTxt.indexOf('kalenteri') !== -1 || bodyTxt.indexOf('uloskirjaus') !== -1 ||
-                         bodyTxt.indexOf('kirjaudu ulos') !== -1 || bodyTxt.indexOf('työvuoro') !== -1)) {
+                        (href.indexOf('worktimestamping') !== -1 || bodyTxt.indexOf('leimaa') !== -1 ||
+                         bodyTxt.indexOf('työaika') !== -1 || bodyTxt.indexOf('kalenteri') !== -1 ||
+                         bodyTxt.indexOf('uloskirjaus') !== -1 || bodyTxt.indexOf('kirjaudu ulos') !== -1 ||
+                         bodyTxt.indexOf('työvuoro') !== -1)) {
                         return "LOGGED_IN_SUCCESS";
                     }
 
+                    // 2. Selkeä virheilmoitus kirjautumisyrityksen jälkeen
                     if ($submittedFlag && (bodyTxt.indexOf('virheellinen') !== -1 || bodyTxt.indexOf('epäonnistui') !== -1 ||
-                        bodyTxt.indexOf('invalid') !== -1 || bodyTxt.indexOf('väärä') !== -1 ||
-                        bodyTxt.indexOf('tarkista käyttäjätunnus') !== -1 || bodyTxt.indexOf('incorrect') !== -1)) {
+                        bodyTxt.indexOf('invalid') !== -1 || bodyTxt.indexOf('väärä salasana') !== -1 ||
+                        bodyTxt.indexOf('väärä käyttäjätunnus') !== -1 || bodyTxt.indexOf('tarkista käyttäjätunnus') !== -1 ||
+                        bodyTxt.indexOf('incorrect') !== -1 || bodyTxt.indexOf('login failed') !== -1)) {
                         return "LOGIN_FAILED_ERROR";
                     }
 
@@ -556,12 +563,12 @@ class SettingsActivity : AppCompatActivity() {
                         window._passStepDone = true;
                         if (userEl) setNativeValue(userEl, '$safeU');
                         setNativeValue(passEl, '$safeP');
-                        var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i], button');
+                        var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
                         if (submitBtn) { submitBtn.click(); return "SUBMITTED_NOW"; }
                         if (passEl.form) { passEl.form.submit(); return "SUBMITTED_NOW"; }
                     }
 
-                    if ($submittedFlag && passEl && window._passStepDone) {
+                    if ($submittedFlag && passEl) {
                         return "STILL_ON_LOGIN";
                     }
 
@@ -581,14 +588,15 @@ class SettingsActivity : AppCompatActivity() {
                     }
                     r.contains("SUBMITTED_NOW") -> {
                         loginSubmitted = true
+                        postSubmitPolls = 0
                         statusView.text = "Tarkistetaan käyttäjätunnusta ja salasanaa..."
-                        mainHandler.postDelayed({ pollLoginState() }, 2000L)
+                        mainHandler.postDelayed({ pollLoginState() }, 2200L)
                     }
-                    r.contains("STILL_ON_LOGIN") && pollCount >= 6 -> {
+                    r.contains("STILL_ON_LOGIN") && postSubmitPolls >= 5 -> {
                         finishTest(false, "✗ Kirjautuminen ei mennyt läpi. Tarkista käyttäjätunnus ja salasana.")
                     }
                     else -> {
-                        mainHandler.postDelayed({ pollLoginState() }, 900L)
+                        mainHandler.postDelayed({ pollLoginState() }, 1000L)
                     }
                 }
             }
@@ -600,7 +608,10 @@ class SettingsActivity : AppCompatActivity() {
                 request: android.webkit.WebResourceRequest?,
                 error: android.webkit.WebResourceError?
             ) {
-                if (request?.isForMainFrame == true) {
+                val code = error?.errorCode ?: 0
+                // Ohitetaan uudelleenohjauksista johtuvat keskeytykset, reagoidaan vain oikeaan verkkovirheeseen
+                val isFatalHostError = code == ERROR_HOST_LOOKUP || code == ERROR_CONNECT || code == ERROR_TIMEOUT
+                if (request?.isForMainFrame == true && isFatalHostError) {
                     finishTest(false, "✗ Yhteysvirhe: Palvelinta ($baseUrl) ei löytynyt. Tarkista organisaation tunnus.")
                 }
             }
@@ -609,13 +620,22 @@ class SettingsActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 if (!testFinished) {
                     mainHandler.removeCallbacksAndMessages(null)
-                    mainHandler.postDelayed({ pollLoginState() }, 600L)
+                    mainHandler.postDelayed({ pollLoginState() }, 700L)
                 }
             }
         }
 
-        webView.loadUrl(testUrl)
+        // Tyhjennetään vanhat evästeet ja ladataan testisivu vasta kun tyhjennys on valmis
+        cookieManager.removeAllCookies {
+            cookieManager.flush()
+            if (!testFinished) {
+                webView.loadUrl(testUrl)
+            }
+        }
     }
+
+
+
 
     private fun loadAvailableCalendars() {
         calendarList.clear()
