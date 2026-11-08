@@ -1383,7 +1383,9 @@ class MainActivity : AppCompatActivity() {
                 val m = matches[i]
                 val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
                 val mo = (m.groupValues[2].ifEmpty { m.groupValues[5] }).toIntOrNull() ?: continue
-                val yr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull() ?: targetYear
+                val rawYr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull()
+val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
+
                 if (d !in 1..31 || mo !in 1..12) continue
                 val sIdx = m.range.last + 1
                 val eIdx = if (i + 1 < matches.size) matches[i + 1].range.first else minOf(sIdx + 500, pageText.length)
