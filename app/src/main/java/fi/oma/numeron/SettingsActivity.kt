@@ -45,7 +45,9 @@ class SettingsActivity : AppCompatActivity() {
             layoutParams = ViewGroup.LayoutParams(-1, -1)
             setBackgroundColor(Color.parseColor("#0B1120"))
             isFillViewport = true
+            fitsSystemWindows = true
         }
+
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
