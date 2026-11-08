@@ -1058,7 +1058,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         showStampOverlay(" ✓  $message", statusText, showSpinner = false)
-        Toast.makeText(this, toastText, if (freeDayGreeting != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+    
         webView.postDelayed({ finishAndRemoveTask() }, if (freeDayGreeting != null) 2600L else 1400L)
         }
         
