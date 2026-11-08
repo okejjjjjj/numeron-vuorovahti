@@ -291,6 +291,87 @@ object VuorovahtiHelper {
             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
         }
     }
+
+        // Tarkistaa kalenterista onko huomenna (ja lähipäivinä) työvuoroja ja palauttaa vapaatoivotuksen
+    fun getFreeDayGreetingIfApplicable(
+        context: Context,
+        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+    ): String? {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED) {
+            return null
+        }
+
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        val tomorrowStart = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val lookAheadEnd = today.plusDays(8).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        val projection = arrayOf(
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DTSTART
+        )
+        val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
+        val selectionArgs = arrayOf(tomorrowStart.toString(), lookAheadEnd.toString())
+
+        var nextShiftDate: LocalDate? = null
+
+        context.contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            "${CalendarContract.Events.DTSTART} ASC"
+        )?.use { cursor ->
+            val titleIdx = cursor.getColumnIndex(CalendarContract.Events.TITLE)
+            val startIdx = cursor.getColumnIndex(CalendarContract.Events.DTSTART)
+
+            while (cursor.moveToNext()) {
+                val title = cursor.getString(titleIdx) ?: continue
+                val startMs = cursor.getLong(startIdx)
+                val lowerTitle = title.lowercase(Locale.getDefault())
+
+                val isWorkShift = shiftKeywords.any { lowerTitle.contains(it) } &&
+                                  !lowerTitle.contains("loma") &&
+                                  !lowerTitle.contains("vapaa")
+
+                if (isWorkShift) {
+                    nextShiftDate = Instant.ofEpochMilli(startMs).atZone(zone).toLocalDate()
+                    break
+                }
+            }
+        }
+
+        // Lasketaan kuinka monta kokonaista vapaapäivää on edessä ennen seuraavaa vuoroa
+        val freeDaysCount = if (nextShiftDate == null) {
+            7 // Ei vuoroja koko seuraavan viikon aikana
+        } else {
+            ChronoUnit.DAYS.between(today.plusDays(1), nextShiftDate).toInt()
+        }
+
+        if (freeDaysCount <= 0) return null // Huomenna on työpäivä -> ei vapaatoivotusta
+
+        val singleDayGreetings = listOf(
+            "Hyvää huomista vapaapäivää! ☀️",
+            "Huomenna ei ole vuoroa – rentouttavaa vapaapäivää! ☕",
+            "Vuoro paketissa ja huominen vapaana. Nauti vapaapäivästä! 🛋️",
+            "Ansaittu huili edessä – mukavaa vapaapäivää! 🌿"
+        )
+
+        val multiDayGreetings = listOf(
+            "Edessä useampi vapaapäivä – mukavia ja rentouttavia vapaita! 🎉",
+            "Työputki takana! Nauti tulevista vapaapäivistä! 🌲",
+            "Hyviä vapaita! Nyt voi nollata ajatukset ihan rauhassa. ✨",
+            "Vapaat alkoivat nyt – oikein mukavia vapaapäiviä! 🔋"
+        )
+
+        return if (freeDaysCount == 1) {
+            singleDayGreetings.random()
+        } else {
+            multiDayGreetings.random()
+        }
+    }
+    
 }
 
 class MainActivity : AppCompatActivity() {
