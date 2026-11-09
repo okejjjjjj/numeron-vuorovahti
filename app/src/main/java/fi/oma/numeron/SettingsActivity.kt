@@ -30,9 +30,9 @@ class SettingsActivity : AppCompatActivity() {
     private data class CalendarItem(val id: Long, val title: String)
     private val calendarList = mutableListOf<CalendarItem>()
     private lateinit var calendarSpinner: Spinner
+    private lateinit var syncStatusText: TextView
     private lateinit var nextReminderStatusText: TextView
     private lateinit var lastReminderStatusText: TextView
-    private lateinit var syncStatusText: TextView
     private var testWebView: WebView? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -47,7 +47,6 @@ class SettingsActivity : AppCompatActivity() {
             isFillViewport = true
             fitsSystemWindows = true
         }
-
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -249,7 +248,7 @@ class SettingsActivity : AppCompatActivity() {
         // 3. Automaattinen vuorojen synkronointi
         val cardSync = createCard(
             "3. Työvuorojen automaattinen haku",
-            "Tarkistaa uudet 3 viikon listat julkaisuperjantaisin klo 11 jälkeen ja vie ne kalenteriin."
+            "Tarkistaa uudet 3 viikon listat julkaisuperjantaisin klo 11 jälkeen sekä päivittää mahdolliset vuorovaihdokset kalenteriin."
         )
         val syncSwitch = createStyledSwitch(
             "Synkronoi työvuorot automaattisesti",
@@ -390,7 +389,6 @@ class SettingsActivity : AppCompatActivity() {
                 )
                 VuorovahtiHelper.ensureRemindersFromCalendar(this@SettingsActivity)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-                Toast.makeText(this@SettingsActivity, "Asetukset tallennettu!", Toast.LENGTH_SHORT).show()
                 setResult(RESULT_OK)
                 finish()
             }
@@ -421,7 +419,6 @@ class SettingsActivity : AppCompatActivity() {
         lastReminderStatusText.text = "Edellinen muistutus: ${VuorovahtiHelper.getLastTriggeredReminder(this)}"
         nextReminderStatusText.text = "Seuraava muistutus: ${VuorovahtiHelper.getNextScheduledReminderText(this)}"
     }
-
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun verifyCredentialsLive(
@@ -523,7 +520,6 @@ class SettingsActivity : AppCompatActivity() {
                         if (!passInputs[p].disabled) { passEl = passInputs[p]; break; }
                     }
 
-                    // 1. Onnistunut sisäänkirjautuminen: ei salasanakenttää ja ollaan Numeronin sisäsivulla
                     if (!passEl && href.indexOf('login') === -1 && href.indexOf('auth') === -1 &&
                         (href.indexOf('worktimestamping') !== -1 || bodyTxt.indexOf('leimaa') !== -1 ||
                          bodyTxt.indexOf('työaika') !== -1 || bodyTxt.indexOf('kalenteri') !== -1 ||
@@ -532,7 +528,6 @@ class SettingsActivity : AppCompatActivity() {
                         return "LOGGED_IN_SUCCESS";
                     }
 
-                    // 2. Selkeä virheilmoitus kirjautumisyrityksen jälkeen
                     if ($submittedFlag && (bodyTxt.indexOf('virheellinen') !== -1 || bodyTxt.indexOf('epäonnistui') !== -1 ||
                         bodyTxt.indexOf('invalid') !== -1 || bodyTxt.indexOf('väärä salasana') !== -1 ||
                         bodyTxt.indexOf('väärä käyttäjätunnus') !== -1 || bodyTxt.indexOf('tarkista käyttäjätunnus') !== -1 ||
@@ -611,7 +606,6 @@ class SettingsActivity : AppCompatActivity() {
                 error: android.webkit.WebResourceError?
             ) {
                 val code = error?.errorCode ?: 0
-                // Ohitetaan uudelleenohjauksista johtuvat keskeytykset, reagoidaan vain oikeaan verkkovirheeseen
                 val isFatalHostError = code == ERROR_HOST_LOOKUP || code == ERROR_CONNECT || code == ERROR_TIMEOUT
                 if (request?.isForMainFrame == true && isFatalHostError) {
                     finishTest(false, "✗ Yhteysvirhe: Palvelinta ($baseUrl) ei löytynyt. Tarkista organisaation tunnus.")
@@ -627,7 +621,6 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        // Tyhjennetään vanhat evästeet ja ladataan testisivu vasta kun tyhjennys on valmis
         cookieManager.removeAllCookies {
             cookieManager.flush()
             if (!testFinished) {
@@ -635,9 +628,6 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
     }
-
-
-
 
     private fun loadAvailableCalendars() {
         calendarList.clear()
