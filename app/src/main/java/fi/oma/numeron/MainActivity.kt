@@ -23,6 +23,7 @@ import android.provider.CalendarContract
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.*
 import android.widget.*
 import androidx.activity.OnBackPressedCallback
@@ -44,9 +45,9 @@ object VuorovahtiHelper {
 
     // 1. Määritä kalenterimerkinnän väri vuoron alkamisajan tai tyypin mukaan
     fun getShiftEventColor(title: String, startHour: Int): Int {
-        val lowerTitle = title.lowercase(Locale.getDefault())
+        val lowerTitle = title.trim().lowercase(Locale.getDefault())
         return when {
-            lowerTitle.contains("loma") || lowerTitle.contains("vapaa") -> Color.parseColor("#00ACC1") // Turkoosi (Loma/Vapaa)
+            lowerTitle == "loma" || lowerTitle.contains("vuosiloma") -> Color.parseColor("#00ACC1") // Turkoosi (Loma)
             startHour in 5..10 -> Color.parseColor("#43A047")  // Vihreä (Aamuvuoro)
             startHour in 11..17 -> Color.parseColor("#FB8C00") // Oranssi (Iltavuoro)
             else -> Color.parseColor("#8E24AA")                // Violetti (Yövuoro)
@@ -57,8 +58,8 @@ object VuorovahtiHelper {
         values.put(CalendarContract.Events.EVENT_COLOR, getShiftEventColor(title, startHour))
     }
 
-    // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima
-        fun saveLastSyncStatus(context: Context, shiftCount: Int) {
+    // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima sekä vuorovaihdosten taustatarkistusaika
+    fun saveLastSyncStatus(context: Context, shiftCount: Int) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val statusText = "Synkronoitu: ${timeFormat.format(Date())} ($shiftCount vuoroa)"
         context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
@@ -66,6 +67,11 @@ object VuorovahtiHelper {
             .putString("last_sync_status", statusText)
             .putLong("last_sync_millis", System.currentTimeMillis())
             .apply()
+    }
+
+    fun getLastSyncStatus(context: Context): String {
+        return context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
+            .getString("last_sync_status", "Ei vielä synkronoitu") ?: "Ei vielä synkronoitu"
     }
 
     fun shouldRunDailySilentSync(context: Context): Boolean {
@@ -76,16 +82,10 @@ object VuorovahtiHelper {
         }
         val lastMs = context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
             .getLong("last_sync_millis", 0L)
-        // Tarkistetaan kerran 18 tunnissa
         return (System.currentTimeMillis() - lastMs) > 18L * 60 * 60 * 1000L
     }
 
-
-    fun getLastSyncStatus(context: Context): String {
-        return context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
-            .getString("last_sync_status", "Ei vielä synkronoitu") ?: "Ei vielä synkronoitu"
-    }
-    // Tallenna edellinen toteutunut leimausmuistutus (kutsutaan ShiftAlarmReceiveristä)
+    // 3. Tallenna ja hae edellinen toteutunut sekä seuraava tuleva leimausmuistutus
     fun saveLastTriggeredReminder(context: Context, infoText: String) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val fullText = "${timeFormat.format(Date())} – $infoText"
@@ -101,7 +101,6 @@ object VuorovahtiHelper {
             ?: "Ei vielä toteutuneita muistutuksia"
     }
 
-    // Laskee ja palauttaa suoraan kalenterista seuraavan tulevan leimausmuistutuksen tekstin
     fun getNextScheduledReminderText(
         context: Context,
         reminderMinutesBefore: Int = 30,
@@ -117,6 +116,7 @@ object VuorovahtiHelper {
 
         val now = System.currentTimeMillis()
         val twoWeeksAhead = now + 14L * 24 * 60 * 60 * 1000L
+
         val projection = arrayOf(
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DESCRIPTION,
@@ -181,7 +181,7 @@ object VuorovahtiHelper {
         }
     }
 
-    // 3. Napakka haptinen värinäpalaute onnistuneen synkronoinnin tai biometrian jälkeen
+    // 4. Napakka haptinen värinäpalaute
     fun triggerConfirmHaptics(view: View) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -190,19 +190,64 @@ object VuorovahtiHelper {
         }
     }
 
-    // 4. Tarkista onko kyseessä Demo-käyttäjä
+    // 5. Tarkista onko kyseessä Demo-käyttäjä
     fun isDemoMode(username: String?, password: String?): Boolean {
         return username?.trim().equals("demo", ignoreCase = true) &&
                password?.trim().equals("demo", ignoreCase = true)
     }
 
-    // 5. Tarkistaa tulevat työvuorot suoraan kalenterista ja asettaa hälytykset äänettömästi
+    // 6. Ajastaa 3 viikon listantarkistuksen (toimii myös suoraan puhelimen buutin jälkeen)
+    fun scheduleNextThreeWeekListCheck(context: Context) {
+        try {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, ShiftAlarmReceiver::class.java).apply { putExtra("ACTION_TYPE", "CHECK_NEW_LIST") }
+            val pi = PendingIntent.getBroadcast(context, 9991, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            if (!SettingsManager.isAutoSyncEnabled(context)) {
+                alarmManager.cancel(pi)
+                return
+            }
+            val anchorFriday = LocalDate.of(2026, 11, 6)
+            val now = ZonedDateTime.now(ZoneId.systemDefault())
+            var nextPublishDate = anchorFriday
+            while (nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).isBefore(now.plusMinutes(5))) {
+                nextPublishDate = nextPublishDate.plusWeeks(3)
+            }
+            val triggerMillis = nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            scheduleAlarmSafe(alarmManager, triggerMillis, pi)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // 7. Siivoaa vanhat/perutut hälytykset ja asettaa voimassa olevat hälytykset kalenterista
     fun ensureRemindersFromCalendar(
         context: Context,
         reminderMinutesBefore: Int = 30,
         shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
     ) {
-        if (!SettingsManager.isStampNotificationEnabled(context)) return
+        scheduleNextThreeWeekListCheck(context)
+
+        val prefs = context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+
+        val oldCodes = prefs.getStringSet("active_alarm_codes", emptySet()) ?: emptySet()
+        for (codeStr in oldCodes) {
+            val code = codeStr.toIntOrNull() ?: continue
+            val cancelIntent = Intent(context, ShiftAlarmReceiver::class.java)
+            val pi = PendingIntent.getBroadcast(
+                context,
+                code,
+                cancelIntent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pi != null) {
+                alarmManager.cancel(pi)
+                pi.cancel()
+            }
+        }
+
+        if (!SettingsManager.isStampNotificationEnabled(context)) {
+            prefs.edit().remove("active_alarm_codes").apply()
+            return
+        }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
             return
@@ -210,6 +255,7 @@ object VuorovahtiHelper {
 
         val now = System.currentTimeMillis()
         val twoWeeksAhead = now + 14L * 24 * 60 * 60 * 1000L
+        val newCodes = mutableSetOf<String>()
 
         val projection = arrayOf(
             CalendarContract.Events._ID,
@@ -221,8 +267,6 @@ object VuorovahtiHelper {
 
         val selection = "${CalendarContract.Events.DTEND} > ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
         val selectionArgs = arrayOf(now.toString(), twoWeeksAhead.toString())
-
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
 
         context.contentResolver.query(
@@ -252,45 +296,44 @@ object VuorovahtiHelper {
                     val displayTitle = desc.ifEmpty { title }
                     val startStr = Instant.ofEpochMilli(startTime).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
 
-                    // 1. Sisäänleimaushälytys (30 min ennen vuoron alkua)
                     val startTrigger = startTime - (reminderMinutesBefore * 60 * 1000L)
                     if (startTrigger > now) {
+                        val reqCode = (startTrigger / 60000L).toInt()
                         val startIntent = Intent(context, ShiftAlarmReceiver::class.java).apply {
                             putExtra("SHIFT_TITLE", displayTitle)
                             putExtra("SHIFT_TIME", startStr)
                             putExtra("IS_ENDING", false)
                         }
                         val startPi = PendingIntent.getBroadcast(
-                            context,
-                            (startTrigger / 60000L).toInt(),
-                            startIntent,
+                            context, reqCode, startIntent,
                             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                         )
                         scheduleAlarmSafe(alarmManager, startTrigger, startPi)
+                        newCodes.add(reqCode.toString())
                     }
 
-                    // 2. Ulosleimaushälytys (30 min ennen vuoron loppua)
                     if (endTime > startTime) {
                         val endStr = Instant.ofEpochMilli(endTime).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                         val endTrigger = endTime - (reminderMinutesBefore * 60 * 1000L)
                         if (endTrigger > now) {
+                            val reqCode = (endTrigger / 60000L).toInt() + 1
                             val endIntent = Intent(context, ShiftAlarmReceiver::class.java).apply {
                                 putExtra("SHIFT_TITLE", displayTitle)
                                 putExtra("SHIFT_TIME", endStr)
                                 putExtra("IS_ENDING", true)
                             }
                             val endPi = PendingIntent.getBroadcast(
-                                context,
-                                (endTrigger / 60000L).toInt() + 1,
-                                endIntent,
+                                context, reqCode, endIntent,
                                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                             )
                             scheduleAlarmSafe(alarmManager, endTrigger, endPi)
+                            newCodes.add(reqCode.toString())
                         }
                     }
                 }
             }
         }
+        prefs.edit().putStringSet("active_alarm_codes", newCodes).apply()
     }
 
     fun scheduleAlarmSafe(alarmManager: AlarmManager, triggerTime: Long, pendingIntent: PendingIntent) {
@@ -305,7 +348,7 @@ object VuorovahtiHelper {
         }
     }
 
-        // Tarkistaa kalenterista onko huomenna (ja lähipäivinä) työvuoroja ja palauttaa vapaatoivotuksen
+    // 8. Tarkistaa kalenterista onko huomenna (ja lähipäivinä) vapaata ja palauttaa toivotuksen
     fun getFreeDayGreetingIfApplicable(
         context: Context,
         shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
@@ -355,27 +398,26 @@ object VuorovahtiHelper {
             }
         }
 
-        // Lasketaan kuinka monta kokonaista vapaapäivää on edessä ennen seuraavaa vuoroa
         val freeDaysCount = if (nextShiftDate == null) {
-            7 // Ei vuoroja koko seuraavan viikon aikana
+            7
         } else {
             ChronoUnit.DAYS.between(today.plusDays(1), nextShiftDate).toInt()
         }
 
-        if (freeDaysCount <= 0) return null // Huomenna on työpäivä -> ei vapaatoivotusta
+        if (freeDaysCount <= 0) return null
 
         val singleDayGreetings = listOf(
-            "Hyvää huomista vapaapäivää!",
-            "Huomenna ei ole vuoroa – rentouttavaa vapaapäivää!",
-            "Vuoro paketissa ja huominen vapaana. Nauti vapaapäivästä!",
-            "Ansaittu huili edessä – mukavaa vapaapäivää!"
+            "Hyvää huomista vapaapäivää! ☀️",
+            "Huomenna ei ole vuoroa – rentouttavaa vapaapäivää! ☕",
+            "Vuoro paketissa ja huominen vapaana. Nauti vapaapäivästä! 🛋️",
+            "Ansaittu huili edessä – mukavaa vapaapäivää! 🌿"
         )
 
         val multiDayGreetings = listOf(
-            "Edessä useampi vapaapäivä – mukavia ja rentouttavia vapaita!",
-            "Työputki takana! Nauti tulevista vapaapäivistä!",
-            "Hyviä vapaita! Nyt voi nollata ajatukset ihan rauhassa.",
-            "Vapaat alkoivat nyt – oikein mukavia vapaapäiviä!"
+            "Edessä useampi vapaapäivä – mukavia ja rentouttavia vapaita! 🎉",
+            "Työputki takana! Nauti tulevista vapaapäivistä! 🌲",
+            "Hyviä vapaita! Nyt voi nollata ajatukset ihan rauhassa. ✨",
+            "Vapaat alkoivat nyt – oikein mukavia vapaapäiviä! 🔋"
         )
 
         return if (freeDaysCount == 1) {
@@ -384,7 +426,6 @@ object VuorovahtiHelper {
             multiDayGreetings.random()
         }
     }
-    
 }
 
 class MainActivity : AppCompatActivity() {
@@ -413,9 +454,15 @@ class MainActivity : AppCompatActivity() {
     private var pagesRemainingToSync = 0
     private var totalFoundInBatch = 0
     private var totalAddedInBatch = 0
+    private var totalRemovedInBatch = 0
     private var isBackgroundListSync = false
     private var forceListOnNextCalendarLoad = false
     private var lastKnownBaseUrl = ""
+
+    private val syncedDatesInBatch = mutableSetOf<LocalDate>()
+    private val syncedShiftRangesInBatch = mutableSetOf<Pair<Long, Long>>()
+    private var silentSyncWebView: WebView? = null
+    private var isSilentSyncRunning = false
 
     private val isDemoActive: Boolean
         get() = VuorovahtiHelper.isDemoMode(SettingsManager.getUsername(this), SettingsManager.getPassword(this))
@@ -449,10 +496,6 @@ class MainActivity : AppCompatActivity() {
                     VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                     onSuccess()
                 }
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(this@MainActivity, "Tunnistus peruutettu: $errString", Toast.LENGTH_SHORT).show()
-                }
             })
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
@@ -467,14 +510,13 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lastKnownBaseUrl = SettingsManager.getBaseUrl(this)
+        lastKnownBaseUrl = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
 
-                val rootFrame = FrameLayout(this).apply {
+        val rootFrame = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(-1, -1)
             setBackgroundColor(Color.parseColor("#0F172A"))
             fitsSystemWindows = true
         }
-
 
         mainColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -482,7 +524,6 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#0F172A"))
         }
 
-        // Asettaa tulevien kalenterivuorojen hälytykset äänettömästi taustalla
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
 
         webView = WebView(this).apply {
@@ -527,7 +568,6 @@ class MainActivity : AppCompatActivity() {
                         tryAutoLoginIfNeeded()
                     }
 
-                    // Jos Numeron heittää kirjautumisen jälkeen etusivulle (ei leimaus-, kalenteri- tai toivesivulle), ohjaa suoraan leimaussivulle
                     val base = SettingsManager.getBaseUrl(this@MainActivity).trimEnd('/')
                     if (!isDemoActive && !isBackgroundListSync &&
                         (currentUrl.trimEnd('/').equals(base, ignoreCase = true) ||
@@ -540,6 +580,10 @@ class MainActivity : AppCompatActivity() {
 
                     if (currentUrl.contains("/PersonRequests/", ignoreCase = true)) {
                         injectWishProtection()
+                    }
+
+                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true) && !pendingAutoStamp) {
+                        webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
                     }
 
                     if (pendingAutoStamp) {
@@ -719,7 +763,6 @@ class MainActivity : AppCompatActivity() {
             openSettings()
         }
 
-        // Ladataan suoraan urlStamping (joka avaa leimaussivun tai demo-tilassa demo_shifts.html:n)
         if (!isBackgroundListSync) {
             webView.loadUrl(urlStamping)
         }
@@ -740,6 +783,13 @@ class MainActivity : AppCompatActivity() {
             tryAutoLoginIfNeeded()
         }
         scheduleNextThreeWeekListCheck()
+    }
+
+    override fun onDestroy() {
+        (silentSyncWebView?.parent as? ViewGroup)?.removeView(silentSyncWebView)
+        silentSyncWebView?.destroy()
+        silentSyncWebView = null
+        super.onDestroy()
     }
 
     private fun injectWishProtection() {
@@ -894,7 +944,7 @@ class MainActivity : AppCompatActivity() {
                         lastAutoLoginAttempt = now
                         if (pendingAutoStamp || isBackgroundListSync) {
                             showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään, odota hetki...")
-                        } 
+                        }
                     }
                     if (pendingAutoStamp) webView.postDelayed({ scheduleAutoStampCheck(1500) }, 2200)
                 }
@@ -921,6 +971,9 @@ class MainActivity : AppCompatActivity() {
             pagesRemainingToSync = 3
             totalFoundInBatch = 0
             totalAddedInBatch = 0
+            totalRemovedInBatch = 0
+            syncedDatesInBatch.clear()
+            syncedShiftRangesInBatch.clear()
             showStampOverlay("Synkronoidaan työvuoroja", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
         }
@@ -943,6 +996,9 @@ class MainActivity : AppCompatActivity() {
             pagesRemainingToSync = 3
             totalFoundInBatch = 0
             totalAddedInBatch = 0
+            totalRemovedInBatch = 0
+            syncedDatesInBatch.clear()
+            syncedShiftRangesInBatch.clear()
             showStampOverlay("Haetaan uutta työvuorolistaa", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
         }
@@ -1051,7 +1107,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-        private fun completeAutoStampSuccess(message: String) {
+    private fun completeAutoStampSuccess(message: String) {
         val wasEnding = pendingStampIsEnding
         pendingAutoStamp = false
         autoStampClickDone = false
@@ -1067,17 +1123,9 @@ class MainActivity : AppCompatActivity() {
             "Suljetaan sovellus..."
         }
 
-        val toastText = if (freeDayGreeting != null) {
-            "$message $freeDayGreeting"
-        } else {
-            message
-        }
-
         showStampOverlay(" ✓  $message", statusText, showSpinner = false)
-    
         webView.postDelayed({ finishAndRemoveTask() }, if (freeDayGreeting != null) 2600L else 1400L)
-        }
-        
+    }
 
     private fun checkPermissionsAndSync() {
         val needed = mutableListOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
@@ -1089,6 +1137,9 @@ class MainActivity : AppCompatActivity() {
             pagesRemainingToSync = if (isDemoActive) 0 else 3
             totalFoundInBatch = 0
             totalAddedInBatch = 0
+            totalRemovedInBatch = 0
+            syncedDatesInBatch.clear()
+            syncedShiftRangesInBatch.clear()
             extractShiftsFromPage(forceList = true)
         }
     }
@@ -1103,6 +1154,9 @@ class MainActivity : AppCompatActivity() {
                 pagesRemainingToSync = if (isDemoActive) 0 else 3
                 totalFoundInBatch = 0
                 totalAddedInBatch = 0
+                totalRemovedInBatch = 0
+                syncedDatesInBatch.clear()
+                syncedShiftRangesInBatch.clear()
                 extractShiftsFromPage(forceList = true)
             }
         }
@@ -1120,7 +1174,8 @@ class MainActivity : AppCompatActivity() {
                 if (saveWorkShift(calId, "${tomorrow.dayOfMonth}.${tomorrow.monthValue}.${tomorrow.year}", "07:00", "15:00", "Aamuvuoro (Demo)", fmt)) added++
                 if (saveWorkShift(calId, "${day2.dayOfMonth}.${day2.monthValue}.${day2.year}", "13:00", "21:00", "Iltavuoro (Demo)", fmt)) added++
                 if (saveWorkShift(calId, "${day3.dayOfMonth}.${day3.monthValue}.${day3.year}", "21:00", "07:00", "Yövuoro (Demo)", fmt)) added++
-                VuorovahtiHelper.saveLastSyncStatus(this, added)
+                VuorovahtiHelper.saveLastSyncStatus(this, 3)
+                VuorovahtiHelper.ensureRemindersFromCalendar(this)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                 hideStampOverlay()
                 Toast.makeText(this, "Demo-synkronointi valmis ($added vuoroa viety kalenteriin).", Toast.LENGTH_LONG).show()
@@ -1221,24 +1276,28 @@ class MainActivity : AppCompatActivity() {
                 if (pagesRemainingToSync > 0) {
                     pagesRemainingToSync--
                     if (isBackgroundListSync) {
-                        showStampOverlay("Haetaan uutta työvuorolistaa", "Tarkistetaan tulevia viikkoja... (löydetty $totalAddedInBatch uutta)")
+                        showStampOverlay("Haetaan uutta työvuorolistaa", "Tarkistetaan tulevia viikkoja... (muutoksia $totalAddedInBatch)")
                     }
-                    clickNextCalendarPeriod()
+                    clickNextCalendarPeriod(calId)
                 } else {
+                    totalRemovedInBatch += reconcileRemovedShifts(calId)
                     hideStampOverlay()
                     isBackgroundListSync = false
                     VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
                     VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                     VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
-                    scheduleNextThreeWeekListCheck()
                     if (totalAddedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
-                    Toast.makeText(this@MainActivity, "Tarkistettu $totalFoundInBatch merkintää, lisätty/päivitetty $totalAddedInBatch tulevaa merkintää.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Tarkistettu $totalFoundInBatch merkintää: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
             }
         }
     }
 
-    private fun clickNextCalendarPeriod() {
+    private fun clickNextCalendarPeriod(calId: Long) {
         val js = """
             (function() {
                 var nextSelectors = ['a[title*="Seuraava" i]', 'button[title*="Seuraava" i]', '.fa-chevron-right', '.fa-angle-right', '.glyphicon-chevron-right', '.icon-chevron-right', '.fc-next-button'];
@@ -1266,12 +1325,18 @@ class MainActivity : AppCompatActivity() {
                 }, 1400)
             } else {
                 pagesRemainingToSync = 0
+                totalRemovedInBatch += reconcileRemovedShifts(calId)
                 hideStampOverlay()
                 isBackgroundListSync = false
                 VuorovahtiHelper.saveLastSyncStatus(this, totalFoundInBatch)
+                VuorovahtiHelper.ensureRemindersFromCalendar(this)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                 if (totalAddedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
-                Toast.makeText(this, "Lisätty $totalAddedInBatch uutta vuoroa kalenteriin.", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this,
+                    "Valmis: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -1284,34 +1349,18 @@ class MainActivity : AppCompatActivity() {
         }
         val notif = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("Uudet työvuorot lisätty!")
-            .setContentText("Kalenteriin vietiin $addedCount uutta työvuoroa/lomaa.")
+            .setSubText("Numeron Vuorovahti")
+            .setContentTitle("Uudet työvuorot päivitetty!")
+            .setContentText("Kalenteriin vietiin $addedCount uutta tai muuttunutta työvuoroa/lomaa.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
         nm.notify(3004, notif)
     }
 
-        private fun scheduleNextThreeWeekListCheck() {
-        try {
-            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
-            val intent = Intent(this, ShiftAlarmReceiver::class.java).apply { putExtra("ACTION_TYPE", "CHECK_NEW_LIST") }
-            val pi = PendingIntent.getBroadcast(this, 9991, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-            if (!SettingsManager.isAutoSyncEnabled(this)) {
-                alarmManager.cancel(pi)
-                return
-            }
-            val anchorFriday = LocalDate.of(2026, 11, 6)
-            val now = ZonedDateTime.now(ZoneId.systemDefault())
-            var nextPublishDate = anchorFriday
-            while (nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).isBefore(now.plusMinutes(5))) {
-                nextPublishDate = nextPublishDate.plusWeeks(3)
-            }
-            val triggerMillis = nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            VuorovahtiHelper.scheduleAlarmSafe(alarmManager, triggerMillis, pi)
-        } catch (e: Exception) { e.printStackTrace() }
+    private fun scheduleNextThreeWeekListCheck() {
+        VuorovahtiHelper.scheduleNextThreeWeekListCheck(this)
     }
-
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
         val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
@@ -1399,8 +1448,7 @@ class MainActivity : AppCompatActivity() {
                 val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
                 val mo = (m.groupValues[2].ifEmpty { m.groupValues[5] }).toIntOrNull() ?: continue
                 val rawYr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull()
-val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
-
+                val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
                 if (d !in 1..31 || mo !in 1..12) continue
                 val sIdx = m.range.last + 1
                 val eIdx = if (i + 1 < matches.size) matches[i + 1].range.first else minOf(sIdx + 500, pageText.length)
@@ -1415,6 +1463,7 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
     }
 
     private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
+        try { syncedDatesInBatch.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
         if (block.lowercase().let { it.contains("vuosiloma") || it.contains("loma") || Regex("""\bvl\b""").containsMatchIn(it) }) {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
             return Pair(1, 0)
@@ -1437,6 +1486,7 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
     }
 
     private fun processDayContent(calId: Long, d: Int, m: Int, y: Int, txt: String, extra: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
+        try { syncedDatesInBatch.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
         val rest = "${txt.replaceFirst(Regex("""^\d{1,2}\s*"""), "")} $extra".lowercase()
         if (rest.contains("vuosiloma") || rest.contains("loma") || Regex("""\bvl\b""").containsMatchIn(rest)) {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
@@ -1472,7 +1522,6 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
         return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro")
     }
 
-    
     private fun scheduleShiftAlarms(startMillis: Long, endMillis: Long, startStr: String, endStr: String, title: String) {
         if (!SettingsManager.isStampNotificationEnabled(this)) return
         try {
@@ -1506,6 +1555,8 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
             val eMs = eDt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             if (eMs < System.currentTimeMillis()) return false
 
+            syncedShiftRangesInBatch.add(Pair(sMs, eMs))
+
             val (loc, desc) = extractLocAndDesc(startStr, raw)
             scheduleShiftAlarms(sMs, eMs, startStr, endStr, desc.ifEmpty { "Työvuoro" })
             val dayStartMs = sDt.toLocalDate().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -1515,8 +1566,208 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
             if (exId == null) {
                 insertEvent(calId, "Työvuoro", loc, desc, sMs, eMs, false, sDt.hour)
                 true
-            } else if (loc.isNotEmpty()) updateEvent(exId, loc, desc) else false
+            } else {
+                updateEvent(exId, loc, desc, sMs, eMs, sDt.hour)
+            }
         } catch (e: Exception) { false }
+    }
+
+    private fun findShiftOnSameDay(calId: Long, sMs: Long, eMs: Long, dayStartMs: Long, dayEndMs: Long): Long? {
+        val exactSel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ? AND ${CalendarContract.Events.DELETED} = 0"
+        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID), exactSel, arrayOf(calId.toString(), sMs.toString(), eMs.toString()), null)?.use {
+            if (it.moveToFirst()) return it.getLong(0)
+        }
+        val daySel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
+        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND), daySel, arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString()), null)?.use {
+            while (it.moveToNext()) {
+                val id = it.getLong(0)
+                val oldStart = it.getLong(1)
+                val oldEnd = it.getLong(2)
+                if (!syncedShiftRangesInBatch.contains(Pair(oldStart, oldEnd))) {
+                    return id
+                }
+            }
+        }
+        return null
+    }
+
+    private fun updateEvent(eventId: Long, loc: String, desc: String, sMs: Long, eMs: Long, startHour: Int): Boolean {
+        var curLoc = ""
+        var curDesc = ""
+        var curStart = 0L
+        var curEnd = 0L
+        contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events.EVENT_LOCATION, CalendarContract.Events.DESCRIPTION, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+            "${CalendarContract.Events._ID} = ?",
+            arrayOf(eventId.toString()),
+            null
+        )?.use {
+            if (it.moveToFirst()) {
+                curLoc = it.getString(0) ?: ""
+                curDesc = it.getString(1) ?: ""
+                curStart = it.getLong(2)
+                curEnd = it.getLong(3)
+            }
+        }
+        val timeChanged = (curStart != sMs || curEnd != eMs)
+        val textChanged = (loc.isNotEmpty() && (curLoc != loc || curDesc != desc))
+        if (!timeChanged && !textChanged) return false
+
+        val v = ContentValues().apply {
+            put(CalendarContract.Events.DTSTART, sMs)
+            put(CalendarContract.Events.DTEND, eMs)
+            if (loc.isNotEmpty()) put(CalendarContract.Events.EVENT_LOCATION, loc)
+            if (desc.isNotEmpty()) put(CalendarContract.Events.DESCRIPTION, desc)
+            VuorovahtiHelper.applyShiftColor(this, desc.ifEmpty { "Työvuoro" }, startHour)
+        }
+        return try {
+            contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString())) > 0
+        } catch (_: Exception) {
+            v.remove(CalendarContract.Events.EVENT_COLOR)
+            contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString())) > 0
+        }
+    }
+
+    private fun reconcileRemovedShifts(calId: Long): Int {
+        if (syncedDatesInBatch.isEmpty()) return 0
+        val zone = ZoneId.systemDefault()
+        val now = System.currentTimeMillis()
+        var removedCount = 0
+
+        for (date in syncedDatesInBatch) {
+            val dayStartMs = date.atStartOfDay(zone).toInstant().toEpochMilli()
+            val dayEndMs = date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            if (dayEndMs < now) continue
+
+            val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
+            val args = arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString())
+
+            val idsToDelete = mutableListOf<Long>()
+            contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+                sel,
+                args,
+                null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val sMs = c.getLong(1)
+                    val eMs = c.getLong(2)
+                    if (sMs > now && !syncedShiftRangesInBatch.contains(Pair(sMs, eMs))) {
+                        idsToDelete.add(id)
+                    }
+                }
+            }
+            for (id in idsToDelete) {
+                contentResolver.delete(CalendarContract.Events.CONTENT_URI, "${CalendarContract.Events._ID} = ?", arrayOf(id.toString()))
+                removedCount++
+            }
+        }
+        return removedCount
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun triggerSilentDailySyncIfNeeded() {
+        if (isDemoActive || isSilentSyncRunning || isBackgroundListSync || pendingAutoStamp) return
+        if (!VuorovahtiHelper.shouldRunDailySilentSync(this)) return
+
+        isSilentSyncRunning = true
+        var silentPagesLeft = 1
+
+        val bgWeb = WebView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(1, 1)
+            alpha = 0.01f
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+        }
+        CookieManager.getInstance().setAcceptThirdPartyCookies(bgWeb, true)
+        addContentView(bgWeb, FrameLayout.LayoutParams(1, 1))
+        silentSyncWebView = bgWeb
+
+        fun cleanupSilentSync() {
+            isSilentSyncRunning = false
+            (silentSyncWebView?.parent as? ViewGroup)?.removeView(silentSyncWebView)
+            silentSyncWebView?.destroy()
+            silentSyncWebView = null
+        }
+
+        syncedDatesInBatch.clear()
+        syncedShiftRangesInBatch.clear()
+        totalFoundInBatch = 0
+        totalAddedInBatch = 0
+        totalRemovedInBatch = 0
+
+        bgWeb.addJavascriptInterface(object {
+            @JavascriptInterface
+            fun onSilentData(cellsJson: String, pageText: String, currentUrl: String) {
+                runOnUiThread {
+                    val calId = getTargetOrPrimaryCalendarId()
+                    if (calId != null) {
+                        val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+                        totalFoundInBatch += found
+                        totalAddedInBatch += added
+                        if (silentPagesLeft > 0) {
+                            silentPagesLeft--
+                            bgWeb.evaluateJavascript("""
+                                (function() {
+                                    var el = document.querySelector('a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button');
+                                    if (el) { (el.closest('a, button, div, span') || el).click(); return "NEXT"; }
+                                    return "NONE";
+                                })();
+                            """.trimIndent()) { res ->
+                                if (res?.contains("NEXT") == true) {
+                                    bgWeb.postDelayed({
+                                        bgWeb.evaluateJavascript("""
+                                            AndroidSilentBridge.onSilentData("[]", document.body ? document.body.innerText : "", window.location.href);
+                                        """.trimIndent(), null)
+                                    }, 1500L)
+                                } else {
+                                    reconcileRemovedShifts(calId)
+                                    VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
+                                    VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
+                                    cleanupSilentSync()
+                                }
+                            }
+                        } else {
+                            reconcileRemovedShifts(calId)
+                            VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
+                            VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
+                            cleanupSilentSync()
+                        }
+                    } else {
+                        cleanupSilentSync()
+                    }
+                }
+            }
+        }, "AndroidSilentBridge")
+
+        bgWeb.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                val u = url ?: ""
+                if (u.contains("/Calendar/", ignoreCase = true) && !u.contains("login", ignoreCase = true)) {
+                    view?.postDelayed({
+                        view.evaluateJavascript("""
+                            (function() {
+                                var cells = [];
+                                var tds = document.querySelectorAll('td');
+                                for (var j = 0; j < tds.length; j++) {
+                                    var td = tds[j];
+                                    var cls = (td.className || "").toLowerCase();
+                                    if (/week|vk|wk/.test(cls)) continue;
+                                    cells.push({ text: (td.innerText || "").trim(), isOther: /other|old|new|disabled|off|outside|gray|grey/.test(cls), extra: "" });
+                                }
+                                AndroidSilentBridge.onSilentData(JSON.stringify(cells), document.body ? document.body.innerText : "", window.location.href);
+                            })();
+                        """.trimIndent(), null)
+                    }, 1000L)
+                }
+            }
+        }
+        bgWeb.loadUrl(urlCalendar)
+        webView.postDelayed({ if (isSilentSyncRunning) cleanupSilentSync() }, 15000L)
     }
 
     private fun saveGroupedVacations(calId: Long, rawDays: List<LocalDate>): Int {
@@ -1581,26 +1832,6 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
         return null
     }
 
-    private fun findShiftOnSameDay(calId: Long, sMs: Long, eMs: Long, dayStartMs: Long, dayEndMs: Long): Long? {
-        val exactSel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ? AND ${CalendarContract.Events.DELETED} = 0"
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID), exactSel, arrayOf(calId.toString(), sMs.toString(), eMs.toString()), null)?.use { if (it.moveToFirst()) return it.getLong(0) }
-        val daySel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART), daySel, arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString()), null)?.use {
-            while (it.moveToNext()) {
-                if (kotlin.math.abs(it.getLong(1) - sMs) <= 2 * 60 * 60 * 1000L) return it.getLong(0)
-            }
-        }
-        return null
-    }
-
-    private fun updateEvent(eventId: Long, loc: String, desc: String): Boolean {
-        var curLoc = ""
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events.EVENT_LOCATION), "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString()), null)?.use { if (it.moveToFirst()) curLoc = it.getString(0) ?: "" }
-        if (curLoc == loc) return false
-        val v = ContentValues().apply { put(CalendarContract.Events.EVENT_LOCATION, loc); put(CalendarContract.Events.DESCRIPTION, desc) }
-        return contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString())) > 0
-    }
-
     private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8) {
         val v = ContentValues().apply {
             put(CalendarContract.Events.DTSTART, sMs); put(CalendarContract.Events.DTEND, eMs)
@@ -1613,7 +1844,6 @@ val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targ
         try {
             contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)
         } catch (_: Exception) {
-            // Jos käyttäjän kalenteritili ei tue tapahtumakohtaisia värejä, tallennetaan ilman EVENT_COLOR-kenttää
             v.remove(CalendarContract.Events.EVENT_COLOR)
             contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)
         }
