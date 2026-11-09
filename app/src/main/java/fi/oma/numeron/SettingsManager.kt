@@ -34,8 +34,8 @@ object SettingsManager {
     }
 
     fun hasValidOrganization(context: Context): Boolean =
-    getOrganizationRaw(context).trim().isNotEmpty() || 
-    getUsername(context).trim().equals("demo", ignoreCase = true)
+        getOrganizationRaw(context).trim().isNotEmpty() ||
+        getUsername(context).trim().equals("demo", ignoreCase = true)
 
     fun isFirstRun(context: Context): Boolean =
         !getPrefs(context).contains("settings_initialized") || !hasValidOrganization(context)
@@ -43,7 +43,7 @@ object SettingsManager {
     fun getOrganizationRaw(context: Context): String =
         getPrefs(context).getString("org_domain", "") ?: ""
 
-        fun getBaseUrl(context: Context): String {
+    fun getBaseUrl(context: Context): String {
         val raw = getOrganizationRaw(context).trim().lowercase()
             .removePrefix("https://")
             .removePrefix("http://")
@@ -52,8 +52,7 @@ object SettingsManager {
             .trim()
         if (raw.isEmpty()) return "about:blank"
         return if (raw.contains(".")) "https://$raw" else "https://$raw.numeronwfm.com"
-        }
-        
+    }
 
     fun getUsername(context: Context): String = getPrefs(context).getString("username", "") ?: ""
     fun getPassword(context: Context): String = getPrefs(context).getString("password", "") ?: ""
@@ -82,7 +81,7 @@ object SettingsManager {
     ) {
         getPrefs(context).edit().apply {
             putBoolean("settings_initialized", true)
-                        val cleanOrg = org.trim()
+            val cleanOrg = org.trim()
                 .removePrefix("https://")
                 .removePrefix("http://")
                 .substringBefore("/")
