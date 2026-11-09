@@ -77,7 +77,7 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             putExtra("AUTO_STAMP", true)
             putExtra("IS_ENDING", isEnding)
         }
-        val reqCode = (System.currentTimeMillis() / 1000L).toInt()
+        val reqCode = if (isEnding) 2002 else 1001
         val pi = PendingIntent.getActivity(
             context, reqCode, clickIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

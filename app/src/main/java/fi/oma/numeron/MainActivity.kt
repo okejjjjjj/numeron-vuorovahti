@@ -1558,7 +1558,6 @@ class MainActivity : AppCompatActivity() {
             syncedShiftRangesInBatch.add(Pair(sMs, eMs))
 
             val (loc, desc) = extractLocAndDesc(startStr, raw)
-            scheduleShiftAlarms(sMs, eMs, startStr, endStr, desc.ifEmpty { "Työvuoro" })
             val dayStartMs = sDt.toLocalDate().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val dayEndMs = sDt.toLocalDate().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val exId = findShiftOnSameDay(calId, sMs, eMs, dayStartMs, dayEndMs)
@@ -1674,7 +1673,7 @@ class MainActivity : AppCompatActivity() {
         if (!VuorovahtiHelper.shouldRunDailySilentSync(this)) return
 
         isSilentSyncRunning = true
-        var silentPagesLeft = 1
+        var silentPagesLeft = 0
 
         val bgWeb = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(1, 1)

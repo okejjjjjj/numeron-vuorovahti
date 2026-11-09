@@ -621,7 +621,7 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        cookieManager.removeAllCookies {
+        cookieManager.removeSessionCookies {
             cookieManager.flush()
             if (!testFinished) {
                 webView.loadUrl(testUrl)

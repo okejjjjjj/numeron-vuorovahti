@@ -44,6 +44,7 @@ object SettingsManager {
         getPrefs(context).getString("org_domain", "") ?: ""
 
     fun getBaseUrl(context: Context): String {
+        if (VuorovahtiHelper.isDemoMode(getUsername(context), getPassword(context))) return "file:///android_asset/demo_shifts.html"
         val raw = getOrganizationRaw(context).trim().lowercase()
             .removePrefix("https://")
             .removePrefix("http://")
