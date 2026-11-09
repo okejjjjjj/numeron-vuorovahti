@@ -13,14 +13,10 @@ import androidx.core.app.NotificationCompat
 class ShiftAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-    VuorovahtiHelper.ensureRemindersFromCalendar(context)
-    return
-        }
-                if (intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             VuorovahtiHelper.ensureRemindersFromCalendar(context)
             return
-                }
-                
+        }
+
         val actionType = intent.getStringExtra("ACTION_TYPE") ?: "STAMP"
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -42,6 +38,7 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             }
             val notif = NotificationCompat.Builder(context, "numeron_list_channel")
                 .setSmallIcon(R.drawable.ic_launcher)
+                .setSubText("Numeron Vuorovahti")
                 .setContentTitle("Uusi työvuorolista saatavilla!")
                 .setContentText("Napauta tästä, niin uudet vuorot haetaan suoraan kalenteriin.")
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -52,7 +49,6 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             return
         }
 
-        // Tarkistetaan, onko leimausnotifikaatiot kytketty päälle asetuksista
         if (!SettingsManager.isStampNotificationEnabled(context)) return
 
         val shiftTitle = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"
@@ -94,8 +90,16 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             setOnClickPendingIntent(R.id.notif_btn, pi)
         }
 
+        VuorovahtiHelper.saveLastTriggeredReminder(
+            context,
+            "${if (isEnding) "Ulosleimaus" else "Sisäänleimaus"} ($shiftTitle${if (shiftTime.isNotEmpty()) " klo $shiftTime" else ""})"
+        )
+
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle("Numeron Vuorovahti – $titleText")
+            .setContentText(shiftTitle)
+            .setSubText("Numeron Vuorovahti")
             .setCustomContentView(customView)
             .setCustomBigContentView(customView)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -104,15 +108,6 @@ class ShiftAlarmReceiver : BroadcastReceiver() {
             .setContentIntent(pi)
             .build()
 
-        // Tallennetaan toteutunut muistutus asetussivun lokiin:
-        VuorovahtiHelper.saveLastTriggeredReminder(
-            context,
-            "${if (isEnding) "Ulosleimaus" else "Sisäänleimaus"} ($shiftTitle${if (shiftTime.isNotEmpty()) " klo $shiftTime" else ""})"
-        )
-
-        nm.notify(if (isEnding) 2002 else 1001, notification)
-
-            
         nm.notify(if (isEnding) 2002 else 1001, notification)
     }
 }
