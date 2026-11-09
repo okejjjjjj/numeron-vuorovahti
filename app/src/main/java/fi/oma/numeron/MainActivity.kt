@@ -58,14 +58,28 @@ object VuorovahtiHelper {
     }
 
     // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima
-    fun saveLastSyncStatus(context: Context, shiftCount: Int) {
+        fun saveLastSyncStatus(context: Context, shiftCount: Int) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val statusText = "Synkronoitu: ${timeFormat.format(Date())} ($shiftCount vuoroa)"
         context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
             .edit()
             .putString("last_sync_status", statusText)
+            .putLong("last_sync_millis", System.currentTimeMillis())
             .apply()
     }
+
+    fun shouldRunDailySilentSync(context: Context): Boolean {
+        if (!SettingsManager.isAutoSyncEnabled(context)) return false
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+            return false
+        }
+        val lastMs = context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
+            .getLong("last_sync_millis", 0L)
+        // Tarkistetaan kerran 18 tunnissa
+        return (System.currentTimeMillis() - lastMs) > 18L * 60 * 60 * 1000L
+    }
+
 
     fun getLastSyncStatus(context: Context): String {
         return context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
