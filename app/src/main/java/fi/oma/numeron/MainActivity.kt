@@ -1857,6 +1857,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reconcileRemovedShifts(calId: Long): Int {
+        if (syncedDatesInBatch.size < 5) return 0
         if (syncedDatesInBatch.isEmpty()) return 0
         val zone = ZoneId.systemDefault()
         val now = System.currentTimeMillis()
