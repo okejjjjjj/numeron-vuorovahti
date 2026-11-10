@@ -1471,8 +1471,8 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val infoText = TextView(this).apply {
-                    text = "[$badgeText]  $dateStr  klo $timeStr
-$title"
+                    val nl = System.lineSeparator()
+                    text = "[$badgeText]  $dateStr  klo $timeStr" + nl + title
                     textSize = 13.5f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(Color.parseColor(badgeColor))
