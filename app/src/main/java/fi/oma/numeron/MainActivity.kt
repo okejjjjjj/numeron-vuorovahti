@@ -410,18 +410,21 @@ object VuorovahtiHelper {
         if (freeDaysCount <= 0) return null
 
         val singleDayGreetings = listOf(
-            "Hyvää huomista vapaapäivää! ☀️",
-            "Huomenna ei ole vuoroa – rentouttavaa vapaapäivää! ☕",
-            "Vuoro paketissa ja huominen vapaana. Nauti vapaapäivästä! 🛋️",
-            "Ansaittu huili edessä – mukavaa vapaapäivää! 🌿"
-        )
+    "Huomenna ei ole vuoroa – ota rennosti ja nauti vapaasta!",
+    "Vuoro paketissa ja huominen vapaana. Mukavaa huilipäivää!",
+    "Hyvää huomista vapaapäivää, nollaa ajatukset ihan rauhassa!",
+    "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapäivää!",
+    "Ansaittu hengähdystauko edessä – leppoisaa vapaapäivää!"
+)
 
-        val multiDayGreetings = listOf(
-            "Edessä useampi vapaapäivä – mukavia ja rentouttavia vapaita! 🎉",
-            "Työputki takana! Nauti tulevista vapaapäivistä! 🌲",
-            "Hyviä vapaita! Nyt voi nollata ajatukset ihan rauhassa. ✨",
-            "Vapaat alkoivat nyt – oikein mukavia vapaapäiviä! 🔋"
-        )
+val multiDayGreetings = listOf(
+    "Työputki takana ja vapaat edessä! Nauti tulevista vapaapäivistä!",
+    "Useampi vapaapäivä edessä – mukavia ja rentouttavia vapaita!",
+    "Vapaat alkoivat nyt. Ota ihan rennosti ja lataa akut rauhassa!",
+    "Hyviä vapaita! Nyt on hyvin aikaa hengähtää ja puuhailla omia juttuja.",
+    "Vuorot on tältä erää taputeltu – oikein leppoisia vapaapäiviä!"
+)
+
 
         return if (freeDaysCount == 1) {
             singleDayGreetings.random()
