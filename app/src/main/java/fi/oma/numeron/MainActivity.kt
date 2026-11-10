@@ -447,6 +447,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayStatus: TextView
     private lateinit var overlayProgress: ProgressBar
 
+    private var pendingSummaryDialog = false
     private var pendingAutoStamp = false
     private var pendingStampIsEnding = false
     private var autoStampClickDone = false
@@ -779,6 +780,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (pendingSummaryDialog) {
+            pendingSummaryDialog = false
+            webView.postDelayed({ showSyncSummaryDialog() }, 300)
+        }
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
         val currentBase = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
         if (lastKnownBaseUrl.isNotEmpty() && lastKnownBaseUrl != currentBase) {
@@ -973,7 +978,7 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("quick_action")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            pagesRemainingToSync = 3
+            pagesRemainingToSync = 8
             totalFoundInBatch = 0
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
@@ -999,7 +1004,7 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("AUTO_SYNC_NEW_LIST")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            pagesRemainingToSync = 3
+            pagesRemainingToSync = 8
             totalFoundInBatch = 0
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
@@ -1141,7 +1146,7 @@ class MainActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
         } else {
-            pagesRemainingToSync = if (isDemoActive) 0 else 3
+            pagesRemainingToSync = if (isDemoActive) 0 else 8
             totalFoundInBatch = 0
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
@@ -1159,7 +1164,7 @@ class MainActivity : AppCompatActivity() {
             val r = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
             val w = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
             if (r && w) {
-                pagesRemainingToSync = if (isDemoActive) 0 else 3
+                pagesRemainingToSync = if (isDemoActive) 0 else 8
                 totalFoundInBatch = 0
                 totalAddedInBatch = 0
                 totalRemovedInBatch = 0
@@ -1573,6 +1578,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
+        val now = LocalDate.now()
         val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
         val mMatch = Regex("""(tammikuu|helmikuu|maaliskuu|huhtikuu|toukokuu|kesäkuu|heinäkuu|elokuu|syyskuu|lokakuu|marraskuu|joulukuu)\s+(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)
         if (mMatch != null) {
@@ -1580,10 +1586,22 @@ class MainActivity : AppCompatActivity() {
             val y = mMatch.groupValues[2].toIntOrNull()
             if (m != null && y != null) return Pair(m, y)
         }
-        val wkYear = Regex("""Vk\.?\s*\d{1,2}\s*/\s*(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)?.groupValues?.get(1)?.toIntOrNull()
-        val now = LocalDate.now()
+        val wkSlashMatch = Regex("""(?:Vk|Viikko)\.?\s*(\d{1,2})\s*/\s*(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)
+        if (wkSlashMatch != null) {
+            val wk = wkSlashMatch.groupValues[1].toIntOrNull() ?: 1
+            val yr = wkSlashMatch.groupValues[2].toIntOrNull() ?: now.year
+            val approxMonth = if (wk >= 48) 12 else if (wk <= 4) 1 else now.monthValue
+            return Pair(approxMonth, yr)
+        }
+        val wkOnlyMatch = Regex("""(?:Vk|Viikko)\.?\s*(\d{1,2})\b""", RegexOption.IGNORE_CASE).find(pageText)
+        if (wkOnlyMatch != null) {
+            val wk = wkOnlyMatch.groupValues[1].toIntOrNull() ?: 1
+            val inferredYear = if (now.monthValue >= 11 && wk <= 10) now.year + 1 else if (now.monthValue == 1 && wk >= 48) now.year - 1 else now.year
+            val approxMonth = if (wk >= 48) 12 else if (wk <= 4) 1 else now.monthValue
+            return Pair(approxMonth, inferredYear)
+        }
         val uri = try { Uri.parse(currentUrl) } catch (e: Exception) { null }
-        return Pair(uri?.getQueryParameter("month")?.toIntOrNull() ?: now.monthValue, uri?.getQueryParameter("year")?.toIntOrNull() ?: wkYear ?: now.year)
+        return Pair(uri?.getQueryParameter("month")?.toIntOrNull() ?: now.monthValue, uri?.getQueryParameter("year")?.toIntOrNull() ?: now.year)
     }
 
     private fun extractDirectVacationRanges(text: String, defaultYear: Int, vacationDays: MutableList<LocalDate>): Int {
@@ -1658,13 +1676,23 @@ class MainActivity : AppCompatActivity() {
                 val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
                 val mo = (m.groupValues[2].ifEmpty { m.groupValues[5] }).toIntOrNull() ?: continue
                 val rawYr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull()
-                val yr = rawYr ?: if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
+                val yr = rawYr ?: if (mo < LocalDate.now().monthValue - 1 && LocalDate.now().monthValue >= 10) LocalDate.now().year + 1 else if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
                 if (d !in 1..31 || mo !in 1..12) continue
                 val sIdx = m.range.last + 1
                 val eIdx = if (i + 1 < matches.size) matches[i + 1].range.first else minOf(sIdx + 500, pageText.length)
                 if (sIdx >= eIdx) continue
                 val res = processListBlock(calId, d, mo, yr, pageText.substring(sIdx, eIdx).trim(), fmt, vacationDays)
                 found += res.first; added += res.second
+            }
+            if (found > 0) {
+                for (i in matches.indices) {
+                    val m = matches[i]
+                    val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
+                    val mo = (m.groupValues[2].ifEmpty { m.groupValues[5] }).toIntOrNull() ?: continue
+                    val rawYr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull()
+                    val yr = rawYr ?: if (mo < LocalDate.now().monthValue - 1 && LocalDate.now().monthValue >= 10) LocalDate.now().year + 1 else if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
+                    try { syncedDatesInBatch.add(LocalDate.of(yr, mo, d)) } catch (_: Exception) {}
+                }
             }
             added += saveGroupedVacations(calId, vacationDays)
             if (found > 0) return Pair(found, added)
@@ -1673,7 +1701,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
-        try { syncedDatesInBatch.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
         if (block.lowercase().let { it.contains("vuosiloma") || it.contains("loma") || Regex("""\bvl\b""").containsMatchIn(it) }) {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
             return Pair(1, 0)
@@ -1696,7 +1723,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun processDayContent(calId: Long, d: Int, m: Int, y: Int, txt: String, extra: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
-        try { syncedDatesInBatch.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
         val rest = "${txt.replaceFirst(Regex("""^\d{1,2}\s*"""), "")} $extra".lowercase()
         if (rest.contains("vuosiloma") || rest.contains("loma") || Regex("""\bvl\b""").containsMatchIn(rest)) {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
@@ -1857,7 +1883,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reconcileRemovedShifts(calId: Long): Int {
-        if (syncedDatesInBatch.size < 5) return 0
+        if (syncedDatesInBatch.size < 5 || totalFoundInBatch == 0) return 0
         if (syncedDatesInBatch.isEmpty()) return 0
         val zone = ZoneId.systemDefault()
         val now = System.currentTimeMillis()
