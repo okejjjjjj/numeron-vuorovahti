@@ -34,6 +34,9 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
+import org.json.JSONObject
+import android.app.AlertDialog
+import android.content.ContentUris
 import java.text.SimpleDateFormat
 import java.time.*
 import java.time.format.DateTimeFormatter
@@ -459,6 +462,8 @@ class MainActivity : AppCompatActivity() {
     private var forceListOnNextCalendarLoad = false
     private var lastKnownBaseUrl = ""
 
+    private data class SyncChangeItem(val eventId: Long, val type: String, val dateStr: String, val timeStr: String, val title: String)
+    private val syncChangesList = mutableListOf<SyncChangeItem>()
     private val syncedDatesInBatch = mutableSetOf<LocalDate>()
     private val syncedShiftRangesInBatch = mutableSetOf<Pair<Long, Long>>()
     private var silentSyncWebView: WebView? = null
@@ -973,6 +978,7 @@ class MainActivity : AppCompatActivity() {
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
             syncedDatesInBatch.clear()
+            syncChangesList.clear()
             syncedShiftRangesInBatch.clear()
             showStampOverlay("Synkronoidaan työvuoroja", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
@@ -998,6 +1004,7 @@ class MainActivity : AppCompatActivity() {
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
             syncedDatesInBatch.clear()
+            syncChangesList.clear()
             syncedShiftRangesInBatch.clear()
             showStampOverlay("Haetaan uutta työvuorolistaa", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
@@ -1139,6 +1146,7 @@ class MainActivity : AppCompatActivity() {
             totalAddedInBatch = 0
             totalRemovedInBatch = 0
             syncedDatesInBatch.clear()
+            syncChangesList.clear()
             syncedShiftRangesInBatch.clear()
             extractShiftsFromPage(forceList = true)
         }
@@ -1156,6 +1164,7 @@ class MainActivity : AppCompatActivity() {
                 totalAddedInBatch = 0
                 totalRemovedInBatch = 0
                 syncedDatesInBatch.clear()
+            syncChangesList.clear()
                 syncedShiftRangesInBatch.clear()
                 extractShiftsFromPage(forceList = true)
             }
@@ -1286,7 +1295,8 @@ class MainActivity : AppCompatActivity() {
                     VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
                     VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                     VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
-                    if (totalAddedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
+                    saveSyncChangesHistory()
+                              if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                     Toast.makeText(
                         this@MainActivity,
                         "Tarkistettu $totalFoundInBatch merkintää: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
@@ -1331,7 +1341,8 @@ class MainActivity : AppCompatActivity() {
                 VuorovahtiHelper.saveLastSyncStatus(this, totalFoundInBatch)
                 VuorovahtiHelper.ensureRemindersFromCalendar(this)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-                if (totalAddedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
+                saveSyncChangesHistory()
+                              if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                 Toast.makeText(
                     this,
                     "Valmis: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
@@ -1341,21 +1352,220 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun saveSyncChangesHistory() {
+        val arr = JSONArray()
+        for (item in syncChangesList) {
+            val obj = JSONObject().apply {
+                put("eventId", item.eventId)
+                put("type", item.type)
+                put("dateStr", item.dateStr)
+                put("timeStr", item.timeStr)
+                put("title", item.title)
+            }
+            arr.put(obj)
+        }
+        getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("last_sync_changes_json", arr.toString())
+            .apply()
+    }
+
     private fun sendNewShiftsAddedNotification(addedCount: Int) {
+        saveSyncChangesHistory()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_list_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(NotificationChannel(channelId, "Uudet työvuorolistat", NotificationManager.IMPORTANCE_HIGH))
         }
+        val summaryIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("OPEN_SYNC_SUMMARY", true)
+        }
+        val pi = PendingIntent.getActivity(
+            this, 3004, summaryIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val removedTxt = if (totalRemovedInBatch > 0) ", poistettu $totalRemovedInBatch" else ""
         val notif = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_launcher)
             .setSubText("Numeron Vuorovahti")
             .setContentTitle("Uudet työvuorot päivitetty!")
-            .setContentText("Kalenteriin vietiin $addedCount uutta tai muuttunutta työvuoroa/lomaa.")
+            .setContentText("Lisätty/muutettu $addedCount$removedTxt. Napauta tarkistaaksesi tai muokataksesi.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setContentIntent(pi)
             .build()
         nm.notify(3004, notif)
+    }
+
+    private fun showSyncSummaryDialog() {
+        val rawJson = getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
+            .getString("last_sync_changes_json", "[]") ?: "[]"
+        val arr = try { JSONArray(rawJson) } catch (_: Exception) { JSONArray() }
+
+        val dp = { v: Int -> (v * resources.displayMetrics.density).toInt() }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(14))
+            setBackgroundColor(Color.parseColor("#0F172A"))
+        }
+
+        root.addView(TextView(this).apply {
+            text = "Viimeisimmän synkronoinnin muutokset"
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+            setPadding(0, 0, 0, dp(6))
+        })
+
+        root.addView(TextView(this).apply {
+            text = "Voit muokata merkintää kalenterissa tai kumota yksittäisen lisäyksen."
+            textSize = 12.5f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(0, 0, 0, dp(12))
+        })
+
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+        }
+        val listCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        if (arr.length() == 0) {
+            listCol.addView(TextView(this).apply {
+                text = "Ei tallennettuja yksittäisiä vuoromuutoksia viimeisimmässä erässä."
+                textSize = 13.5f
+                setTextColor(Color.parseColor("#CBD5E1"))
+                setPadding(0, dp(12), 0, dp(12))
+            })
+        } else {
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val evId = obj.optLong("eventId", -1L)
+                val type = obj.optString("type", "ADDED")
+                val dateStr = obj.optString("dateStr", "")
+                val timeStr = obj.optString("timeStr", "")
+                val title = obj.optString("title", "Työvuoro")
+
+                val badgeText = when (type) {
+                    "UPDATED" -> "MUUTETTU"
+                    "REMOVED" -> "POISTETTU"
+                    else -> "UUSI"
+                }
+                val badgeColor = when (type) {
+                    "UPDATED" -> "#FB8C00"
+                    "REMOVED" -> "#EF4444"
+                    else -> "#10B981"
+                }
+
+                val itemCard = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
+                    layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(12).toFloat()
+                        setColor(Color.parseColor("#1E293B"))
+                        setStroke(dp(1), Color.parseColor("#334155"))
+                    }
+                }
+
+                val infoText = TextView(this).apply {
+                    text = "[$badgeText]  $dateStr  klo $timeStr
+$title"
+                    textSize = 13.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor(badgeColor))
+                }
+                itemCard.addView(infoText)
+
+                if (type != "REMOVED" && evId > 0L) {
+                    val actRow = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.END
+                        setPadding(0, dp(8), 0, 0)
+                    }
+
+                    val btnEdit = Button(this).apply {
+                        text = "Muokkaa"
+                        isAllCaps = false
+                        textSize = 12f
+                        setTextColor(Color.WHITE)
+                        background = GradientDrawable().apply {
+                            cornerRadius = dp(8).toFloat()
+                            setColor(Color.parseColor("#0284C7"))
+                        }
+                        minHeight = 0; minimumHeight = 0
+                        setPadding(dp(12), dp(6), dp(12), dp(6))
+                        layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) }
+                        setOnClickListener {
+                            try {
+                                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, evId)
+                                startActivity(Intent(Intent.ACTION_EDIT).apply { data = uri })
+                            } catch (_: Exception) {
+                                try {
+                                    val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, evId)
+                                    startActivity(Intent(Intent.ACTION_VIEW).apply { data = uri })
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+
+                    val btnDelete = Button(this).apply {
+                        text = "Peruuta / Poista"
+                        isAllCaps = false
+                        textSize = 12f
+                        setTextColor(Color.WHITE)
+                        background = GradientDrawable().apply {
+                            cornerRadius = dp(8).toFloat()
+                            setColor(Color.parseColor("#991B1B"))
+                        }
+                        minHeight = 0; minimumHeight = 0
+                        setPadding(dp(12), dp(6), dp(12), dp(6))
+                        setOnClickListener {
+                            contentResolver.delete(
+                                CalendarContract.Events.CONTENT_URI,
+                                "${CalendarContract.Events._ID} = ?",
+                                arrayOf(evId.toString())
+                            )
+                            VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
+                            VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
+                            infoText.text = "[PERUTTU]  $dateStr  klo $timeStr — Poistettu kalenterista"
+                            infoText.setTextColor(Color.parseColor("#64748B"))
+                            actRow.visibility = View.GONE
+                        }
+                    }
+
+                    actRow.addView(btnEdit)
+                    actRow.addView(btnDelete)
+                    itemCard.addView(actRow)
+                }
+
+                listCol.addView(itemCard)
+            }
+        }
+
+        scroll.addView(listCol)
+        root.addView(scroll)
+
+        val dlg = AlertDialog.Builder(this)
+            .setView(root)
+            .create()
+
+        val btnCloseDlg = Button(this).apply {
+            text = "Sulje"
+            isAllCaps = false
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.parseColor("#334155"))
+            }
+            layoutParams = LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(10) }
+            setOnClickListener { dlg.dismiss() }
+        }
+        root.addView(btnCloseDlg)
+        dlg.show()
     }
 
     private fun scheduleNextThreeWeekListCheck() {
@@ -1563,10 +1773,17 @@ class MainActivity : AppCompatActivity() {
             val exId = findShiftOnSameDay(calId, sMs, eMs, dayStartMs, dayEndMs)
 
             if (exId == null) {
-                insertEvent(calId, "Työvuoro", loc, desc, sMs, eMs, false, sDt.hour)
-                true
+                val newId = insertEvent(calId, "Työvuoro", loc, desc, sMs, eMs, false, sDt.hour)
+                if (newId != null) {
+                    syncChangesList.add(SyncChangeItem(newId, "ADDED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
+                }
+                newId != null
             } else {
-                updateEvent(exId, loc, desc, sMs, eMs, sDt.hour)
+                val updated = updateEvent(calId, exId, loc, desc, sMs, eMs, sDt.hour)
+                if (updated) {
+                    syncChangesList.add(SyncChangeItem(exId, "UPDATED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
+                }
+                updated
             }
         } catch (e: Exception) { false }
     }
@@ -1590,14 +1807,15 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun updateEvent(eventId: Long, loc: String, desc: String, sMs: Long, eMs: Long, startHour: Int): Boolean {
+    private fun updateEvent(calId: Long, eventId: Long, loc: String, desc: String, sMs: Long, eMs: Long, startHour: Int): Boolean {
         var curLoc = ""
         var curDesc = ""
         var curStart = 0L
         var curEnd = 0L
+        var curColor = 0
         contentResolver.query(
             CalendarContract.Events.CONTENT_URI,
-            arrayOf(CalendarContract.Events.EVENT_LOCATION, CalendarContract.Events.DESCRIPTION, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+            arrayOf(CalendarContract.Events.EVENT_LOCATION, CalendarContract.Events.DESCRIPTION, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND, CalendarContract.Events.EVENT_COLOR),
             "${CalendarContract.Events._ID} = ?",
             arrayOf(eventId.toString()),
             null
@@ -1607,25 +1825,35 @@ class MainActivity : AppCompatActivity() {
                 curDesc = it.getString(1) ?: ""
                 curStart = it.getLong(2)
                 curEnd = it.getLong(3)
+                curColor = if (!it.isNull(4)) it.getInt(4) else 0
             }
         }
+        val targetColor = VuorovahtiHelper.getShiftEventColor(desc.ifEmpty { "Työvuoro" }, startHour)
         val timeChanged = (curStart != sMs || curEnd != eMs)
         val textChanged = (loc.isNotEmpty() && (curLoc != loc || curDesc != desc))
-        if (!timeChanged && !textChanged) return false
+        val colorMissing = (curColor != targetColor)
+
+        if (!timeChanged && !textChanged && !colorMissing) return false
 
         val v = ContentValues().apply {
             put(CalendarContract.Events.DTSTART, sMs)
             put(CalendarContract.Events.DTEND, eMs)
             if (loc.isNotEmpty()) put(CalendarContract.Events.EVENT_LOCATION, loc)
             if (desc.isNotEmpty()) put(CalendarContract.Events.DESCRIPTION, desc)
-            VuorovahtiHelper.applyShiftColor(this, desc.ifEmpty { "Työvuoro" }, startHour)
+            applyColorWithFallback(this, calId, desc.ifEmpty { "Työvuoro" }, startHour)
         }
-        return try {
-            contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString())) > 0
+        try {
+            contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString()))
         } catch (_: Exception) {
-            v.remove(CalendarContract.Events.EVENT_COLOR)
-            contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString())) > 0
+            v.remove(CalendarContract.Events.EVENT_COLOR_KEY)
+            try {
+                contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString()))
+            } catch (_: Exception) {
+                v.remove(CalendarContract.Events.EVENT_COLOR)
+                contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString()))
+            }
         }
+        return timeChanged || textChanged
     }
 
     private fun reconcileRemovedShifts(calId: Long): Int {
@@ -1643,9 +1871,11 @@ class MainActivity : AppCompatActivity() {
             val args = arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString())
 
             val idsToDelete = mutableListOf<Long>()
+            val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
+            val dateStr = "${date.dayOfMonth}.${date.monthValue}.${date.year}"
             contentResolver.query(
                 CalendarContract.Events.CONTENT_URI,
-                arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+                arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND, CalendarContract.Events.DESCRIPTION),
                 sel,
                 args,
                 null
@@ -1654,8 +1884,12 @@ class MainActivity : AppCompatActivity() {
                     val id = c.getLong(0)
                     val sMs = c.getLong(1)
                     val eMs = c.getLong(2)
+                    val desc = c.getString(3) ?: "Työvuoro"
                     if (sMs > now && !syncedShiftRangesInBatch.contains(Pair(sMs, eMs))) {
                         idsToDelete.add(id)
+                        val sStr = Instant.ofEpochMilli(sMs).atZone(zone).toLocalTime().format(timeFmt)
+                        val eStr = Instant.ofEpochMilli(eMs).atZone(zone).toLocalTime().format(timeFmt)
+                        syncChangesList.add(SyncChangeItem(id, "REMOVED", dateStr, "$sStr - $eStr", desc.ifEmpty { "Työvuoro" }))
                     }
                 }
             }
@@ -1694,6 +1928,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         syncedDatesInBatch.clear()
+            syncChangesList.clear()
         syncedShiftRangesInBatch.clear()
         totalFoundInBatch = 0
         totalAddedInBatch = 0
@@ -1720,7 +1955,7 @@ class MainActivity : AppCompatActivity() {
                                 if (res?.contains("NEXT") == true) {
                                     bgWeb.postDelayed({
                                         bgWeb.evaluateJavascript("""
-                                            AndroidSilentBridge.onSilentData("[]", document.body ? document.body.innerText : "", window.location.href);
+                                            var cells=[]; var tds=document.querySelectorAll("td"); for(var j=0;j<tds.length;j++){var td=tds[j]; var cls=(td.className||"").toLowerCase(); if(/week|vk|wk/.test(cls)) continue; cells.push({text:(td.innerText||"").trim(), isOther:/other|old|new|disabled|off|outside|gray|grey/.test(cls), extra:""});} AndroidSilentBridge.onSilentData(JSON.stringify(cells), document.body ? document.body.innerText : "", window.location.href);
                                         """.trimIndent(), null)
                                     }, 1500L)
                                 } else {
@@ -1831,20 +2066,74 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8) {
+    private fun applyColorWithFallback(v: ContentValues, calId: Long, label: String, startHour: Int) {
+        val targetColor = VuorovahtiHelper.getShiftEventColor(label, startHour)
+        v.put(CalendarContract.Events.EVENT_COLOR, targetColor)
+        try {
+            var accountName = ""
+            var accountType = ""
+            contentResolver.query(
+                CalendarContract.Calendars.CONTENT_URI,
+                arrayOf(CalendarContract.Calendars.ACCOUNT_NAME, CalendarContract.Calendars.ACCOUNT_TYPE),
+                "${CalendarContract.Calendars._ID} = ?",
+                arrayOf(calId.toString()),
+                null
+            )?.use { c ->
+                if (c.moveToFirst()) {
+                    accountName = c.getString(0) ?: ""
+                    accountType = c.getString(1) ?: ""
+                }
+            }
+            if (accountName.isNotEmpty() && accountType.isNotEmpty()) {
+                var bestKey: String? = null
+                var bestDist = Int.MAX_VALUE
+                val r1 = Color.red(targetColor); val g1 = Color.green(targetColor); val b1 = Color.blue(targetColor)
+                contentResolver.query(
+                    CalendarContract.Colors.CONTENT_URI,
+                    arrayOf(CalendarContract.Colors.COLOR_KEY, CalendarContract.Colors.COLOR),
+                    "${CalendarContract.Colors.ACCOUNT_NAME} = ? AND ${CalendarContract.Colors.ACCOUNT_TYPE} = ? AND ${CalendarContract.Colors.COLOR_TYPE} = ?",
+                    arrayOf(accountName, accountType, CalendarContract.Colors.TYPE_EVENT.toString()),
+                    null
+                )?.use { cc ->
+                    while (cc.moveToNext()) {
+                        val key = cc.getString(0) ?: continue
+                        val col = cc.getInt(1)
+                        val dist = (r1 - Color.red(col)) * (r1 - Color.red(col)) +
+                                   (g1 - Color.green(col)) * (g1 - Color.green(col)) +
+                                   (b1 - Color.blue(col)) * (b1 - Color.blue(col))
+                        if (dist < bestDist) {
+                            bestDist = dist
+                            bestKey = key
+                        }
+                    }
+                }
+                if (bestKey != null) {
+                    v.put(CalendarContract.Events.EVENT_COLOR_KEY, bestKey)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8): Long? {
+        val colorLabel = if (allDay) "Loma" else desc.ifEmpty { title }
         val v = ContentValues().apply {
             put(CalendarContract.Events.DTSTART, sMs); put(CalendarContract.Events.DTEND, eMs)
             put(CalendarContract.Events.TITLE, title); put(CalendarContract.Events.EVENT_LOCATION, loc)
             put(CalendarContract.Events.DESCRIPTION, desc); put(CalendarContract.Events.CALENDAR_ID, calId)
             put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
             put(CalendarContract.Events.EVENT_TIMEZONE, if (allDay) "UTC" else ZoneId.systemDefault().id)
-            VuorovahtiHelper.applyShiftColor(this, if (allDay) "Loma" else desc.ifEmpty { title }, startHour)
+            applyColorWithFallback(this, calId, colorLabel, startHour)
         }
-        try {
-            contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)
+        return try {
+            contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)?.lastPathSegment?.toLongOrNull()
         } catch (_: Exception) {
-            v.remove(CalendarContract.Events.EVENT_COLOR)
-            contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)
+            v.remove(CalendarContract.Events.EVENT_COLOR_KEY)
+            try {
+                contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)?.lastPathSegment?.toLongOrNull()
+            } catch (_: Exception) {
+                v.remove(CalendarContract.Events.EVENT_COLOR)
+                contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)?.lastPathSegment?.toLongOrNull()
+            }
         }
     }
 
