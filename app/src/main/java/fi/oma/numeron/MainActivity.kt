@@ -632,15 +632,15 @@ class MainActivity : AppCompatActivity() {
         fun createNavButton(label: String, weight: Float = 1f, action: () -> Unit): Button {
             return Button(this).apply {
                 text = label
-                textSize = 11.5f
+                textSize = 13.5f
                 setTextColor(Color.WHITE)
                 isAllCaps = false
-                setPadding(6, 8, 6, 8)
+                setPadding(12, 32, 12, 32)
                 minHeight = 0
                 minimumHeight = 0
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight).apply {
-                    marginStart = 5
-                    marginEnd = 5
+                    marginStart = 6
+                    marginEnd = 6
                 }
                 setOnClickListener { action() }
             }
@@ -654,8 +654,8 @@ class MainActivity : AppCompatActivity() {
         btnSync = createNavButton("Synkronoi") { checkPermissionsAndSync() }.apply {
             visibility = View.GONE
         }
-        btnSettings = createNavButton("⚙", 0.55f) { openSettings() }
-        btnClose = createNavButton("✕", 0.55f) { finishAndRemoveTask() }
+        btnSettings = createNavButton("⚙", 0.68f) { openSettings() }
+        btnClose = createNavButton("✕", 0.68f) { finishAndRemoveTask() }
 
         buttonBar.addView(btnStamp)
         buttonBar.addView(btnWishes)
@@ -1684,7 +1684,7 @@ class MainActivity : AppCompatActivity() {
                 val res = processListBlock(calId, d, mo, yr, pageText.substring(sIdx, eIdx).trim(), fmt, vacationDays)
                 found += res.first; added += res.second
             }
-            if (found > 0) {
+            if (matches.size >= 5 || found > 0) {
                 for (i in matches.indices) {
                     val m = matches[i]
                     val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
@@ -1862,6 +1862,7 @@ class MainActivity : AppCompatActivity() {
         if (!timeChanged && !textChanged && !colorMissing) return false
 
         val v = ContentValues().apply {
+            put(CalendarContract.Events.TITLE, "Työvuoro")
             put(CalendarContract.Events.DTSTART, sMs)
             put(CalendarContract.Events.DTEND, eMs)
             if (loc.isNotEmpty()) put(CalendarContract.Events.EVENT_LOCATION, loc)
@@ -2008,7 +2009,11 @@ class MainActivity : AppCompatActivity() {
         bgWeb.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 val u = url ?: ""
-                if (u.contains("/Calendar/", ignoreCase = true) && !u.contains("login", ignoreCase = true)) {
+                if (u.contains("login", ignoreCase = true) || u.contains("auth", ignoreCase = true)) {
+                              cleanupSilentSync()
+                              return
+                          }
+                          if (u.contains("/Calendar/", ignoreCase = true)) {
                     view?.postDelayed({
                         view.evaluateJavascript("""
                             (function() {
@@ -2144,6 +2149,7 @@ class MainActivity : AppCompatActivity() {
     private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8): Long? {
         val colorLabel = if (allDay) "Loma" else desc.ifEmpty { title }
         val v = ContentValues().apply {
+            put(CalendarContract.Events.TITLE, "Työvuoro")
             put(CalendarContract.Events.DTSTART, sMs); put(CalendarContract.Events.DTEND, eMs)
             put(CalendarContract.Events.TITLE, title); put(CalendarContract.Events.EVENT_LOCATION, loc)
             put(CalendarContract.Events.DESCRIPTION, desc); put(CalendarContract.Events.CALENDAR_ID, calId)
