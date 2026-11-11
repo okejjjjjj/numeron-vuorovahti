@@ -1,66 +1,28 @@
 import pathlib, re
 
-# 1. Korjataan Edge-to-Edge (Reunasta reunaan -näyttö Android 15 varten)
-d = pathlib.Path("app/src/main/java/fi/oma/numeron")
-ma_path = d / "MainActivity.kt"
-if ma_path.exists():
-    ma = ma_path.read_text(encoding="utf-8")
-
-    if "import androidx.activity.enableEdgeToEdge" not in ma:
-        ma = ma.replace(
-            "import android.os.Bundle",
-            "import android.os.Bundle\nimport androidx.activity.enableEdgeToEdge\nimport androidx.core.view.ViewCompat\nimport androidx.core.view.WindowInsetsCompat"
-        )
-
-    if "enableEdgeToEdge()" not in ma:
-        ma = re.sub(
-            r'(override fun onCreate\(savedInstanceState: Bundle\?\) \{)',
-            r'\1\n        enableEdgeToEdge()',
-            ma
-        )
-        
-        ma = re.sub(
-            r'(super\.onCreate\(savedInstanceState\))',
-            r'\1\n        ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { v, insets ->\n            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())\n            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)\n            insets\n        }',
-            ma
-        )
-
-    ma_path.write_text(ma, encoding="utf-8")
-    print("MainActivity.kt päivitetty Edge-to-Edge -tuella!")
-
-# 2. Varmistetaan Proguard-säännöt (omat luokat + R8 virheiden ohitus)
-pg_path = pathlib.Path("app/proguard-rules.pro")
-pg = pg_path.read_text(encoding="utf-8") if pg_path.exists() else ""
-
-rules = """
-# R8 ohitussäännöt Google Tinkille
--dontwarn javax.annotation.**
--dontwarn javax.annotation.concurrent.**
-
-# Suojataan omat luokat ja JS-silta (tärkeä WebViewille)
--keep class fi.oma.numeron.** { *; }
--keepclassmembers class * {
-    @android.webkit.JavascriptInterface <methods>;
-}
-"""
-if "-dontwarn javax.annotation" not in pg:
-    pg_path.write_text(pg + rules, encoding="utf-8")
-    print("proguard-rules.pro luotu/päivitetty.")
-
-# 3. Kytketään R8 päälle ja kerrotaan Gradlelle mistä säännöt löytyvät
 for file_name in ["app/build.gradle.kts", "app/build.gradle"]:
     gf = pathlib.Path(file_name)
     if gf.exists():
         c = gf.read_text(encoding="utf-8")
         
-        c = c.replace("isMinifyEnabled = false", "isMinifyEnabled = true\n            isShrinkResources = true")
-        c = c.replace("minifyEnabled false", "minifyEnabled true\n            shrinkResources true")
-        
-        if "isMinifyEnabled = true" in c and "proguard-rules.pro" not in c:
-            c = c.replace("isMinifyEnabled = true", 'isMinifyEnabled = true\n            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")')
-            
-        if "minifyEnabled true" in c and "proguard-rules.pro" not in c:
-            c = c.replace("minifyEnabled true", "minifyEnabled true\n            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'")
-            
+        # VersionCode automaattinen nosto (+1)
+        vc_match = re.search(r'versionCode(?:\s*=\s*|\s+)(\d+)', c)
+        if vc_match:
+            old_vc = int(vc_match.group(1))
+            new_vc = old_vc + 1
+            c = re.sub(rf'(versionCode(?:\s*=\s*|\s+)){old_vc}\b', rf'\g<1>{new_vc}', c)
+            print(f"versionCode nostettu: {old_vc} -> {new_vc}")
+
+        # VersionName automaattinen nosto (esim. "1.0.4" -> "1.0.5")
+        vn_match = re.search(r'versionName(?:\s*=\s*|\s+)["\']([^"\']+)["\']', c)
+        if vn_match:
+            old_vn = vn_match.group(1)
+            parts = old_vn.split('.')
+            if parts[-1].isdigit():
+                parts[-1] = str(int(parts[-1]) + 1)
+                new_vn = ".".join(parts)
+                c = re.sub(rf'(versionName(?:\s*=\s*|\s+)["\']){old_vn}(["\'])', rf'\g<1>{new_vn}\g<2>', c)
+                print(f"versionName nostettu: {old_vn} -> {new_vn}")
+
         gf.write_text(c, encoding="utf-8")
-        print(f"{file_name} päivitetty käyttämään omia ProGuard-sääntöjä!")
+        print(f"{file_name} päivitetty (Versiot nostettu)!")
