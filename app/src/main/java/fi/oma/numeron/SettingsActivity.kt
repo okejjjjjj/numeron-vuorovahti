@@ -105,6 +105,42 @@ class SettingsActivity : AppCompatActivity() {
             }
             container.addView(card)
             return card
+
+
+            
+                    // Versionumero otsikkoon ja Play Core -päivitystarkistus
+        try {
+            val pInfo = packageManager.getPackageInfo(packageName, 0)
+            val version = pInfo.versionName
+            val rootView = findViewById<android.view.ViewGroup>(android.R.id.content)
+            fun updateLabels(v: android.view.View) {
+                if (v is android.widget.TextView && v.text.toString().trim().equals("Asetukset", ignoreCase = true)) {
+                    v.text = "Asetukset (v$version)"
+                } else if (v is android.view.ViewGroup) {
+                    for (i in 0 until v.childCount) updateLabels(v.getChildAt(i))
+                }
+            }
+            rootView.post { updateLabels(rootView) }
+
+            val appUpdateManager = com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(this)
+            appUpdateManager.appUpdateInfo.addOnSuccessListener { info ->
+                if (info.updateAvailability() == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE) {
+                    android.app.AlertDialog.Builder(this)
+                        .setTitle("Päivitys saatavilla!")
+                        .setMessage("Uusi versio Vuorovahdista on saatavilla Play Kaupassa.")
+                        .setPositiveButton("Päivitä") { _, _ ->
+                            try {
+                                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("market://details?id=$packageName")))
+                            } catch (_: Exception) {
+                                startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://play.google.com/store/apps/details?id=$packageName")))
+                            }
+                        }
+                        .setNegativeButton("Myöhemmin", null)
+                        .show()
+                }
+            }
+        } catch (_: Exception) {}
+
         }
 
         fun styleEdit(edit: EditText) {
