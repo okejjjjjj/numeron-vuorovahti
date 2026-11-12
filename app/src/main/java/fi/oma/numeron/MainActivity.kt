@@ -582,11 +582,14 @@ class MainActivity : AppCompatActivity() {
             }
             
             // Latauksen kuuntelija (DownloadListener)
-            setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                        setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
                 try {
-                    val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                    var fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                    if (fileName.endsWith(".aspx", ignoreCase = true) || !fileName.endsWith(".pdf", ignoreCase = true)) {
+                        fileName = "Tyoraikalaskelma.pdf"
+                    }
                     val request = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
-                        setMimeType(mimeType)
+                        setMimeType("application/pdf")
                         addRequestHeader("cookie", android.webkit.CookieManager.getInstance().getCookie(url))
                         addRequestHeader("User-Agent", userAgent)
                         setTitle(fileName)
@@ -597,6 +600,7 @@ class MainActivity : AppCompatActivity() {
                     android.widget.Toast.makeText(this@MainActivity, "Avataan...", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (_: Exception) {}
             }
+
 
             webChromeClient = object : WebChromeClient() {
                 override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
