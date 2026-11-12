@@ -544,6 +544,30 @@ class MainActivity : AppCompatActivity() {
 
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
 
+        // 1. Rekisteröidään PDF:n avaaja (laitetaan tämä ennen webViewin luomista)
+        val downloadReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+                val id = intent.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+                val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                val uri = dm.getUriForDownloadedFile(id)
+                if (uri != null) {
+                    val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, dm.getMimeTypeForDownloadedFile(id) ?: "application/pdf")
+                        flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
+                    }
+                    try { startActivity(openIntent) } catch (_: Exception) {
+                        android.widget.Toast.makeText(this@MainActivity, "Ei PDF-lukijaa asennettuna", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(downloadReceiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), android.content.Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(downloadReceiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+        }
+
+        // 2. Sinun alkuperäinen webView-koodisi, johon on lisätty setDownloadListener
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             setBackgroundColor(Color.parseColor("#0F172A"))
@@ -555,6 +579,25 @@ class MainActivity : AppCompatActivity() {
                 builtInZoomControls = true
                 displayZoomControls = false
             }
+            
+            // 3. TÄSSÄ ON UUSI LATAUKSEN NAPPAAJA:
+            setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                try {
+                    val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                    val request = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
+                        setMimeType(mimeType)
+                        addRequestHeader("cookie", android.webkit.CookieManager.getInstance().getCookie(url))
+                        addRequestHeader("User-Agent", userAgent)
+                        setTitle(fileName)
+                        setDestinationInExternalFilesDir(this@MainActivity, android.os.Environment.DIRECTORY_DOWNLOADS, fileName)
+                    }
+                    val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                    dm.enqueue(request)
+                    android.widget.Toast.makeText(this@MainActivity, "Avataan...", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (_: Exception) {}
+            }
+        }
+
             webChromeClient = object : WebChromeClient() {
                 override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
                     val msg = (message ?: "").lowercase()
