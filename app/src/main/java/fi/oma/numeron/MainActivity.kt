@@ -568,6 +568,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // 2. Sinun alkuperäinen webView-koodisi, johon on lisätty setDownloadListener
+        // 2. Sinun alkuperäinen webView-koodisi, johon on lisätty setDownloadListener ja turvalliset clientit
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             setBackgroundColor(Color.parseColor("#0F172A"))
@@ -580,7 +581,7 @@ class MainActivity : AppCompatActivity() {
                 displayZoomControls = false
             }
             
-            // 3. TÄSSÄ ON UUSI LATAUKSEN NAPPAAJA:
+            // Latauksen kuuntelija (DownloadListener)
             setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
                 try {
                     val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
@@ -596,7 +597,6 @@ class MainActivity : AppCompatActivity() {
                     android.widget.Toast.makeText(this@MainActivity, "Avataan...", android.widget.Toast.LENGTH_SHORT).show()
                 } catch (_: Exception) {}
             }
-        }
 
             webChromeClient = object : WebChromeClient() {
                 override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
@@ -619,6 +619,7 @@ class MainActivity : AppCompatActivity() {
                     return super.onJsConfirm(view, url, message, result)
                 }
             }
+
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
@@ -660,6 +661,7 @@ class MainActivity : AppCompatActivity() {
             }
             addJavascriptInterface(CalendarBridge(), "AndroidBridge")
         }
+
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
