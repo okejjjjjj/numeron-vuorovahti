@@ -11,8 +11,8 @@ android {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.12"
+        versionCode = 13
+        versionName = "1.13"
     }
 
     signingConfigs {
