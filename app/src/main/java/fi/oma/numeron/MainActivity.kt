@@ -544,31 +544,9 @@ class MainActivity : AppCompatActivity() {
 
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
 
-        // 1. Rekisteröidään PDF:n avaaja (laitetaan tämä ennen webViewin luomista)
-        val downloadReceiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
-                val id = intent.getLongExtra(android.app.DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-                val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-                val uri = dm.getUriForDownloadedFile(id)
-                if (uri != null) {
-                    val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, dm.getMimeTypeForDownloadedFile(id) ?: "application/pdf")
-                        flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
-                    }
-                    try { startActivity(openIntent) } catch (_: Exception) {
-                        android.widget.Toast.makeText(this@MainActivity, "Ei PDF-lukijaa asennettuna", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(downloadReceiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE), android.content.Context.RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(downloadReceiver, android.content.IntentFilter(android.app.DownloadManager.ACTION_DOWNLOAD_COMPLETE))
-        }
+        // Huom: Aiempi downloadReceiver poistettiin tästä, koska uusi malli ohittaa koko DownloadManagerin!
 
-        // 2. Sinun alkuperäinen webView-koodisi, johon on lisätty setDownloadListener
-        // 2. Sinun alkuperäinen webView-koodisi, johon on lisätty setDownloadListener ja turvalliset clientit
+        // 2. Alkuperäinen webView-koodisi, johon on lisätty UUSI säiepohjainen lataaja ja turvalliset clientit
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             setBackgroundColor(Color.parseColor("#0F172A"))
@@ -581,26 +559,49 @@ class MainActivity : AppCompatActivity() {
                 displayZoomControls = false
             }
             
-            // Latauksen kuuntelija (DownloadListener)
-                        setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+            // 3. UUSI LATAUKSEN NAPPAAJA JOKA OHITTAA DOWNLOADMANAGERIN:
+            setDownloadListener { url, _, _, mimeType, _ ->
                 try {
-                    var fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
-                    if (fileName.endsWith(".aspx", ignoreCase = true) || !fileName.endsWith(".pdf", ignoreCase = true)) {
-                        fileName = "Tyoraikalaskelma.pdf"
-                    }
-                    val request = android.app.DownloadManager.Request(android.net.Uri.parse(url)).apply {
-                        setMimeType("application/pdf")
-                        addRequestHeader("cookie", android.webkit.CookieManager.getInstance().getCookie(url))
-                        addRequestHeader("User-Agent", userAgent)
-                        setTitle(fileName)
-                        setDestinationInExternalFilesDir(this@MainActivity, android.os.Environment.DIRECTORY_DOWNLOADS, fileName)
-                    }
-                    val dm = getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
-                    dm.enqueue(request)
-                    android.widget.Toast.makeText(this@MainActivity, "Avataan...", android.widget.Toast.LENGTH_SHORT).show()
+                    android.widget.Toast.makeText(this@MainActivity, "Haetaan raporttia...", android.widget.Toast.LENGTH_SHORT).show()
+                    
+                    Thread {
+                        try {
+                            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                            val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
+                            if (cookie != null) connection.setRequestProperty("Cookie", cookie)
+                            connection.connect()
+
+                            val file = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Tyoraikalaskelma.pdf")
+                            connection.inputStream.use { input ->
+                                java.io.FileOutputStream(file).use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+
+                            runOnUiThread {
+                                try {
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                                        this@MainActivity,
+                                        "${packageName}.provider",
+                                        file
+                                    )
+                                    val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                        setDataAndType(uri, "application/pdf")
+                                        flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
+                                    }
+                                    startActivity(openIntent)
+                                } catch (_: Exception) {
+                                    android.widget.Toast.makeText(this@MainActivity, "Ei PDF-lukijaa asennettuna", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                android.widget.Toast.makeText(this@MainActivity, "Virhe latauksessa", android.widget.Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }.start()
                 } catch (_: Exception) {}
             }
-
 
             webChromeClient = object : WebChromeClient() {
                 override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
@@ -671,6 +672,8 @@ class MainActivity : AppCompatActivity() {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
+
+
 
         val navWrapper = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
