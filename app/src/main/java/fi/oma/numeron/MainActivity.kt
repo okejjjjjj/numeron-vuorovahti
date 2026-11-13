@@ -2327,5 +2327,4 @@ class MainActivity : AppCompatActivity() {
         private fun scheduleNextThreeWeekListCheck() {
         VuorovahtiHelper.scheduleNextThreeWeekListCheck(this)
     }
-
 }
