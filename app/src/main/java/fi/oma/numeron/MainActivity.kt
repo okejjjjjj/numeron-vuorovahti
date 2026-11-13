@@ -413,21 +413,20 @@ object VuorovahtiHelper {
         if (freeDaysCount <= 0) return null
 
         val singleDayGreetings = listOf(
-    "Huomenna ei ole vuoroa – ota rennosti ja nauti vapaasta!",
-    "Vuoro paketissa ja huominen vapaana. Mukavaa huilipäivää!",
-    "Hyvää huomista vapaapäivää, nollaa ajatukset ihan rauhassa!",
-    "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapäivää!",
-    "Ansaittu hengähdystauko edessä – leppoisaa vapaapäivää!"
-)
+            "Huomenna ei ole vuoroa – ota rennosti ja nauti vapaasta!",
+            "Vuoro paketissa ja huominen vapaana. Mukavaa huilipäivää!",
+            "Hyvää huomista vapaapäivää, nollaa ajatukset ihan rauhassa!",
+            "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapäivää!",
+            "Ansaittu hengähdystauko edessä – leppoisaa vapaapäivää!"
+        )
 
-val multiDayGreetings = listOf(
-    "Työputki takana ja vapaat edessä! Nauti tulevista vapaapäivistä!",
-    "Useampi vapaapäivä edessä – mukavia ja rentouttavia vapaita!",
-    "Vapaat alkoivat nyt. Ota ihan rennosti ja lataa akut rauhassa!",
-    "Hyviä vapaita! Nyt on hyvin aikaa hengähtää ja puuhailla omia juttuja.",
-    "Vuorot on tältä erää taputeltu – oikein leppoisia vapaapäiviä!"
-)
-
+        val multiDayGreetings = listOf(
+            "Työputki takana ja vapaat edessä! Nauti tulevista vapaapäivistä!",
+            "Useampi vapaapäivä edessä – mukavia ja rentouttavia vapaita!",
+            "Vapaat alkoivat nyt. Ota ihan rennosti ja lataa akut rauhassa!",
+            "Hyviä vapaita! Nyt on hyvin aikaa hengähtää ja puuhailla omia juttuja.",
+            "Vuorot on tältä erää taputeltu – oikein leppoisia vapaapäiviä!"
+        )
 
         return if (freeDaysCount == 1) {
             singleDayGreetings.random()
@@ -544,9 +543,6 @@ class MainActivity : AppCompatActivity() {
 
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
 
-        // Huom: Aiempi downloadReceiver poistettiin tästä, koska uusi malli ohittaa koko DownloadManagerin!
-
-        // 2. Alkuperäinen webView-koodisi, johon on lisätty UUSI säiepohjainen lataaja ja turvalliset clientit
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
             setBackgroundColor(Color.parseColor("#0F172A"))
@@ -557,54 +553,6 @@ class MainActivity : AppCompatActivity() {
                 setSupportZoom(true)
                 builtInZoomControls = true
                 displayZoomControls = false
-            }
-            
-            // 3. UUSI LATAUKSEN NAPPAAJA JOKA OHITTAA DOWNLOADMANAGERIN:
-            setDownloadListener { url, userAgent, _, mimeType, _ ->
-                try {
-                    android.widget.Toast.makeText(this@MainActivity, "Haetaan raporttia...", android.widget.Toast.LENGTH_SHORT).show()
-                    
-                    Thread {
-                        try {
-                            val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                            connection.setRequestProperty("User-Agent", userAgent)
-connection.setRequestProperty("Accept", "application/pdf, text/html, */*")
-connection.setRequestProperty("Referer", url)
-
-                            val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
-                            if (cookie != null) connection.setRequestProperty("Cookie", cookie)
-                            connection.connect()
-
-                            val file = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), "Tyoraikalaskelma.pdf")
-                            connection.inputStream.use { input ->
-                                java.io.FileOutputStream(file).use { output ->
-                                    input.copyTo(output)
-                                }
-                            }
-
-                            runOnUiThread {
-                                try {
-                                    val uri = androidx.core.content.FileProvider.getUriForFile(
-                                        this@MainActivity,
-                                        "${packageName}.provider",
-                                        file
-                                    )
-                                    val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                        setDataAndType(uri, "application/pdf")
-                                        flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
-                                    }
-                                    startActivity(openIntent)
-                                } catch (_: Exception) {
-                                    android.widget.Toast.makeText(this@MainActivity, "Ei PDF-lukijaa asennettuna", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        } catch (e: Exception) {
-                            runOnUiThread {
-                                android.widget.Toast.makeText(this@MainActivity, "Virhe latauksessa", android.widget.Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }.start()
-                } catch (_: Exception) {}
             }
 
             webChromeClient = object : WebChromeClient() {
@@ -629,7 +577,7 @@ connection.setRequestProperty("Referer", url)
                 }
             }
 
-                        webViewClient = object : WebViewClient() {
+            webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     android.webkit.CookieManager.getInstance().flush()
@@ -653,8 +601,38 @@ connection.setRequestProperty("Referer", url)
                         injectWishProtection()
                     }
 
-                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true) && !pendingAutoStamp) {
-                        webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
+                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true)) {
+                        if (!pendingAutoStamp) {
+                            webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
+                        }
+                        
+                        // UUSI: Piilotetaan Saldot-sarake lennosta
+                        val hideBalancesJs = """
+                            setTimeout(function() {
+                                var headers = document.querySelectorAll('th, td, div');
+                                for (var i = 0; i < headers.length; i++) {
+                                    var el = headers[i];
+                                    var text = (el.innerText || '').trim().toLowerCase();
+                                    
+                                    if (text.indexOf('saldo') === 0) {
+                                        if (el.tagName.toLowerCase() === 'th' || el.tagName.toLowerCase() === 'td') {
+                                            var table = el.closest('table');
+                                            if (table) {
+                                                var cellIndex = el.cellIndex;
+                                                for (var r = 0; r < table.rows.length; r++) {
+                                                    if (table.rows[r].cells.length > cellIndex) {
+                                                        table.rows[r].cells[cellIndex].style.display = 'none';
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            el.style.display = 'none';
+                                        }
+                                    }
+                                }
+                            }, 300);
+                        """.trimIndent()
+                        view?.evaluateJavascript(hideBalancesJs, null)
                     }
 
                     if (pendingAutoStamp) {
@@ -668,57 +646,52 @@ connection.setRequestProperty("Referer", url)
                     }
                     
                     // --- TÄSSÄ ON UUSI PDF:N PELASTAJA (Vain Raportit-sivulle) ---
-                    // --- TÄSSÄ ON UUSI PDF:N PELASTAJA (Vain Raportit-sivulle) ---
                     if (currentUrl.contains("WorkShiftReport", ignoreCase = true)) {
                         val js = """
-                            setTimeout(function() {
+                            // Etsitään nappia toistuvasti kunnes se löytyy
+                            var hijacker = setInterval(function() {
                                 var btns = document.querySelectorAll('input, button, a');
                                 var printBtn = null;
                                 for(var i=0; i<btns.length; i++) {
-                                    var txt = (btns[i].value || btns[i].innerText || '').trim();
-                                    if(txt === 'Tulosta') { printBtn = btns[i]; break; }
+                                    var txt = (btns[i].value || btns[i].innerText || '').trim().toLowerCase();
+                                    if(txt === 'tulosta') { printBtn = btns[i]; break; }
                                 }
                                 if(printBtn && !printBtn.dataset.hijacked) {
-                                    // 1. Tehdään napista täydellinen klooni
+                                    clearInterval(hijacker); // Nappi löytyi, lopetetaan etsintä!
+                                    
                                     var newBtn = printBtn.cloneNode(true);
                                     newBtn.dataset.hijacked = 'true';
                                     
-                                    // 2. Tuhotaan alkuperäiset ominaisuudet (jotka yrittävät avata uusia ikkunoita)
                                     newBtn.removeAttribute('onclick'); 
                                     newBtn.removeAttribute('target');
                                     if(newBtn.tagName.toLowerCase() === 'button' || newBtn.tagName.toLowerCase() === 'input') {
-                                        newBtn.type = 'button'; // Estää lomakkeen perinteisen lähetyksen
+                                        newBtn.type = 'button'; 
                                     }
                                     
-                                    // 3. Korvataan vanha nappi uudella puhtaalla kloonilla
                                     printBtn.parentNode.replaceChild(newBtn, printBtn);
 
-                                    // 4. Lisätään kloonille vain meidän oma hiljainen taustalataus
                                     newBtn.addEventListener('click', function(e) {
                                         e.preventDefault();
                                         e.stopPropagation();
                                         
-                                        // ÄLYKKÄÄMPI NIMEN HAKU: Etsitään vain näkyvissä oleva valikko
                                         var fileName = "Raportti";
                                         var selects = document.querySelectorAll('select');
                                         for (var j = 0; j < selects.length; j++) {
                                             var sel = selects[j];
-                                            // offsetParent !== null varmistaa, että valikko on oikeasti ruudulla eikä piilotettuna
                                             if (sel.offsetParent !== null && sel.selectedIndex >= 0) {
                                                 var txt = sel.options[sel.selectedIndex].text.trim();
                                                 if (txt && txt.length > 2) {
                                                     fileName = txt;
-                                                    break; // Löydettiin oikea näkyvä valikko, lopetetaan etsintä
+                                                    break; 
                                                 }
                                             }
                                         }
                                         
-                                        // Siivotaan erikoismerkit ja välilyönnit
                                         fileName = fileName.replace(/[^a-zA-Z0-9äöÄÖåÅ -]/g, '').replace(/\s+/g, '_');
                                         var fullFileName = fileName + ".pdf";
 
                                         PdfBridge.showToast('Luodaan: ' + fullFileName + '...');
-                                        var form = document.forms[0];
+                                        var form = document.forms[0] || newBtn.closest('form');
                                         var fd = new FormData(form);
                                         if (newBtn.name) fd.append(newBtn.name, newBtn.value);
                                         
@@ -731,22 +704,17 @@ connection.setRequestProperty("Referer", url)
                                             reader.readAsDataURL(blob);
                                         }).catch(err => PdfBridge.showToast('Virhe: ' + err));
                                     });
-
                                 }
-                            }, 800);
+                            }, 500); // 500ms viive tarkistusten välillä
                         """.trimIndent()
-
                         view?.evaluateJavascript(js, null)
                     }
-
                 }
             }
             
-            // Vanha CalendarBridge pysyy paikallaan
             addJavascriptInterface(CalendarBridge(), "AndroidBridge")
             
-            // --- UUSI PDF-RAJAPINTA, JOKA OTTAA TIEDOSTON VASTAAN JAVASCRIPTILTÄ ---
-                        // --- UUSI PDF-RAJAPINTA (Osaa nyt ottaa nimen vastaan JS-koodilta) ---
+            // --- UUSI PDF-RAJAPINTA (Osaa nyt ottaa nimen vastaan JS-koodilta) ---
             addJavascriptInterface(object {
                 @android.webkit.JavascriptInterface
                 fun savePdf(base64Data: String, fileName: String) {
@@ -754,7 +722,6 @@ connection.setRequestProperty("Referer", url)
                         try {
                             val data = android.util.Base64.decode(base64Data.substringAfter(","), android.util.Base64.DEFAULT)
                             
-                            // Käytetään JS-koodin lähettämää dynaamista nimeä! Varmuuskopiona "Raportti.pdf" jos nimi jostain syystä puuttuu
                             val safeName = if (fileName.isNotBlank()) fileName else "Raportti.pdf"
                             val file = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), safeName)
                             
@@ -778,16 +745,12 @@ connection.setRequestProperty("Referer", url)
                 }
             }, "PdfBridge")
 
-        } // <- Tähän päättyy WebViewin asetusten blokki!
-
-
+        } // <- WebViewin asetusten blokki päättyy tähän
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
-
-
 
         val navWrapper = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1347,7 +1310,7 @@ connection.setRequestProperty("Referer", url)
                 totalAddedInBatch = 0
                 totalRemovedInBatch = 0
                 syncedDatesInBatch.clear()
-            syncChangesList.clear()
+                syncChangesList.clear()
                 syncedShiftRangesInBatch.clear()
                 extractShiftsFromPage(forceList = true)
             }
@@ -1479,7 +1442,7 @@ connection.setRequestProperty("Referer", url)
                     VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                     VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
                     saveSyncChangesHistory()
-                              if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
+                    if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                     Toast.makeText(
                         this@MainActivity,
                         "Tarkistettu $totalFoundInBatch merkintää: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
@@ -1525,7 +1488,7 @@ connection.setRequestProperty("Referer", url)
                 VuorovahtiHelper.ensureRemindersFromCalendar(this)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                 saveSyncChangesHistory()
-                              if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
+                if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                 Toast.makeText(
                     this,
                     "Valmis: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
@@ -1749,10 +1712,6 @@ connection.setRequestProperty("Referer", url)
         }
         root.addView(btnCloseDlg)
         dlg.show()
-    }
-
-    private fun scheduleNextThreeWeekListCheck() {
-        VuorovahtiHelper.scheduleNextThreeWeekListCheck(this)
     }
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
@@ -2134,7 +2093,7 @@ connection.setRequestProperty("Referer", url)
         }
 
         syncedDatesInBatch.clear()
-            syncChangesList.clear()
+        syncChangesList.clear()
         syncedShiftRangesInBatch.clear()
         totalFoundInBatch = 0
         totalAddedInBatch = 0
@@ -2188,10 +2147,10 @@ connection.setRequestProperty("Referer", url)
             override fun onPageFinished(view: WebView?, url: String?) {
                 val u = url ?: ""
                 if (u.contains("login", ignoreCase = true) || u.contains("auth", ignoreCase = true)) {
-                              cleanupSilentSync()
-                              return
-                          }
-                          if (u.contains("/Calendar/", ignoreCase = true)) {
+                    cleanupSilentSync()
+                    return
+                }
+                if (u.contains("/Calendar/", ignoreCase = true)) {
                     view?.postDelayed({
                         view.evaluateJavascript("""
                             (function() {
