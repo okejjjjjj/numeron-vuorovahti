@@ -597,6 +597,40 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
 
+                    // --- UUSI: TÄYDELLINEN ULKONÄÖN MUOKKAUS (TUMMA TEEMA & YLÄPALKIN POISTO) ---
+                    val darkThemeCss = """
+                        var style = document.createElement('style');
+                        style.type = 'text/css';
+                        style.innerHTML = `
+                            .navbar, .navbar-default, .top-bar, .app-header, header, nav { display: none !important; }
+                            body { padding-top: 0 !important; }
+                            #page-wrapper, .main-container, .wrapper { margin: 0 !important; padding: 16px !important; }
+                            body, html, .wrapper, #wrapper, #page-wrapper, .gray-bg { background-color: #0F172A !important; color: #E2E8F0 !important; }
+                            .panel, .card, .well, .box, .ibox, .ibox-content, .panel-body, .panel-heading {
+                                background-color: #1E293B !important; border: 1px solid #334155 !important;
+                                border-radius: 16px !important; color: #E2E8F0 !important; box-shadow: none !important;
+                            }
+                            .panel-heading, .panel-title, .ibox-title {
+                                background-color: transparent !important; border-bottom: 1px solid #334155 !important;
+                                color: #38BDF8 !important; font-weight: bold !important;
+                            }
+                            .btn, button, input[type="submit"], input[type="button"] {
+                                background: #0284C7 !important; color: #FFFFFF !important; border: none !important;
+                                border-radius: 12px !important; box-shadow: none !important; text-shadow: none !important;
+                            }
+                            input, select, textarea, .form-control {
+                                background-color: #0F172A !important; color: #FFFFFF !important;
+                                border: 1px solid #334155 !important; border-radius: 8px !important;
+                            }
+                            h1, h2, h3, h4, h5, label, span, div, p, strong, b, i { color: #E2E8F0 !important; }
+                            table, th, td { border-color: #334155 !important; color: #E2E8F0 !important; }
+                            th { background-color: #1E293B !important; }
+                        `;
+                        document.head.appendChild(style);
+                    """.trimIndent()
+                    view?.evaluateJavascript(darkThemeCss, null)
+
+
                     if (currentUrl.contains("/PersonRequests/", ignoreCase = true)) {
                         injectWishProtection()
                     }
@@ -714,36 +748,7 @@ class MainActivity : AppCompatActivity() {
             
             addJavascriptInterface(CalendarBridge(), "AndroidBridge")
             
-            // --- UUSI PDF-RAJAPINTA (Osaa nyt ottaa nimen vastaan JS-koodilta) ---
-            addJavascriptInterface(object {
-                @android.webkit.JavascriptInterface
-                fun savePdf(base64Data: String, fileName: String) {
-                    runOnUiThread {
-                        try {
-                            val data = android.util.Base64.decode(base64Data.substringAfter(","), android.util.Base64.DEFAULT)
-                            
-                            val safeName = if (fileName.isNotBlank()) fileName else "Raportti.pdf"
-                            val file = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), safeName)
-                            
-                            java.io.FileOutputStream(file).use { it.write(data) }
-
-                            val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "${packageName}.provider", file)
-                            val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "application/pdf")
-                                flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
-                            }
-                            startActivity(openIntent)
-                        } catch (e: Exception) {
-                            android.widget.Toast.makeText(this@MainActivity, "PDF-avaus epäonnistui", android.widget.Toast.LENGTH_LONG).show()
-                        }
-                    }
-                }
-                
-                @android.webkit.JavascriptInterface
-                fun showToast(msg: String) {
-                    runOnUiThread { android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_SHORT).show() }
-                }
-            }, "PdfBridge")
+            
 
         } // <- WebViewin asetusten blokki päättyy tähän
 
