@@ -567,6 +567,10 @@ class MainActivity : AppCompatActivity() {
                     Thread {
                         try {
                             val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                            connection.setRequestProperty("User-Agent", userAgent)
+connection.setRequestProperty("Accept", "application/pdf, text/html, */*")
+connection.setRequestProperty("Referer", url)
+
                             val cookie = android.webkit.CookieManager.getInstance().getCookie(url)
                             if (cookie != null) connection.setRequestProperty("Cookie", cookie)
                             connection.connect()
