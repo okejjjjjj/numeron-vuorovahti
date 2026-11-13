@@ -2324,4 +2324,8 @@ class MainActivity : AppCompatActivity() {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 105)
         }
     }
+        private fun scheduleNextThreeWeekListCheck() {
+        VuorovahtiHelper.scheduleNextThreeWeekListCheck(this)
+    }
+
 }
