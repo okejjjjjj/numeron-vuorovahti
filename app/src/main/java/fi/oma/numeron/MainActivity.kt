@@ -560,7 +560,7 @@ class MainActivity : AppCompatActivity() {
             }
             
             // 3. UUSI LATAUKSEN NAPPAAJA JOKA OHITTAA DOWNLOADMANAGERIN:
-            setDownloadListener { url, _, _, mimeType, _ ->
+            setDownloadListener { url, userAgent, _, mimeType, _ ->
                 try {
                     android.widget.Toast.makeText(this@MainActivity, "Haetaan raporttia...", android.widget.Toast.LENGTH_SHORT).show()
                     
