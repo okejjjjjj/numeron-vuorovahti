@@ -629,10 +629,10 @@ connection.setRequestProperty("Referer", url)
                 }
             }
 
-            webViewClient = object : WebViewClient() {
+                        webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    CookieManager.getInstance().flush()
+                    android.webkit.CookieManager.getInstance().flush()
                     val currentUrl = url ?: ""
                     updateNavigationState(currentUrl)
                     if (!isDemoActive) {
@@ -666,10 +666,108 @@ connection.setRequestProperty("Referer", url)
                         waitingForListViewSync = false
                         webView.postDelayed({ extractShiftsFromPage(forceList = false) }, 750)
                     }
+                    
+                    // --- TÄSSÄ ON UUSI PDF:N PELASTAJA (Vain Raportit-sivulle) ---
+                    // --- TÄSSÄ ON UUSI PDF:N PELASTAJA (Vain Raportit-sivulle) ---
+                    if (currentUrl.contains("WorkShiftReport", ignoreCase = true)) {
+                        val js = """
+                            setTimeout(function() {
+                                var btns = document.querySelectorAll('input, button, a');
+                                var printBtn = null;
+                                for(var i=0; i<btns.length; i++) {
+                                    var txt = (btns[i].value || btns[i].innerText || '').trim();
+                                    if(txt === 'Tulosta') { printBtn = btns[i]; break; }
+                                }
+                                if(printBtn && !printBtn.dataset.hijacked) {
+                                    // 1. Tehdään napista täydellinen klooni
+                                    var newBtn = printBtn.cloneNode(true);
+                                    newBtn.dataset.hijacked = 'true';
+                                    
+                                    // 2. Tuhotaan alkuperäiset ominaisuudet (jotka yrittävät avata uusia ikkunoita)
+                                    newBtn.removeAttribute('onclick'); 
+                                    newBtn.removeAttribute('target');
+                                    if(newBtn.tagName.toLowerCase() === 'button' || newBtn.tagName.toLowerCase() === 'input') {
+                                        newBtn.type = 'button'; // Estää lomakkeen perinteisen lähetyksen
+                                    }
+                                    
+                                    // 3. Korvataan vanha nappi uudella puhtaalla kloonilla
+                                    printBtn.parentNode.replaceChild(newBtn, printBtn);
+
+                                    // 4. Lisätään kloonille vain meidän oma hiljainen taustalataus
+                                    newBtn.addEventListener('click', function(e) {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        
+                                        var fileName = "Raportti";
+                                        var selectEl = document.querySelector('select');
+                                        if (selectEl && selectEl.selectedIndex >= 0) {
+                                            fileName = selectEl.options[selectEl.selectedIndex].text.trim();
+                                            fileName = fileName.replace(/[^a-zA-Z0-9äöÄÖåÅ -]/g, '').replace(/\s+/g, '_');
+                                        }
+                                        var fullFileName = fileName + ".pdf";
+
+                                        PdfBridge.showToast('Luodaan: ' + fullFileName + '...');
+                                        var form = document.forms[0];
+                                        var fd = new FormData(form);
+                                        if (newBtn.name) fd.append(newBtn.name, newBtn.value);
+                                        
+                                        fetch(form.action || window.location.href, {
+                                            method: 'POST',
+                                            body: fd
+                                        }).then(res => res.blob()).then(blob => {
+                                            var reader = new FileReader();
+                                            reader.onload = function() { PdfBridge.savePdf(reader.result, fullFileName); };
+                                            reader.readAsDataURL(blob);
+                                        }).catch(err => PdfBridge.showToast('Virhe: ' + err));
+                                    });
+                                }
+                            }, 800);
+                        """.trimIndent()
+
+                        view?.evaluateJavascript(js, null)
+                    }
+
                 }
             }
+            
+            // Vanha CalendarBridge pysyy paikallaan
             addJavascriptInterface(CalendarBridge(), "AndroidBridge")
-        }
+            
+            // --- UUSI PDF-RAJAPINTA, JOKA OTTAA TIEDOSTON VASTAAN JAVASCRIPTILTÄ ---
+                        // --- UUSI PDF-RAJAPINTA (Osaa nyt ottaa nimen vastaan JS-koodilta) ---
+            addJavascriptInterface(object {
+                @android.webkit.JavascriptInterface
+                fun savePdf(base64Data: String, fileName: String) {
+                    runOnUiThread {
+                        try {
+                            val data = android.util.Base64.decode(base64Data.substringAfter(","), android.util.Base64.DEFAULT)
+                            
+                            // Käytetään JS-koodin lähettämää dynaamista nimeä! Varmuuskopiona "Raportti.pdf" jos nimi jostain syystä puuttuu
+                            val safeName = if (fileName.isNotBlank()) fileName else "Raportti.pdf"
+                            val file = java.io.File(getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS), safeName)
+                            
+                            java.io.FileOutputStream(file).use { it.write(data) }
+
+                            val uri = androidx.core.content.FileProvider.getUriForFile(this@MainActivity, "${packageName}.provider", file)
+                            val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                flags = android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NO_HISTORY
+                            }
+                            startActivity(openIntent)
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(this@MainActivity, "PDF-avaus epäonnistui", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                
+                @android.webkit.JavascriptInterface
+                fun showToast(msg: String) {
+                    runOnUiThread { android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_SHORT).show() }
+                }
+            }, "PdfBridge")
+
+        } // <- Tähän päättyy WebViewin asetusten blokki!
+
 
 
         CookieManager.getInstance().apply {
