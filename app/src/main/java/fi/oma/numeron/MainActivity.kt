@@ -698,12 +698,23 @@ connection.setRequestProperty("Referer", url)
                                         e.preventDefault();
                                         e.stopPropagation();
                                         
+                                        // ÄLYKKÄÄMPI NIMEN HAKU: Etsitään vain näkyvissä oleva valikko
                                         var fileName = "Raportti";
-                                        var selectEl = document.querySelector('select');
-                                        if (selectEl && selectEl.selectedIndex >= 0) {
-                                            fileName = selectEl.options[selectEl.selectedIndex].text.trim();
-                                            fileName = fileName.replace(/[^a-zA-Z0-9äöÄÖåÅ -]/g, '').replace(/\s+/g, '_');
+                                        var selects = document.querySelectorAll('select');
+                                        for (var j = 0; j < selects.length; j++) {
+                                            var sel = selects[j];
+                                            // offsetParent !== null varmistaa, että valikko on oikeasti ruudulla eikä piilotettuna
+                                            if (sel.offsetParent !== null && sel.selectedIndex >= 0) {
+                                                var txt = sel.options[sel.selectedIndex].text.trim();
+                                                if (txt && txt.length > 2) {
+                                                    fileName = txt;
+                                                    break; // Löydettiin oikea näkyvä valikko, lopetetaan etsintä
+                                                }
+                                            }
                                         }
+                                        
+                                        // Siivotaan erikoismerkit ja välilyönnit
+                                        fileName = fileName.replace(/[^a-zA-Z0-9äöÄÖåÅ -]/g, '').replace(/\s+/g, '_');
                                         var fullFileName = fileName + ".pdf";
 
                                         PdfBridge.showToast('Luodaan: ' + fullFileName + '...');
@@ -720,6 +731,7 @@ connection.setRequestProperty("Referer", url)
                                             reader.readAsDataURL(blob);
                                         }).catch(err => PdfBridge.showToast('Virhe: ' + err));
                                     });
+
                                 }
                             }, 800);
                         """.trimIndent()
