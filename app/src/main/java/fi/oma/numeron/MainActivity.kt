@@ -578,10 +578,18 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            webViewClient = object : WebViewClient() {
+                        webViewClient = object : WebViewClient() {
+                override fun onPageCommitVisible(view: WebView?, url: String?) {
+                    super.onPageCommitVisible(view, url)
+                    injectCleanTheme(view, url)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    injectCleanTheme(view, url)
                     android.webkit.CookieManager.getInstance().flush()
+                    // ... loput nykyisestä onPageFinished-koodistasi ...
+
                     val currentUrl = url ?: ""
                     updateNavigationState(currentUrl)
                     if (!isDemoActive) {
@@ -599,22 +607,283 @@ class MainActivity : AppCompatActivity() {
                     }
 
 
-val darkThemeCss = """
-                        var style = document.createElement('style');
-                        style.type = 'text/css';
-                        style.innerHTML = `
-                            /* 1. Piilotetaan Visman yläpalkki ja hampurilaisvalikko */
-                            .navbar, .navbar-default, .top-bar, .app-header, header, nav {
-                                display: none !important;
-                            }
-                            
-                            /* Poistetaan sivun ylämarginaali, joka oli varattu poistetulle palkille */
-                            body { padding-top: 0 !important; }
-                            #page-wrapper, .main-container, .wrapper { margin: 0 !important; padding: 16px !important; }
-                         `;
-                        document.head.appendChild(style);
-                    """.trimIndent()
-                    view?.evaluateJavascript(darkThemeCss, null)
+    
+            private fun injectCleanTheme(view: WebView?, url: String?) {
+        val css = """
+            /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN PIILOTUS === */
+            html, body {
+                background-color: #0F172A !important;
+                color: #E2E8F0 !important;
+                font-family: sans-serif !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            /* Piilotetaan Visman ylänavigaatio, alatunnisteet ja kirjautumissivun turhakkeet */
+            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr {
+                display: none !important;
+            }
+            .container, .container-fluid {
+                padding: 12px 12px 24px 12px !important;
+                background-color: #0F172A !important;
+            }
+            h1.clear, .blurbox h1 {
+                color: #38BDF8 !important;
+                font-size: 20px !important;
+                font-weight: bold !important;
+                margin: 4px 0 14px 0 !important;
+            }
+
+            /* === KIRJAUTUMISSIVU === */
+            .blurbox {
+                background: transparent !important;
+                text-align: center !important;
+            }
+            .whitebox, .panel.panel-default {
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                box-shadow: none !important;
+                color: #E2E8F0 !important;
+                margin-bottom: 12px !important;
+            }
+            .panel-body {
+                padding: 14px !important;
+            }
+
+            /* === LOMAKKEET, NAPIT JA PUDOTUSVALIKOT === */
+            label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption {
+                color: #94A3B8 !important;
+                font-weight: 600 !important;
+            }
+            .punching-shift-name {
+                color: #F8FAFC !important;
+                font-weight: bold !important;
+            }
+            .form-control, input[type="text"], input[type="password"], select, textarea, .k-textbox, .k-input {
+                background-color: #0F172A !important;
+                color: #FFFFFF !important;
+                border: 1px solid #334155 !important;
+                border-radius: 10px !important;
+                box-shadow: none !important;
+            }
+            .form-control:focus, input:focus, textarea:focus {
+                border-color: #38BDF8 !important;
+            }
+            .btn-default, .dropdown-toggle {
+                background-color: #0F172A !important;
+                color: #E2E8F0 !important;
+                border: 1px solid #334155 !important;
+                border-radius: 10px !important;
+            }
+            .btn-primary, input[type="submit"], #punchButton {
+                background-color: #0284C7 !important;
+                border: none !important;
+                border-radius: 12px !important;
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            .btn-text {
+                color: #38BDF8 !important;
+                background: transparent !important;
+            }
+            .dropdown-menu {
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                border-radius: 10px !important;
+            }
+            .dropdown-menu > li > a {
+                color: #E2E8F0 !important;
+                padding: 10px 14px !important;
+            }
+            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus {
+                background-color: #334155 !important;
+                color: #38BDF8 !important;
+            }
+
+            /* === TYÖAIKALEIMAUS (/WorktimeStamping) === */
+            .nav-tabs-wts {
+                border-bottom: 1px solid #334155 !important;
+            }
+            .nav-tabs-wts > li.active > a {
+                background-color: transparent !important;
+                color: #38BDF8 !important;
+                border-bottom: 2px solid #38BDF8 !important;
+            }
+            #table-latest-stamps tr {
+                border-bottom: 1px solid #334155 !important;
+                background-color: transparent !important;
+            }
+            #table-latest-stamps tr:hover {
+                background-color: #334155 !important;
+            }
+            #table-latest-stamps td {
+                color: #E2E8F0 !important;
+                border: none !important;
+                padding: 10px 6px !important;
+            }
+            /* Puuttuvan leimauksen liukupaneeli */
+            #forgotStampPanel, #stamp-edit-modal {
+                background-color: #1E293B !important;
+                color: #E2E8F0 !important;
+            }
+            .modal-header, .modal-footer {
+                border-color: #334155 !important;
+                background-color: #1E293B !important;
+            }
+            .modal-content {
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                color: #E2E8F0 !important;
+            }
+
+            /* === TOIVEET - KENDO GRID (/PersonRequests/List) === */
+            .k-grid, .k-grid-content, .k-grid-header, .k-grid-header-wrap, .k-pager-wrap {
+                background-color: #1E293B !important;
+                color: #E2E8F0 !important;
+                border-color: #334155 !important;
+            }
+            .k-grid-header th.k-header, .k-grid-header th.k-header .k-link {
+                background-color: #0F172A !important;
+                color: #94A3B8 !important;
+                border-color: #334155 !important;
+            }
+            .k-grid tr {
+                background-color: #1E293B !important;
+                color: #E2E8F0 !important;
+            }
+            .k-grid tr.k-alt {
+                background-color: #172033 !important;
+            }
+            .k-grid td {
+                border-color: #334155 !important;
+                color: #E2E8F0 !important;
+            }
+            .k-grid tr:hover td {
+                background-color: #334155 !important;
+                color: #FFFFFF !important;
+            }
+            .k-state-selected, .k-grid tr.k-state-selected td {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+            }
+
+            /* === KALENTERI (/Calendar/Month) === */
+            .calendar-body, .calendar-heading {
+                background-color: #1E293B !important;
+                box-shadow: none !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                padding: 8px !important;
+                margin-bottom: 10px !important;
+            }
+            #monthText {
+                color: #F8FAFC !important;
+                font-weight: bold !important;
+            }
+            .month-table {
+                width: 100% !important;
+                background-color: #1E293B !important;
+                border-collapse: collapse !important;
+            }
+            .month-week-days td {
+                background-color: #0F172A !important;
+                color: #94A3B8 !important;
+                border: 1px solid #334155 !important;
+                padding: 6px 2px !important;
+                font-weight: bold !important;
+            }
+            .month-week-number {
+                background-color: #0F172A !important;
+                color: #64748B !important;
+                border: 1px solid #334155 !important;
+                text-align: center !important;
+                font-size: 11px !important;
+            }
+            td.month-day {
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                vertical-align: top !important;
+            }
+            td.month-day.day-different-month {
+                background-color: #131C2E !important;
+                opacity: 0.75 !important;
+            }
+            td.month-day.todayTd {
+                background-color: #1E3A5F !important;
+                border: 1px solid #38BDF8 !important;
+            }
+            .dayNum {
+                color: #CBD5E1 !important;
+                font-weight: bold !important;
+            }
+            .today .dayNum {
+                color: #38BDF8 !important;
+            }
+            /* Työvuoropalkit kalenterissa */
+            .month-item.work {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+                border-radius: 6px !important;
+                padding: 3px 4px !important;
+                margin-top: 2px !important;
+                border: none !important;
+            }
+            .month-item.work .itemTimes, .month-item.work .itemName {
+                color: #FFFFFF !important;
+            }
+            .month-item.request {
+                background-color: #7C3AED !important;
+                color: #FFFFFF !important;
+                border-radius: 6px !important;
+            }
+            .month-item.absence {
+                background-color: #D97706 !important;
+                color: #FFFFFF !important;
+                border-radius: 6px !important;
+            }
+            .mobileAddDiv, .mobileViewDropdown {
+                background-color: transparent !important;
+                margin-top: 8px !important;
+            }
+            .mobileAddButton, .filterButton {
+                color: #38BDF8 !important;
+            }
+        """.trimIndent().replace("\n", " ")
+
+        val hasCreds = SettingsManager.getUsername(this).isNotEmpty() && SettingsManager.getPassword(this).isNotEmpty()
+
+        val js = """
+            (function() {
+                var styleId = 'custom-numeron-theme';
+                var style = document.getElementById(styleId);
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = styleId;
+                    style.type = 'text/css';
+                    (document.head || document.documentElement).appendChild(style);
+                }
+                style.innerHTML = `$css`;
+
+                // Jos automaattikirjautuminen on päällä, piilotetaan kirjautumislomake visuaalisesti koskematta sen kenttiin
+                if ($hasCreds && document.getElementById('LoginForm')) {
+                    var form = document.getElementById('LoginForm');
+                    if (form && !form.dataset.hiddenByTheme) {
+                        form.dataset.hiddenByTheme = 'true';
+                        form.style.display = 'none';
+                        var msg = document.createElement('div');
+                        msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
+                        msg.innerText = 'Kirjaudutaan sisään...';
+                        form.parentNode.insertBefore(msg, form);
+                    }
+                }
+            })();
+        """.trimIndent()
+
+        view?.evaluateJavascript(js, null)
+    
+
+    }
+
 
 
 
