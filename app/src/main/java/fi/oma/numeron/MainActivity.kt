@@ -682,9 +682,8 @@ class MainActivity : AppCompatActivity() {
         btnSync = createNavButton("Synkronoi") { checkPermissionsAndSync() }.apply {
             visibility = View.GONE
         }
-btnSettings = createNavButton("\u2699", 0.68f) { openSettings() }
-btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
-
+        btnSettings = createNavButton("⚙", 0.68f) { openSettings() }
+        btnClose = createNavButton("✕", 0.68f) { finishAndRemoveTask() }
 
         buttonBar.addView(btnStamp)
         buttonBar.addView(btnWishes)
@@ -831,82 +830,51 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
         super.onDestroy()
     }
 
-    
-
-
-    
-           private fun injectCleanTheme(view: WebView?, url: String?) {
+    private fun injectCleanTheme(view: WebView?, url: String?) {
         val css = """
-            /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN PIILOTUS === */
+            /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN / OTSIKOIDEN PIILOTUS === */
             html, body {
                 background-color: #0F172A !important;
-                background-image: none !important;
                 color: #E2E8F0 !important;
                 font-family: sans-serif !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            /* Piilotetaan Visman ylänavigaatio, alatunnisteet ja kirjautumissivun turhakkeet */
-            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr {
+            /* Piilotetaan Visman ylänavigaatio, alatunnisteet, sivujen turhat pääotsikot ja kirjautumissivun turhakkeet */
+            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr,
+            .container > h1.clear, .container-fluid > h1.clear, h1.clear {
                 display: none !important;
             }
             .container, .container-fluid {
-                padding: 12px 12px 24px 12px !important;
+                padding: 22px 12px 32px 12px !important;
                 background-color: #0F172A !important;
-                background-image: none !important;
             }
-            h1.clear, .blurbox h1 {
+            .blurbox h1 {
                 color: #38BDF8 !important;
                 font-size: 20px !important;
                 font-weight: bold !important;
                 margin: 4px 0 14px 0 !important;
             }
 
-            /* === EVÄSTEPALKKI === */
-            #cookieConsent, .cookie-consent, .cookie-banner, [id*="cookie" i], [class*="cookie" i] {
-                background-color: #1E293B !important;
-                background-image: none !important;
-                color: #E2E8F0 !important;
-                border-bottom: 1px solid #334155 !important;
-                box-shadow: none !important;
-            }
-            #cookieConsent p, #cookieConsent div, #cookieConsent span,
-            [id*="cookie" i] p, [id*="cookie" i] div, [id*="cookie" i] span,
-            [class*="cookie" i] p, [class*="cookie" i] div, [class*="cookie" i] span {
-                color: #CBD5E1 !important;
-            }
-
-            /* === KIRJAUTUMISSIVU === */
+            /* === KIRJAUTUMISSIVU JA KORTIT === */
             .blurbox {
                 background: transparent !important;
                 text-align: center !important;
-                margin-top: 20px !important;
             }
-            .whitebox, .panel.panel-default {
+            .whitebox, .panel, .panel.panel-default {
                 background-color: #1E293B !important;
+                background-image: none !important;
                 border: 1px solid #334155 !important;
                 border-radius: 14px !important;
                 box-shadow: none !important;
                 color: #E2E8F0 !important;
                 margin-bottom: 12px !important;
             }
-            .validation-summary-errors, .field-validation-error, .alert-danger {
-                background-color: #450A0A !important;
-                border: 1px solid #EF4444 !important;
-                color: #FCA5A5 !important;
-                border-radius: 10px !important;
-                padding: 10px 12px !important;
-                margin-bottom: 12px !important;
-            }
-            .validation-summary-errors ul {
-                margin: 0 !important;
-                padding-left: 18px !important;
-            }
             .panel-body {
                 padding: 14px !important;
             }
 
-            /* === LOMAKKEET, NAPIT JA PUDOTUSVALIKOT === */
+            /* === LOMAKKEET, NAPIT, PUDOTUSVALIKOT JA POPOVERIT === */
             label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption {
                 color: #94A3B8 !important;
                 font-weight: 600 !important;
@@ -915,48 +883,183 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #F8FAFC !important;
                 font-weight: bold !important;
             }
-            .form-control, input[type="text"], input[type="password"], select, textarea, .k-textbox, .k-input {
+            .form-control, input[type="text"], input[type="password"], input[type="number"], input[type="date"], input[type="time"],
+            select, textarea, .k-textbox, .k-input {
+                background: #0F172A !important;
                 background-color: #0F172A !important;
+                background-image: none !important;
                 color: #FFFFFF !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
                 box-shadow: none !important;
             }
-            .form-control:focus, input:focus, textarea:focus {
+            .form-control:focus, input:focus, select:focus, textarea:focus {
                 border-color: #38BDF8 !important;
             }
-            .btn-default, .dropdown-toggle {
+            input[type="checkbox"] {
+                accent-color: #0284C7 !important;
+            }
+            .btn, a.btn, button.btn, input[type="button"],
+            .btn-default, a.btn-default, button.btn-default,
+            .dropdown-toggle, button.dropdown-toggle, a.dropdown-toggle,
+            .punch-button, .punch-reason-code-selector .btn,
+            .punch-reason-code-selector2 .btn,
+            .forgotten-stamp-direction-selector .btn,
+            .fixed-menu-bar .btn, .fixed-menu-bar a.btn,
+            #pcViewButt, #todayButt, #pcAddButt, #dropdownMenu1, #dropdownMenu2, #dropdownMenuStampDirection {
+                background: #0F172A !important;
                 background-color: #0F172A !important;
+                background-image: none !important;
                 color: #E2E8F0 !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
+                box-shadow: none !important;
+                text-shadow: none !important;
             }
-            .btn-primary, input[type="submit"], #punchButton {
+            .btn:hover, .btn:focus, .btn:active, .open > .dropdown-toggle.btn-default,
+            a.btn-default:hover, a.btn-default:focus, button.btn-default:hover, button.btn-default:focus {
+                background: #1E293B !important;
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #38BDF8 !important;
+                border-color: #38BDF8 !important;
+                box-shadow: none !important;
+            }
+            .btn-primary, a.btn-primary, button.btn-primary, input[type="submit"], #punchButton, #punchForgottenButton {
+                background: #0284C7 !important;
                 background-color: #0284C7 !important;
+                background-image: none !important;
                 border: none !important;
                 border-radius: 12px !important;
                 color: #FFFFFF !important;
                 font-weight: bold !important;
+                text-shadow: none !important;
             }
-            .btn-text {
+            .btn-primary:hover, .btn-primary:focus, #punchButton:hover, #punchButton:focus {
+                background: #0369A1 !important;
+                background-color: #0369A1 !important;
+                color: #FFFFFF !important;
+            }
+            .btn-text, a.btn-text, button.btn-text {
                 color: #38BDF8 !important;
                 background: transparent !important;
+                background-color: transparent !important;
+                background-image: none !important;
+                border: none !important;
+                box-shadow: none !important;
             }
-            .dropdown-menu {
+            .dropdown-menu, ul.dropdown-menu {
+                background: #1E293B !important;
                 background-color: #1E293B !important;
+                background-image: none !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
             }
-            .dropdown-menu > li > a {
+            .dropdown-menu > li > a, .dropdown-menu li a {
                 color: #E2E8F0 !important;
+                background: transparent !important;
                 padding: 10px 14px !important;
             }
-            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus {
+            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus, .dropdown-menu li a:hover {
+                background: #334155 !important;
                 background-color: #334155 !important;
                 color: #38BDF8 !important;
             }
+            .dropdown-header {
+                color: #94A3B8 !important;
+            }
+            .popover, .popover-content, .popover-title, .tooltip-inner {
+                background-color: #1E293B !important;
+                color: #E2E8F0 !important;
+                border-color: #334155 !important;
+            }
+
+            /* === KENDO UI WIDGETIT (VALIKOT, KALENTERIVALITSIMET, SUODATTIMET) === */
+            .k-widget, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-multiselect-wrap,
+            .k-state-default, .k-state-hover, .k-state-focused, .k-button, .k-select {
+                background: #0F172A !important;
+                background-color: #0F172A !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+                border-color: #334155 !important;
+                box-shadow: none !important;
+            }
+            .k-dropdown-wrap .k-input, .k-picker-wrap .k-input, input.k-input {
+                background: #0F172A !important;
+                background-color: #0F172A !important;
+                color: #FFFFFF !important;
+            }
+            .k-popup, .k-list-container, .k-list, .k-calendar, .k-calendar-container,
+            .k-animation-container .k-popup, .k-column-menu, .k-filter-menu {
+                background: #1E293B !important;
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+                border: 1px solid #334155 !important;
+            }
+            .k-list .k-item, .k-column-menu .k-item {
+                background: transparent !important;
+                color: #E2E8F0 !important;
+            }
+            .k-list .k-item:hover, .k-list .k-state-hover, .k-list .k-state-focused {
+                background: #334155 !important;
+                color: #38BDF8 !important;
+            }
+            .k-icon {
+                filter: invert(0.85) brightness(1.2) !important;
+            }
 
             /* === TYÖAIKALEIMAUS (/WorktimeStamping) === */
+            .content-container {
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            /* Saldot piiloon ja ylin laatikko tiiviiksi */
+            .punching-balance-overview-container,
+            .punching-balance-container,
+            .punching-weekbalance-container {
+                display: none !important;
+            }
+            #panel-body-main {
+                padding: 12px 14px !important;
+                height: auto !important;
+                min-height: 0 !important;
+            }
+            .punching-overview-container {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                justify-content: center !important;
+                height: auto !important;
+                min-height: 0 !important;
+                padding: 0 !important;
+                margin: 0 !important;
+            }
+            .punching-shift-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                border: none !important;
+                border-right: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                display: flex !important;
+                flex-direction: column !important;
+                gap: 4px !important;
+            }
+            .punching-shift-caption {
+                font-size: 11px !important;
+                letter-spacing: 0.05em !important;
+                text-transform: uppercase !important;
+                margin: 0 !important;
+            }
+            .punching-shift-name {
+                font-size: 15px !important;
+                line-height: 1.3 !important;
+                margin: 0 !important;
+            }
             .nav-tabs-wts {
                 border-bottom: 1px solid #334155 !important;
             }
@@ -965,18 +1068,28 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #38BDF8 !important;
                 border-bottom: 2px solid #38BDF8 !important;
             }
+            table.table, #table-latest-stamps, #table-latest-stamps tbody,
+            #table-latest-stamps tr, #table-latest-stamps tr.table-active,
+            .table-active, .table-active > td, .table-active > th,
+            .table > tbody > tr > td, .table > tbody > tr > th {
+                background: transparent !important;
+                background-color: transparent !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+            }
             #table-latest-stamps tr {
                 border-bottom: 1px solid #334155 !important;
-                background-color: transparent !important;
             }
-            #table-latest-stamps tr:hover {
+            #table-latest-stamps tr:hover, #table-latest-stamps tr:hover td,
+            #table-latest-stamps tr:active, #table-latest-stamps tr:active td {
                 background-color: #334155 !important;
+                color: #FFFFFF !important;
             }
             #table-latest-stamps td {
-                color: #E2E8F0 !important;
                 border: none !important;
                 padding: 10px 6px !important;
             }
+            /* Puuttuvan leimauksen liukupaneeli */
             #forgotStampPanel, #stamp-edit-modal {
                 background-color: #1E293B !important;
                 color: #E2E8F0 !important;
@@ -992,6 +1105,45 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             }
 
             /* === TOIVEET - KENDO GRID (/PersonRequests/List) === */
+            .fixed-menu-bar {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+                margin: 0 0 10px 0 !important;
+            }
+            .fixed-menu-bar .col-sm-8 {
+                width: 100% !important;
+                padding: 0 !important;
+                display: flex !important;
+                flex-wrap: wrap !important;
+                gap: 8px !important;
+            }
+            .fixed-menu-bar .col-sm-8 .btn,
+            .fixed-menu-bar .col-sm-8 .btn-group {
+                flex: 1 1 auto !important;
+                margin: 0 !important;
+            }
+            .fixed-menu-bar .col-sm-8 .btn-group .btn {
+                width: 100% !important;
+            }
+            .fixed-menu-bar .form-inline.pull-right {
+                width: 100% !important;
+                float: none !important;
+                margin: 4px 0 0 0 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+            }
+            .fixed-menu-bar .form-inline .form-group {
+                flex: 1 !important;
+                margin: 0 !important;
+            }
+            .fixed-menu-bar #filterOptions {
+                width: 100% !important;
+            }
             .k-grid, .k-grid-content, .k-grid-header, .k-grid-header-wrap, .k-pager-wrap {
                 background-color: #1E293B !important;
                 color: #E2E8F0 !important;
@@ -1023,7 +1175,7 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             }
 
             /* === KALENTERI (/Calendar/Month) === */
-            .calendar-body, .calendar-heading {
+            .calendar-body {
                 background-color: #1E293B !important;
                 box-shadow: none !important;
                 border: 1px solid #334155 !important;
@@ -1031,9 +1183,77 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 padding: 8px !important;
                 margin-bottom: 10px !important;
             }
+            .calendar-heading {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+                background-color: #1E293B !important;
+                box-shadow: none !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                padding: 10px 12px !important;
+                margin-bottom: 10px !important;
+            }
+            .calendar-heading .monthSelector {
+                display: contents !important;
+            }
+            .calendar-heading .monthSelector .panel-body {
+                order: 1 !important;
+                width: 100% !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                padding: 0 4px 4px 4px !important;
+                margin: 0 !important;
+                float: none !important;
+            }
             #monthText {
                 color: #F8FAFC !important;
+                font-size: 18px !important;
                 font-weight: bold !important;
+                white-space: nowrap !important;
+                margin: 0 !important;
+                padding: 0 8px !important;
+            }
+            #pcTodayButton {
+                order: 2 !important;
+                flex: 1 1 48% !important;
+                display: block !important;
+                margin: 0 !important;
+                float: none !important;
+            }
+            #todayButt {
+                width: 100% !important;
+                max-width: none !important;
+                min-width: 0 !important;
+                height: 36px !important;
+                padding: 6px 12px !important;
+                font-size: 13px !important;
+            }
+            #pcViewDropdown {
+                order: 3 !important;
+                flex: 1 1 48% !important;
+                display: block !important;
+                margin: 0 !important;
+                float: none !important;
+            }
+            #pcViewButt {
+                width: 100% !important;
+                max-width: none !important;
+                min-width: 0 !important;
+                height: 36px !important;
+                padding: 6px 12px !important;
+                font-size: 13px !important;
+            }
+            #pcViewDropdown .dropdown-menu {
+                right: 0 !important;
+                left: auto !important;
+                min-width: 140px !important;
+            }
+            #mobileViewDropdown {
+                display: none !important;
             }
             .month-table {
                 width: 100% !important;
@@ -1074,6 +1294,7 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             .today .dayNum {
                 color: #38BDF8 !important;
             }
+            /* Työvuoropalkit kalenterissa */
             .month-item.work {
                 background-color: #0284C7 !important;
                 color: #FFFFFF !important;
@@ -1095,14 +1316,23 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #FFFFFF !important;
                 border-radius: 6px !important;
             }
-            .mobileAddDiv, .mobileViewDropdown {
+            .mobileAddDiv {
                 background-color: transparent !important;
-                margin-top: 8px !important;
+                margin-top: 10px !important;
+                padding: 4px 2px 8px 2px !important;
+                min-height: 44px !important;
+                overflow: visible !important;
             }
             .mobileAddButton, .filterButton {
                 color: #38BDF8 !important;
+                height: auto !important;
+                min-height: 44px !important;
+                padding-bottom: 6px !important;
+                line-height: 1.4 !important;
+                overflow: visible !important;
             }
-        """.trimIndent().replace("\n", " ")
+        """.trimIndent().replace("
+", " ")
 
         val hasCreds = SettingsManager.getUsername(this).isNotEmpty() && SettingsManager.getPassword(this).isNotEmpty()
 
@@ -1118,46 +1348,16 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 }
                 style.innerHTML = `$css`;
 
-                // Hyväksytään evästepalkki automaattisesti, jotta se ei jää yläreunaan
-                var cookieBtns = document.querySelectorAll('#cookieConsent button, #cookieConsent a, [id*="cookie" i] button, [class*="cookie" i] button');
-                for (var cb = 0; cb < cookieBtns.length; cb++) {
-                    var cTxt = (cookieBtns[cb].innerText || cookieBtns[cb].value || "").trim().toLowerCase();
-                    if (cTxt === 'hyväksy' || cTxt === 'accept' || cTxt === 'selvä' || cTxt === 'ok') {
-                        cookieBtns[cb].click();
-                        break;
-                    }
-                }
-
-                // Piilotetaan lomake visuaalisesti (ei display:none, jotta kentät löytyvät DOM:sta)
-                var loginForm = document.getElementById('LoginForm');
-                if (loginForm) {
-                    var errBox = document.querySelector('.validation-summary-errors, .alert-danger');
-                    var hasErr = !!(errBox && (errBox.innerText || '').trim().length > 0);
-                    var oldMsg = document.getElementById('custom-login-status-msg');
-                    if ($hasCreds && !hasErr) {
-                        if (!loginForm.dataset.hiddenByTheme) {
-                            loginForm.dataset.hiddenByTheme = 'true';
-                            loginForm.style.opacity = '0';
-                            loginForm.style.height = '0';
-                            loginForm.style.overflow = 'hidden';
-                            loginForm.style.pointerEvents = 'none';
-                            loginForm.style.margin = '0';
-                            loginForm.style.padding = '0';
-                            if (!oldMsg) {
-                                var msg = document.createElement('div');
-                                msg.id = 'custom-login-status-msg';
-                                msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
-                                msg.innerText = 'Kirjaudutaan sisään...';
-                                loginForm.parentNode.insertBefore(msg, loginForm);
-                            }
-                        }
-                    } else {
-                        delete loginForm.dataset.hiddenByTheme;
-                        loginForm.style.opacity = '1';
-                        loginForm.style.height = 'auto';
-                        loginForm.style.overflow = 'visible';
-                        loginForm.style.pointerEvents = 'auto';
-                        if (oldMsg) oldMsg.remove();
+                // Jos automaattikirjautuminen on päällä, piilotetaan kirjautumislomake visuaalisesti koskematta sen kenttiin
+                if ($hasCreds && document.getElementById('LoginForm')) {
+                    var form = document.getElementById('LoginForm');
+                    if (form && !form.dataset.hiddenByTheme) {
+                        form.dataset.hiddenByTheme = 'true';
+                        form.style.display = 'none';
+                        var msg = document.createElement('div');
+                        msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
+                        msg.innerText = 'Kirjaudutaan sisään...';
+                        form.parentNode.insertBefore(msg, form);
                     }
                 }
             })();
@@ -1165,8 +1365,6 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
 
         view?.evaluateJavascript(js, null)
     }
-
-
 
     private fun injectWishProtection() {
         val js = """
@@ -1246,7 +1444,6 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
         styleButton(btnClose, "#7F1D1D", false)
     }
 
-
     private fun tryAutoLoginIfNeeded() {
         if (isDemoActive) return
         val u = SettingsManager.getUsername(this)
@@ -1260,10 +1457,7 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 var passInputs = document.querySelectorAll('input[type="password"]');
                 var hasVisiblePass = false;
                 for (var i = 0; i < passInputs.length; i++) {
-                    if (passInputs[i].offsetParent !== null || (passInputs[i].closest && passInputs[i].closest('#LoginForm'))) {
-                        hasVisiblePass = true;
-                        break;
-                    }
+                    if (passInputs[i].offsetParent !== null) { hasVisiblePass = true; break; }
                 }
                 if (!hasVisiblePass && (bodyTxt.indexOf('istunto on vanhentunut') !== -1 || bodyTxt.indexOf('istuntosi on vanhentunut') !== -1 || bodyTxt.indexOf('session expired') !== -1 || bodyTxt.indexOf('kirjaudu sisään uudelleen') !== -1 || bodyTxt.indexOf('uloskirjattu') !== -1)) {
                     var btns = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
@@ -1278,9 +1472,6 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                     return "SESSION_EXPIRED_RELOAD";
                 }
                 if ('$safeU' === '' || '$safeP' === '') return "NO_CREDS";
-                var errBox = document.querySelector('.validation-summary-errors, .alert-danger');
-                if (errBox && (errBox.innerText || '').trim().length > 0) return "LOGIN_VALIDATION_ERROR";
-
                 function setNativeValue(el, val) {
                     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     if (setter) setter.call(el, val);
@@ -1292,14 +1483,11 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 var userEl = null;
                 for (var uIdx = 0; uIdx < userInputs.length; uIdx++) {
                     var inp = userInputs[uIdx];
-                    var inLoginForm = !!(inp.closest && inp.closest('#LoginForm'));
-                    if ((inp.offsetParent !== null || inLoginForm) && !inp.readOnly && !inp.disabled) { userEl = inp; break; }
+                    if (inp.offsetParent !== null && !inp.readOnly && !inp.disabled) { userEl = inp; break; }
                 }
                 var passEl = null;
                 for (var pIdx = 0; pIdx < passInputs.length; pIdx++) {
-                    var pInp = passInputs[pIdx];
-                    var pInLoginForm = !!(pInp.closest && pInp.closest('#LoginForm'));
-                    if ((pInp.offsetParent !== null || pInLoginForm) && !pInp.disabled) { passEl = pInp; break; }
+                    if (passInputs[pIdx].offsetParent !== null && !passInputs[pIdx].disabled) { passEl = passInputs[pIdx]; break; }
                 }
                 if (userEl && !passEl && (window.location.href.toLowerCase().indexOf('login') !== -1 || window.location.href.toLowerCase().indexOf('auth') !== -1 || window.location.href.toLowerCase().indexOf('microsoft') !== -1 || bodyTxt.indexOf('kirjaudu') !== -1)) {
                     setNativeValue(userEl, '$safeU');
@@ -1309,15 +1497,8 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 if (!passEl) return "NO_LOGIN_FORM";
                 if (userEl) setNativeValue(userEl, '$safeU');
                 setNativeValue(passEl, '$safeP');
-                var submitBtn = document.querySelector('#LoginForm input[type="submit"], #LoginForm button[type="submit"], input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
-                if (submitBtn) {
-                    var sInLoginForm = !!(submitBtn.closest && submitBtn.closest('#LoginForm'));
-                    if (submitBtn.offsetParent !== null || sInLoginForm) {
-                        submitBtn.disabled = false;
-                        submitBtn.click();
-                        return "SUBMITTED";
-                    }
-                }
+                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
+                if (submitBtn && submitBtn.offsetParent !== null) { submitBtn.click(); return "SUBMITTED"; }
                 if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
                 return "FILLED";
             })();
@@ -1340,33 +1521,10 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                         }
                     }
                     if (pendingAutoStamp) webView.postDelayed({ scheduleAutoStampCheck(1500) }, 2200)
-                    webView.postDelayed({
-                        val uNow = webView.url ?: ""
-                        if (uNow.contains("/Login/", ignoreCase = true)) {
-                            webView.evaluateJavascript("""
-                                (function() {
-                                    var f = document.getElementById('LoginForm');
-                                    var m = document.getElementById('custom-login-status-msg');
-                                    if (f) {
-                                        delete f.dataset.hiddenByTheme;
-                                        f.style.opacity = '1';
-                                        f.style.height = 'auto';
-                                        f.style.overflow = 'visible';
-                                        f.style.pointerEvents = 'auto';
-                                    }
-                                    if (m) m.remove();
-                                })();
-                            """.trimIndent(), null)
-                        }
-                    }, 4000L)
                 }
             }
         }
     }
-
-
-
-    
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
