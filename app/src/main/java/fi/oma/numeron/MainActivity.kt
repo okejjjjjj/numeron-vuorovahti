@@ -1347,20 +1347,40 @@ class MainActivity : AppCompatActivity() {
                 }
                 style.innerHTML = `$css`;
 
-                // Jos automaattikirjautuminen on päällä, piilotetaan kirjautumislomake visuaalisesti koskematta sen kenttiin
+                // Piilotetaan lomake vain visuaalisesti (ei display:none, jotta automaattikirjautuminen ja lomakkeen lähetys toimivat)
                 if ($hasCreds && document.getElementById('LoginForm')) {
                     var form = document.getElementById('LoginForm');
                     if (form && !form.dataset.hiddenByTheme) {
                         form.dataset.hiddenByTheme = 'true';
-                        form.style.display = 'none';
+                        form.style.opacity = '0';
+                        form.style.height = '0';
+                        form.style.overflow = 'hidden';
+                        form.style.pointerEvents = 'none';
+
                         var msg = document.createElement('div');
+                        msg.id = 'custom-login-msg';
                         msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
                         msg.innerText = 'Kirjaudutaan sisään...';
                         form.parentNode.insertBefore(msg, form);
+
+                        // Varamekanismi: palautetaan lomake näkyviin 5 s kuluttua, jos kirjautuminen ei etene
+                        setTimeout(function() {
+                            var f = document.getElementById('LoginForm');
+                            var m = document.getElementById('custom-login-msg');
+                            if (f) {
+                                f.style.opacity = '';
+                                f.style.height = '';
+                                f.style.overflow = '';
+                                f.style.pointerEvents = '';
+                                delete f.dataset.hiddenByTheme;
+                            }
+                            if (m) m.remove();
+                        }, 5000);
                     }
                 }
             })();
         """.trimIndent()
+
 
         view?.evaluateJavascript(js, null)
     }
