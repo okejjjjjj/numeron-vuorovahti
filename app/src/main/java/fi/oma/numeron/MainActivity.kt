@@ -50,14 +50,14 @@ import java.util.Locale
 
 object VuorovahtiHelper {
 
-    // 1. Määritä kalenterimerkinnän väri vuoron alkamisajan tai tyypin mukaan
+    // 1. MÃ¤Ã¤ritÃ¤ kalenterimerkinnÃ¤n vÃ¤ri vuoron alkamisajan tai tyypin mukaan
     fun getShiftEventColor(title: String, startHour: Int): Int {
         val lowerTitle = title.trim().lowercase(Locale.getDefault())
         return when {
             lowerTitle == "loma" || lowerTitle.contains("vuosiloma") -> Color.parseColor("#00ACC1") // Turkoosi (Loma)
-            startHour in 5..10 -> Color.parseColor("#43A047")  // Vihreä (Aamuvuoro)
+            startHour in 5..10 -> Color.parseColor("#43A047")  // VihreÃ¤ (Aamuvuoro)
             startHour in 11..17 -> Color.parseColor("#FB8C00") // Oranssi (Iltavuoro)
-            else -> Color.parseColor("#8E24AA")                // Violetti (Yövuoro)
+            else -> Color.parseColor("#8E24AA")                // Violetti (YÃ¶vuoro)
         }
     }
 
@@ -65,7 +65,7 @@ object VuorovahtiHelper {
         values.put(CalendarContract.Events.EVENT_COLOR, getShiftEventColor(title, startHour))
     }
 
-    // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima sekä vuorovaihdosten taustatarkistusaika
+    // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima sekÃ¤ vuorovaihdosten taustatarkistusaika
     fun saveLastSyncStatus(context: Context, shiftCount: Int) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val statusText = "Synkronoitu: ${timeFormat.format(Date())} ($shiftCount vuoroa)"
@@ -78,7 +78,7 @@ object VuorovahtiHelper {
 
     fun getLastSyncStatus(context: Context): String {
         return context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
-            .getString("last_sync_status", "Ei vielä synkronoitu") ?: "Ei vielä synkronoitu"
+            .getString("last_sync_status", "Ei vielÃ¤ synkronoitu") ?: "Ei vielÃ¤ synkronoitu"
     }
 
     fun shouldRunDailySilentSync(context: Context): Boolean {
@@ -92,10 +92,10 @@ object VuorovahtiHelper {
         return (System.currentTimeMillis() - lastMs) > 18L * 60 * 60 * 1000L
     }
 
-    // 3. Tallenna ja hae edellinen toteutunut sekä seuraava tuleva leimausmuistutus
+    // 3. Tallenna ja hae edellinen toteutunut sekÃ¤ seuraava tuleva leimausmuistutus
     fun saveLastTriggeredReminder(context: Context, infoText: String) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
-        val fullText = "${timeFormat.format(Date())} – $infoText"
+        val fullText = "${timeFormat.format(Date())} â€“ $infoText"
         context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
             .edit()
             .putString("last_triggered_reminder", fullText)
@@ -104,21 +104,21 @@ object VuorovahtiHelper {
 
     fun getLastTriggeredReminder(context: Context): String {
         return context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
-            .getString("last_triggered_reminder", "Ei vielä toteutuneita muistutuksia")
-            ?: "Ei vielä toteutuneita muistutuksia"
+            .getString("last_triggered_reminder", "Ei vielÃ¤ toteutuneita muistutuksia")
+            ?: "Ei vielÃ¤ toteutuneita muistutuksia"
     }
 
     fun getNextScheduledReminderText(
         context: Context,
         reminderMinutesBefore: Int = 30,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = listOf("tyÃ¶vuoro", "aamuvuoro", "iltavuoro", "yÃ¶vuoro", "vuoro")
     ): String {
         if (!SettingsManager.isStampNotificationEnabled(context)) {
-            return "Ei käytössä (leimausmuistutukset kytketty pois)"
+            return "Ei kÃ¤ytÃ¶ssÃ¤ (leimausmuistutukset kytketty pois)"
         }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
-            return "Kalenterilupa puuttuu – muistutuksia ei voida tarkistaa"
+            return "Kalenterilupa puuttuu â€“ muistutuksia ei voida tarkistaa"
         }
 
         val now = System.currentTimeMillis()
@@ -167,14 +167,14 @@ object VuorovahtiHelper {
                     val startTrigger = startTime - (reminderMinutesBefore * 60 * 1000L)
                     if (startTrigger > now && startTrigger < earliestTrigger) {
                         earliestTrigger = startTrigger
-                        earliestDesc = "${dateFmt.format(Date(startTrigger))} (Sisäänleimaus – $shiftName klo ${hourFmt.format(Date(startTime))})"
+                        earliestDesc = "${dateFmt.format(Date(startTrigger))} (SisÃ¤Ã¤nleimaus â€“ $shiftName klo ${hourFmt.format(Date(startTime))})"
                     }
 
                     if (endTime > startTime) {
                         val endTrigger = endTime - (reminderMinutesBefore * 60 * 1000L)
                         if (endTrigger > now && endTrigger < earliestTrigger) {
                             earliestTrigger = endTrigger
-                            earliestDesc = "${dateFmt.format(Date(endTrigger))} (Ulosleimaus – $shiftName klo ${hourFmt.format(Date(endTime))})"
+                            earliestDesc = "${dateFmt.format(Date(endTrigger))} (Ulosleimaus â€“ $shiftName klo ${hourFmt.format(Date(endTime))})"
                         }
                     }
                 }
@@ -184,11 +184,11 @@ object VuorovahtiHelper {
         return if (earliestTrigger != Long.MAX_VALUE) {
             earliestDesc
         } else {
-            "Ei tulevia työvuoroja kalenterissa seuraavan 14 vrk aikana"
+            "Ei tulevia tyÃ¶vuoroja kalenterissa seuraavan 14 vrk aikana"
         }
     }
 
-    // 4. Napakka haptinen värinäpalaute
+    // 4. Napakka haptinen vÃ¤rinÃ¤palaute
     fun triggerConfirmHaptics(view: View) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -197,13 +197,13 @@ object VuorovahtiHelper {
         }
     }
 
-    // 5. Tarkista onko kyseessä Demo-käyttäjä
+    // 5. Tarkista onko kyseessÃ¤ Demo-kÃ¤yttÃ¤jÃ¤
     fun isDemoMode(username: String?, password: String?): Boolean {
         return username?.trim().equals("demo", ignoreCase = true) &&
                password?.trim().equals("demo", ignoreCase = true)
     }
 
-    // 6. Ajastaa 3 viikon listantarkistuksen (toimii myös suoraan puhelimen buutin jälkeen)
+    // 6. Ajastaa 3 viikon listantarkistuksen (toimii myÃ¶s suoraan puhelimen buutin jÃ¤lkeen)
     fun scheduleNextThreeWeekListCheck(context: Context) {
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -224,11 +224,11 @@ object VuorovahtiHelper {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // 7. Siivoaa vanhat/perutut hälytykset ja asettaa voimassa olevat hälytykset kalenterista
+    // 7. Siivoaa vanhat/perutut hÃ¤lytykset ja asettaa voimassa olevat hÃ¤lytykset kalenterista
     fun ensureRemindersFromCalendar(
         context: Context,
         reminderMinutesBefore: Int = 30,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = listOf("tyÃ¶vuoro", "aamuvuoro", "iltavuoro", "yÃ¶vuoro", "vuoro")
     ) {
         scheduleNextThreeWeekListCheck(context)
 
@@ -355,10 +355,10 @@ object VuorovahtiHelper {
         }
     }
 
-    // 8. Tarkistaa kalenterista onko huomenna (ja lähipäivinä) vapaata ja palauttaa toivotuksen
+    // 8. Tarkistaa kalenterista onko huomenna (ja lÃ¤hipÃ¤ivinÃ¤) vapaata ja palauttaa toivotuksen
     fun getFreeDayGreetingIfApplicable(
         context: Context,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = listOf("tyÃ¶vuoro", "aamuvuoro", "iltavuoro", "yÃ¶vuoro", "vuoro")
     ): String? {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
@@ -414,19 +414,19 @@ object VuorovahtiHelper {
         if (freeDaysCount <= 0) return null
 
         val singleDayGreetings = listOf(
-            "Huomenna ei ole vuoroa – ota rennosti ja nauti vapaasta!",
-            "Vuoro paketissa ja huominen vapaana. Mukavaa huilipäivää!",
-            "Hyvää huomista vapaapäivää, nollaa ajatukset ihan rauhassa!",
-            "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapäivää!",
-            "Ansaittu hengähdystauko edessä – leppoisaa vapaapäivää!"
+            "Huomenna ei ole vuoroa â€“ ota rennosti ja nauti vapaasta!",
+            "Vuoro paketissa ja huominen vapaana. Mukavaa huilipÃ¤ivÃ¤Ã¤!",
+            "HyvÃ¤Ã¤ huomista vapaapÃ¤ivÃ¤Ã¤, nollaa ajatukset ihan rauhassa!",
+            "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapÃ¤ivÃ¤Ã¤!",
+            "Ansaittu hengÃ¤hdystauko edessÃ¤ â€“ leppoisaa vapaapÃ¤ivÃ¤Ã¤!"
         )
 
         val multiDayGreetings = listOf(
-            "Työputki takana ja vapaat edessä! Nauti tulevista vapaapäivistä!",
-            "Useampi vapaapäivä edessä – mukavia ja rentouttavia vapaita!",
+            "TyÃ¶putki takana ja vapaat edessÃ¤! Nauti tulevista vapaapÃ¤ivistÃ¤!",
+            "Useampi vapaapÃ¤ivÃ¤ edessÃ¤ â€“ mukavia ja rentouttavia vapaita!",
             "Vapaat alkoivat nyt. Ota ihan rennosti ja lataa akut rauhassa!",
-            "Hyviä vapaita! Nyt on hyvin aikaa hengähtää ja puuhailla omia juttuja.",
-            "Vuorot on tältä erää taputeltu – oikein leppoisia vapaapäiviä!"
+            "HyviÃ¤ vapaita! Nyt on hyvin aikaa hengÃ¤htÃ¤Ã¤ ja puuhailla omia juttuja.",
+            "Vuorot on tÃ¤ltÃ¤ erÃ¤Ã¤ taputeltu â€“ oikein leppoisia vapaapÃ¤iviÃ¤!"
         )
 
         return if (freeDaysCount == 1) {
@@ -512,7 +512,7 @@ class MainActivity : AppCompatActivity() {
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
-            .setSubtitle("Vahvista sormenjäljellä tai lukituskoodilla")
+            .setSubtitle("Vahvista sormenjÃ¤ljellÃ¤ tai lukituskoodilla")
             .setAllowedAuthenticators(authenticators)
             .build()
 
@@ -588,7 +588,7 @@ class MainActivity : AppCompatActivity() {
                     super.onPageFinished(view, url)
                     injectCleanTheme(view, url)
                     android.webkit.CookieManager.getInstance().flush()
-                    // ... loput nykyisestä onPageFinished-koodistasi ...
+                    // ... loput nykyisestÃ¤ onPageFinished-koodistasi ...
 
                     val currentUrl = url ?: ""
                     updateNavigationState(currentUrl)
@@ -606,11 +606,233 @@ class MainActivity : AppCompatActivity() {
                         return
                     }
 
+                    if (currentUrl.contains("/PersonRequests/", ignoreCase = true)) {
+                        injectWishProtection()
+                    }
 
-    
-            private fun injectCleanTheme(view: WebView?, url: String?) {
+                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true)) {
+                        if (!pendingAutoStamp) {
+                            webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
+                        }
+                    }
+
+                    if (pendingAutoStamp) {
+                        scheduleAutoStampCheck(1000)
+                    } else if (forceListOnNextCalendarLoad && (currentUrl.contains("/Calendar/", ignoreCase = true) || currentUrl.contains("demo_shifts", ignoreCase = true)) && !currentUrl.contains("login", ignoreCase = true)) {
+                        forceListOnNextCalendarLoad = false
+                        webView.postDelayed({ extractShiftsFromPage(forceList = true) }, 750)
+                    } else if (waitingForListViewSync && currentUrl.contains("/Calendar/", ignoreCase = true)) {
+                        waitingForListViewSync = false
+                        webView.postDelayed({ extractShiftsFromPage(forceList = false) }, 750)
+                    }
+                }
+            }
+            
+            addJavascriptInterface(CalendarBridge(), "AndroidBridge")
+            
+            
+
+        } // <- WebViewin asetusten blokki pÃ¤Ã¤ttyy tÃ¤hÃ¤n
+
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            setAcceptThirdPartyCookies(webView, true)
+        }
+
+        val navWrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 12, 20, 20)
+            setBackgroundColor(Color.parseColor("#0F172A"))
+        }
+
+        val buttonBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(12, 12, 12, 12)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 36f
+                setColor(Color.parseColor("#1E293B"))
+                setStroke(2, Color.parseColor("#334155"))
+            }
+        }
+
+        fun createNavButton(label: String, weight: Float = 1f, action: () -> Unit): Button {
+            return Button(this).apply {
+                text = label
+                textSize = 13.5f
+                setTextColor(Color.WHITE)
+                isAllCaps = false
+                setPadding(12, 32, 12, 32)
+                minHeight = 0
+                minimumHeight = 0
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight).apply {
+                    marginStart = 6
+                    marginEnd = 6
+                }
+                setOnClickListener { action() }
+            }
+        }
+
+        btnStamp = createNavButton("Leimaus") { webView.loadUrl(urlStamping) }.apply {
+            setOnLongClickListener { openSettings(); true }
+        }
+        btnWishes = createNavButton("Toiveet") { webView.loadUrl(urlWishes) }
+        btnCalendar = createNavButton("Vuorot") { webView.loadUrl(urlCalendar) }
+        btnSync = createNavButton("Synkronoi") { checkPermissionsAndSync() }.apply {
+            visibility = View.GONE
+        }
+        btnSettings = createNavButton("âš™", 0.68f) { openSettings() }
+        btnClose = createNavButton("âœ•", 0.68f) { finishAndRemoveTask() }
+
+        buttonBar.addView(btnStamp)
+        buttonBar.addView(btnWishes)
+        buttonBar.addView(btnCalendar)
+        buttonBar.addView(btnSync)
+        buttonBar.addView(btnSettings)
+        buttonBar.addView(btnClose)
+        navWrapper.addView(buttonBar)
+
+        mainColumn.addView(webView)
+        mainColumn.addView(navWrapper)
+
+        stampOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            setBackgroundColor(Color.parseColor("#EB0A0F1D"))
+            isClickable = true
+            isFocusable = true
+            visibility = View.GONE
+        }
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(56, 56, 56, 48)
+            layoutParams = LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                marginStart = 64
+                marginEnd = 64
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 36f
+                setColor(Color.parseColor("#1E293B"))
+                setStroke(2, Color.parseColor("#38BDF8"))
+            }
+        }
+
+        overlayProgress = ProgressBar(this).apply {
+            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#10B981"))
+            layoutParams = LinearLayout.LayoutParams(96, 96).apply { bottomMargin = 32 }
+        }
+
+        overlayTitle = TextView(this).apply {
+            text = "Automaattinen toiminto"
+            textSize = 17f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+
+        overlayStatus = TextView(this).apply {
+            text = "YhdistetÃ¤Ã¤n palveluun..."
+            textSize = 13.5f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 36)
+        }
+
+        val btnCancelOverlay = Button(this).apply {
+            text = "Peruuta"
+            textSize = 12f
+            isAllCaps = false
+            setTextColor(Color.parseColor("#E2E8F0"))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = 20f
+                setColor(Color.parseColor("#334155"))
+            }
+            setOnClickListener {
+                pendingAutoStamp = false
+                autoStampClickDone = false
+                isBackgroundListSync = false
+                forceListOnNextCalendarLoad = false
+                pagesRemainingToSync = 0
+                hideStampOverlay()
+            }
+        }
+
+        card.addView(overlayProgress)
+        card.addView(overlayTitle)
+        card.addView(overlayStatus)
+        card.addView(btnCancelOverlay)
+        stampOverlay.addView(card)
+
+        rootFrame.addView(mainColumn)
+        rootFrame.addView(stampOverlay)
+        setContentView(rootFrame)
+
+        handleIncomingIntent(intent)
+        updateNavigationState(urlStamping)
+        scheduleNextThreeWeekListCheck()
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (stampOverlay.visibility == View.VISIBLE) {
+                    pendingAutoStamp = false
+                    isBackgroundListSync = false
+                    hideStampOverlay()
+                } else if (webView.canGoBack()) {
+                    webView.goBack()
+                } else {
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+
+        if (SettingsManager.isFirstRun(this) && !pendingAutoStamp && !isBackgroundListSync) {
+            checkAndRequestAllPermissions()
+            openSettings()
+        }
+
+        if (!isBackgroundListSync) {
+            webView.loadUrl(urlStamping)
+        }
+    }
+
+    private fun openSettings() {
+        startActivity(Intent(this, SettingsActivity::class.java))
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (pendingSummaryDialog) {
+            pendingSummaryDialog = false
+            webView.postDelayed({ showSyncSummaryDialog() }, 300)
+        }
+        VuorovahtiHelper.ensureRemindersFromCalendar(this)
+        val currentBase = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
+        if (lastKnownBaseUrl.isNotEmpty() && lastKnownBaseUrl != currentBase) {
+            lastKnownBaseUrl = currentBase
+            webView.loadUrl(urlStamping)
+        } else if (::webView.isInitialized && !isDemoActive) {
+            tryAutoLoginIfNeeded()
+        }
+        scheduleNextThreeWeekListCheck()
+    }
+
+    override fun onDestroy() {
+        (silentSyncWebView?.parent as? ViewGroup)?.removeView(silentSyncWebView)
+        silentSyncWebView?.destroy()
+        silentSyncWebView = null
+        super.onDestroy()
+    }
+
+    private fun injectCleanTheme(view: WebView?, url: String?) {
         val css = """
-            /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN PIILOTUS === */
+            /* === PERUSASETUKSET JA YLIMÃ„Ã„RÃ„ISTEN PALKKIEN PIILOTUS === */
             html, body {
                 background-color: #0F172A !important;
                 color: #E2E8F0 !important;
@@ -618,7 +840,7 @@ class MainActivity : AppCompatActivity() {
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            /* Piilotetaan Visman ylänavigaatio, alatunnisteet ja kirjautumissivun turhakkeet */
+            /* Piilotetaan Visman ylÃ¤navigaatio, alatunnisteet ja kirjautumissivun turhakkeet */
             nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr {
                 display: none !important;
             }
@@ -700,7 +922,7 @@ class MainActivity : AppCompatActivity() {
                 color: #38BDF8 !important;
             }
 
-            /* === TYÖAIKALEIMAUS (/WorktimeStamping) === */
+            /* === TYÃ–AIKALEIMAUS (/WorktimeStamping) === */
             .nav-tabs-wts {
                 border-bottom: 1px solid #334155 !important;
             }
@@ -819,7 +1041,7 @@ class MainActivity : AppCompatActivity() {
             .today .dayNum {
                 color: #38BDF8 !important;
             }
-            /* Työvuoropalkit kalenterissa */
+            /* TyÃ¶vuoropalkit kalenterissa */
             .month-item.work {
                 background-color: #0284C7 !important;
                 color: #FFFFFF !important;
@@ -864,7 +1086,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 style.innerHTML = `$css`;
 
-                // Jos automaattikirjautuminen on päällä, piilotetaan kirjautumislomake visuaalisesti koskematta sen kenttiin
+                // Jos automaattikirjautuminen on pÃ¤Ã¤llÃ¤, piilotetaan kirjautumislomake visuaalisesti koskematta sen kenttiin
                 if ($hasCreds && document.getElementById('LoginForm')) {
                     var form = document.getElementById('LoginForm');
                     if (form && !form.dataset.hiddenByTheme) {
@@ -872,7 +1094,7 @@ class MainActivity : AppCompatActivity() {
                         form.style.display = 'none';
                         var msg = document.createElement('div');
                         msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
-                        msg.innerText = 'Kirjaudutaan sisään...';
+                        msg.innerText = 'Kirjaudutaan sisÃ¤Ã¤n...';
                         form.parentNode.insertBefore(msg, form);
                     }
                 }
@@ -880,238 +1102,6 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
 
         view?.evaluateJavascript(js, null)
-    
-
-    }
-                }
-
-
-
-
-
-                    
-                    if (currentUrl.contains("/PersonRequests/", ignoreCase = true)) {
-                        injectWishProtection()
-                    }
-
-                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true)) {
-                        if (!pendingAutoStamp) {
-                            webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
-                        }
-                    }
-
-                    if (pendingAutoStamp) {
-                        scheduleAutoStampCheck(1000)
-                    } else if (forceListOnNextCalendarLoad && (currentUrl.contains("/Calendar/", ignoreCase = true) || currentUrl.contains("demo_shifts", ignoreCase = true)) && !currentUrl.contains("login", ignoreCase = true)) {
-                        forceListOnNextCalendarLoad = false
-                        webView.postDelayed({ extractShiftsFromPage(forceList = true) }, 750)
-                    } else if (waitingForListViewSync && currentUrl.contains("/Calendar/", ignoreCase = true)) {
-                        waitingForListViewSync = false
-                        webView.postDelayed({ extractShiftsFromPage(forceList = false) }, 750)
-                    }
-                }
-            }
-            
-            addJavascriptInterface(CalendarBridge(), "AndroidBridge")
-            
-            
-
-        } // <- WebViewin asetusten blokki päättyy tähän
-
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(webView, true)
-        }
-
-        val navWrapper = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(20, 12, 20, 20)
-            setBackgroundColor(Color.parseColor("#0F172A"))
-        }
-
-        val buttonBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(12, 12, 12, 12)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 36f
-                setColor(Color.parseColor("#1E293B"))
-                setStroke(2, Color.parseColor("#334155"))
-            }
-        }
-
-        fun createNavButton(label: String, weight: Float = 1f, action: () -> Unit): Button {
-            return Button(this).apply {
-                text = label
-                textSize = 13.5f
-                setTextColor(Color.WHITE)
-                isAllCaps = false
-                setPadding(12, 32, 12, 32)
-                minHeight = 0
-                minimumHeight = 0
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, weight).apply {
-                    marginStart = 6
-                    marginEnd = 6
-                }
-                setOnClickListener { action() }
-            }
-        }
-
-        btnStamp = createNavButton("Leimaus") { webView.loadUrl(urlStamping) }.apply {
-            setOnLongClickListener { openSettings(); true }
-        }
-        btnWishes = createNavButton("Toiveet") { webView.loadUrl(urlWishes) }
-        btnCalendar = createNavButton("Vuorot") { webView.loadUrl(urlCalendar) }
-        btnSync = createNavButton("Synkronoi") { checkPermissionsAndSync() }.apply {
-            visibility = View.GONE
-        }
-        btnSettings = createNavButton("⚙", 0.68f) { openSettings() }
-        btnClose = createNavButton("✕", 0.68f) { finishAndRemoveTask() }
-
-        buttonBar.addView(btnStamp)
-        buttonBar.addView(btnWishes)
-        buttonBar.addView(btnCalendar)
-        buttonBar.addView(btnSync)
-        buttonBar.addView(btnSettings)
-        buttonBar.addView(btnClose)
-        navWrapper.addView(buttonBar)
-
-        mainColumn.addView(webView)
-        mainColumn.addView(navWrapper)
-
-        stampOverlay = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            layoutParams = FrameLayout.LayoutParams(-1, -1)
-            setBackgroundColor(Color.parseColor("#EB0A0F1D"))
-            isClickable = true
-            isFocusable = true
-            visibility = View.GONE
-        }
-
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(56, 56, 56, 48)
-            layoutParams = LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                marginStart = 64
-                marginEnd = 64
-            }
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 36f
-                setColor(Color.parseColor("#1E293B"))
-                setStroke(2, Color.parseColor("#38BDF8"))
-            }
-        }
-
-        overlayProgress = ProgressBar(this).apply {
-            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#10B981"))
-            layoutParams = LinearLayout.LayoutParams(96, 96).apply { bottomMargin = 32 }
-        }
-
-        overlayTitle = TextView(this).apply {
-            text = "Automaattinen toiminto"
-            textSize = 17f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-        }
-
-        overlayStatus = TextView(this).apply {
-            text = "Yhdistetään palveluun..."
-            textSize = 13.5f
-            setTextColor(Color.parseColor("#CBD5E1"))
-            gravity = Gravity.CENTER
-            setPadding(0, 16, 0, 36)
-        }
-
-        val btnCancelOverlay = Button(this).apply {
-            text = "Peruuta"
-            textSize = 12f
-            isAllCaps = false
-            setTextColor(Color.parseColor("#E2E8F0"))
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = 20f
-                setColor(Color.parseColor("#334155"))
-            }
-            setOnClickListener {
-                pendingAutoStamp = false
-                autoStampClickDone = false
-                isBackgroundListSync = false
-                forceListOnNextCalendarLoad = false
-                pagesRemainingToSync = 0
-                hideStampOverlay()
-            }
-        }
-
-        card.addView(overlayProgress)
-        card.addView(overlayTitle)
-        card.addView(overlayStatus)
-        card.addView(btnCancelOverlay)
-        stampOverlay.addView(card)
-
-        rootFrame.addView(mainColumn)
-        rootFrame.addView(stampOverlay)
-        setContentView(rootFrame)
-
-        handleIncomingIntent(intent)
-        updateNavigationState(urlStamping)
-        scheduleNextThreeWeekListCheck()
-
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (stampOverlay.visibility == View.VISIBLE) {
-                    pendingAutoStamp = false
-                    isBackgroundListSync = false
-                    hideStampOverlay()
-                } else if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    isEnabled = false
-                    onBackPressedDispatcher.onBackPressed()
-                }
-            }
-        })
-
-        if (SettingsManager.isFirstRun(this) && !pendingAutoStamp && !isBackgroundListSync) {
-            checkAndRequestAllPermissions()
-            openSettings()
-        }
-
-        if (!isBackgroundListSync) {
-            webView.loadUrl(urlStamping)
-        }
-    }
-
-    private fun openSettings() {
-        startActivity(Intent(this, SettingsActivity::class.java))
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (pendingSummaryDialog) {
-            pendingSummaryDialog = false
-            webView.postDelayed({ showSyncSummaryDialog() }, 300)
-        }
-        VuorovahtiHelper.ensureRemindersFromCalendar(this)
-        val currentBase = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
-        if (lastKnownBaseUrl.isNotEmpty() && lastKnownBaseUrl != currentBase) {
-            lastKnownBaseUrl = currentBase
-            webView.loadUrl(urlStamping)
-        } else if (::webView.isInitialized && !isDemoActive) {
-            tryAutoLoginIfNeeded()
-        }
-        scheduleNextThreeWeekListCheck()
-    }
-
-    override fun onDestroy() {
-        (silentSyncWebView?.parent as? ViewGroup)?.removeView(silentSyncWebView)
-        silentSyncWebView?.destroy()
-        silentSyncWebView = null
-        super.onDestroy()
     }
 
     private fun injectWishProtection() {
@@ -1128,7 +1118,7 @@ class MainActivity : AppCompatActivity() {
                     if (!el) return;
                     var txt = (el.innerText || el.value || el.title || "").trim().toLowerCase();
                     var cls = (el.className || "").toLowerCase();
-                    var isSave = txt.indexOf('tallenna') !== -1 || txt.indexOf('lähetä') !== -1;
+                    var isSave = txt.indexOf('tallenna') !== -1 || txt.indexOf('lÃ¤hetÃ¤') !== -1;
                     var isDelete = txt.indexOf('poista') !== -1 || cls.indexOf('delete') !== -1 || cls.indexOf('trash') !== -1 || cls.indexOf('remove') !== -1;
 
                     if (isSave || isDelete) {
@@ -1207,7 +1197,7 @@ class MainActivity : AppCompatActivity() {
                 for (var i = 0; i < passInputs.length; i++) {
                     if (passInputs[i].offsetParent !== null) { hasVisiblePass = true; break; }
                 }
-                if (!hasVisiblePass && (bodyTxt.indexOf('istunto on vanhentunut') !== -1 || bodyTxt.indexOf('istuntosi on vanhentunut') !== -1 || bodyTxt.indexOf('session expired') !== -1 || bodyTxt.indexOf('kirjaudu sisään uudelleen') !== -1 || bodyTxt.indexOf('uloskirjattu') !== -1)) {
+                if (!hasVisiblePass && (bodyTxt.indexOf('istunto on vanhentunut') !== -1 || bodyTxt.indexOf('istuntosi on vanhentunut') !== -1 || bodyTxt.indexOf('session expired') !== -1 || bodyTxt.indexOf('kirjaudu sisÃ¤Ã¤n uudelleen') !== -1 || bodyTxt.indexOf('uloskirjattu') !== -1)) {
                     var btns = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
                     for (var b = 0; b < btns.length; b++) {
                         if (btns[b].offsetParent === null) continue;
@@ -1258,14 +1248,14 @@ class MainActivity : AppCompatActivity() {
             when {
                 r.contains("SESSION_EXPIRED_RELOAD") -> webView.loadUrl(if (isBackgroundListSync) urlCalendar else urlStamping)
                 r.contains("SESSION_EXPIRED_CLICKED") || r.contains("USER_STEP_SUBMITTED") -> {
-                    if (pendingAutoStamp || isBackgroundListSync) showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään...")
+                    if (pendingAutoStamp || isBackgroundListSync) showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisÃ¤Ã¤n...")
                     webView.postDelayed({ tryAutoLoginIfNeeded() }, 1400)
                 }
                 r.contains("SUBMITTED") -> {
                     if (now - lastAutoLoginAttempt > 4000L) {
                         lastAutoLoginAttempt = now
                         if (pendingAutoStamp || isBackgroundListSync) {
-                            showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään, odota hetki...")
+                            showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisÃ¤Ã¤n, odota hetki...")
                         }
                     }
                     if (pendingAutoStamp) webView.postDelayed({ scheduleAutoStampCheck(1500) }, 2200)
@@ -1297,7 +1287,7 @@ class MainActivity : AppCompatActivity() {
             syncedDatesInBatch.clear()
             syncChangesList.clear()
             syncedShiftRangesInBatch.clear()
-            showStampOverlay("Synkronoidaan työvuoroja", "Avataan kalenteria...")
+            showStampOverlay("Synkronoidaan tyÃ¶vuoroja", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
         }
 
@@ -1309,7 +1299,7 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("AUTO_STAMP")
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(if (pendingStampIsEnding) 2002 else 1001)
-            val title = if (pendingStampIsEnding) "Ulosleimaus käynnissä" else "Sisäänleimaus käynnissä"
+            val title = if (pendingStampIsEnding) "Ulosleimaus kÃ¤ynnissÃ¤" else "SisÃ¤Ã¤nleimaus kÃ¤ynnissÃ¤"
             showStampOverlay(title, "Valmistellaan leimausta...")
         }
         if (intent?.getBooleanExtra("AUTO_SYNC_NEW_LIST", false) == true) {
@@ -1323,7 +1313,7 @@ class MainActivity : AppCompatActivity() {
             syncedDatesInBatch.clear()
             syncChangesList.clear()
             syncedShiftRangesInBatch.clear()
-            showStampOverlay("Haetaan uutta työvuorolistaa", "Avataan kalenteria...")
+            showStampOverlay("Haetaan uutta tyÃ¶vuorolistaa", "Avataan kalenteria...")
             if (::webView.isInitialized) webView.loadUrl(urlCalendar)
         }
     }
@@ -1343,8 +1333,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val currentUrl = webView.url ?: ""
-        val targetKeyword = if (pendingStampIsEnding) "ulos" else "sisään"
-        val oppositeKeyword = if (pendingStampIsEnding) "sisään" else "ulos"
+        val targetKeyword = if (pendingStampIsEnding) "ulos" else "sisÃ¤Ã¤n"
+        val oppositeKeyword = if (pendingStampIsEnding) "sisÃ¤Ã¤n" else "ulos"
 
         val js = """
             (function() {
@@ -1374,7 +1364,7 @@ class MainActivity : AppCompatActivity() {
             val r = res ?: ""
             when {
                 r.contains("LOGIN_PAGE") -> {
-                    showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään...")
+                    showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisÃ¤Ã¤n...")
                     tryAutoLoginIfNeeded()
                     scheduleAutoStampCheck(2000)
                 }
@@ -1396,8 +1386,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun verifyStampSuccess(attempt: Int) {
         if (!pendingAutoStamp) return
-        val targetKeyword = if (pendingStampIsEnding) "ulos" else "sisään"
-        val oppositeKeyword = if (pendingStampIsEnding) "sisään" else "ulos"
+        val targetKeyword = if (pendingStampIsEnding) "ulos" else "sisÃ¤Ã¤n"
+        val oppositeKeyword = if (pendingStampIsEnding) "sisÃ¤Ã¤n" else "ulos"
 
         val js = """
             (function() {
@@ -1410,8 +1400,8 @@ class MainActivity : AppCompatActivity() {
                     if (txt.indexOf('leimaa') !== -1 && txt.indexOf('$targetKeyword') !== -1) targetStillVisible = true;
                 }
                 var bodyTxt = (document.body ? document.body.innerText : "").toLowerCase();
-                if (bodyTxt.indexOf('onnistui') !== -1 || bodyTxt.indexOf('tallennettu') !== -1 || bodyTxt.indexOf('leimattu sisään') !== -1) return "VERIFIED_TEXT";
-                if (!targetStillVisible && bodyTxt.indexOf('työaikaleimaus') !== -1) return "VERIFIED_GONE";
+                if (bodyTxt.indexOf('onnistui') !== -1 || bodyTxt.indexOf('tallennettu') !== -1 || bodyTxt.indexOf('leimattu sisÃ¤Ã¤n') !== -1) return "VERIFIED_TEXT";
+                if (!targetStillVisible && bodyTxt.indexOf('tyÃ¶aikaleimaus') !== -1) return "VERIFIED_GONE";
                 return "PENDING";
             })();
         """.trimIndent()
@@ -1419,7 +1409,7 @@ class MainActivity : AppCompatActivity() {
         webView.evaluateJavascript(js) { res ->
             val r = res ?: ""
             if (r.contains("VERIFIED")) {
-                completeAutoStampSuccess(if (pendingStampIsEnding) "Ulosleimaus varmistettu!" else "Sisäänleimaus varmistettu!")
+                completeAutoStampSuccess(if (pendingStampIsEnding) "Ulosleimaus varmistettu!" else "SisÃ¤Ã¤nleimaus varmistettu!")
             } else if (attempt < 5) {
                 webView.postDelayed({ verifyStampSuccess(attempt + 1) }, 1200)
             } else {
@@ -1447,7 +1437,7 @@ class MainActivity : AppCompatActivity() {
             "Suljetaan sovellus..."
         }
 
-        showStampOverlay(" ✓  $message", statusText, showSpinner = false)
+        showStampOverlay(" âœ“  $message", statusText, showSpinner = false)
         webView.postDelayed({ finishAndRemoveTask() }, if (freeDayGreeting != null) 2600L else 1400L)
     }
 
@@ -1499,7 +1489,7 @@ class MainActivity : AppCompatActivity() {
                 var added = 0
                 if (saveWorkShift(calId, "${tomorrow.dayOfMonth}.${tomorrow.monthValue}.${tomorrow.year}", "07:00", "15:00", "Aamuvuoro (Demo)", fmt)) added++
                 if (saveWorkShift(calId, "${day2.dayOfMonth}.${day2.monthValue}.${day2.year}", "13:00", "21:00", "Iltavuoro (Demo)", fmt)) added++
-                if (saveWorkShift(calId, "${day3.dayOfMonth}.${day3.monthValue}.${day3.year}", "21:00", "07:00", "Yövuoro (Demo)", fmt)) added++
+                if (saveWorkShift(calId, "${day3.dayOfMonth}.${day3.monthValue}.${day3.year}", "21:00", "07:00", "YÃ¶vuoro (Demo)", fmt)) added++
                 VuorovahtiHelper.saveLastSyncStatus(this, 3)
                 VuorovahtiHelper.ensureRemindersFromCalendar(this)
                 VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
@@ -1592,7 +1582,7 @@ class MainActivity : AppCompatActivity() {
                 val calId = getTargetOrPrimaryCalendarId()
                 if (calId == null) {
                     hideStampOverlay()
-                    Toast.makeText(this@MainActivity, "Kalenteria ei löytynyt.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, "Kalenteria ei lÃ¶ytynyt.", Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
                 val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
@@ -1602,7 +1592,7 @@ class MainActivity : AppCompatActivity() {
                 if (pagesRemainingToSync > 0) {
                     pagesRemainingToSync--
                     if (isBackgroundListSync) {
-                        showStampOverlay("Haetaan uutta työvuorolistaa", "Tarkistetaan tulevia viikkoja... (muutoksia $totalAddedInBatch)")
+                        showStampOverlay("Haetaan uutta tyÃ¶vuorolistaa", "Tarkistetaan tulevia viikkoja... (muutoksia $totalAddedInBatch)")
                     }
                     clickNextCalendarPeriod(calId)
                 } else {
@@ -1616,7 +1606,7 @@ class MainActivity : AppCompatActivity() {
                     if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                     Toast.makeText(
                         this@MainActivity,
-                        "Tarkistettu $totalFoundInBatch merkintää: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+                        "Tarkistettu $totalFoundInBatch merkintÃ¤Ã¤: $totalAddedInBatch lisÃ¤tty/pÃ¤ivitetty, $totalRemovedInBatch poistettu.",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -1635,7 +1625,7 @@ class MainActivity : AppCompatActivity() {
                 var all = document.querySelectorAll('button, a, span');
                 for (var i = 0; i < all.length; i++) {
                     var t = (all[i].innerText || "").trim().toLowerCase();
-                    if (t === '>' || t === '›' || t === '»') { all[i].click(); return "NEXT_CLICKED"; }
+                    if (t === '>' || t === 'â€º' || t === 'Â»') { all[i].click(); return "NEXT_CLICKED"; }
                 }
                 return "NO_NEXT_BTN";
             })();
@@ -1662,7 +1652,7 @@ class MainActivity : AppCompatActivity() {
                 if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
                 Toast.makeText(
                     this,
-                    "Valmis: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+                    "Valmis: $totalAddedInBatch lisÃ¤tty/pÃ¤ivitetty, $totalRemovedInBatch poistettu.",
                     Toast.LENGTH_LONG
                 ).show()
             }
@@ -1692,7 +1682,7 @@ class MainActivity : AppCompatActivity() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_list_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            nm.createNotificationChannel(NotificationChannel(channelId, "Uudet työvuorolistat", NotificationManager.IMPORTANCE_HIGH))
+            nm.createNotificationChannel(NotificationChannel(channelId, "Uudet tyÃ¶vuorolistat", NotificationManager.IMPORTANCE_HIGH))
         }
         val summaryIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -1706,8 +1696,8 @@ class MainActivity : AppCompatActivity() {
         val notif = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_launcher)
             .setSubText("Numeron Vuorovahti")
-            .setContentTitle("Uudet työvuorot päivitetty!")
-            .setContentText("Lisätty/muutettu $addedCount$removedTxt. Napauta tarkistaaksesi tai muokataksesi.")
+            .setContentTitle("Uudet tyÃ¶vuorot pÃ¤ivitetty!")
+            .setContentText("LisÃ¤tty/muutettu $addedCount$removedTxt. Napauta tarkistaaksesi tai muokataksesi.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
@@ -1728,7 +1718,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(TextView(this).apply {
-            text = "Viimeisimmän synkronoinnin muutokset"
+            text = "ViimeisimmÃ¤n synkronoinnin muutokset"
             textSize = 18f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#38BDF8"))
@@ -1736,7 +1726,7 @@ class MainActivity : AppCompatActivity() {
         })
 
         root.addView(TextView(this).apply {
-            text = "Voit muokata merkintää kalenterissa tai kumota yksittäisen lisäyksen."
+            text = "Voit muokata merkintÃ¤Ã¤ kalenterissa tai kumota yksittÃ¤isen lisÃ¤yksen."
             textSize = 12.5f
             setTextColor(Color.parseColor("#94A3B8"))
             setPadding(0, 0, 0, dp(12))
@@ -1751,7 +1741,7 @@ class MainActivity : AppCompatActivity() {
 
         if (arr.length() == 0) {
             listCol.addView(TextView(this).apply {
-                text = "Ei tallennettuja yksittäisiä vuoromuutoksia viimeisimmässä erässä."
+                text = "Ei tallennettuja yksittÃ¤isiÃ¤ vuoromuutoksia viimeisimmÃ¤ssÃ¤ erÃ¤ssÃ¤."
                 textSize = 13.5f
                 setTextColor(Color.parseColor("#CBD5E1"))
                 setPadding(0, dp(12), 0, dp(12))
@@ -1763,7 +1753,7 @@ class MainActivity : AppCompatActivity() {
                 val type = obj.optString("type", "ADDED")
                 val dateStr = obj.optString("dateStr", "")
                 val timeStr = obj.optString("timeStr", "")
-                val title = obj.optString("title", "Työvuoro")
+                val title = obj.optString("title", "TyÃ¶vuoro")
 
                 val badgeText = when (type) {
                     "UPDATED" -> "MUUTETTU"
@@ -1847,7 +1837,7 @@ class MainActivity : AppCompatActivity() {
                             )
                             VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
                             VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-                            infoText.text = "[PERUTTU]  $dateStr  klo $timeStr — Poistettu kalenterista"
+                            infoText.text = "[PERUTTU]  $dateStr  klo $timeStr â€” Poistettu kalenterista"
                             infoText.setTextColor(Color.parseColor("#64748B"))
                             actRow.visibility = View.GONE
                         }
@@ -1887,8 +1877,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
         val now = LocalDate.now()
-        val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
-        val mMatch = Regex("""(tammikuu|helmikuu|maaliskuu|huhtikuu|toukokuu|kesäkuu|heinäkuu|elokuu|syyskuu|lokakuu|marraskuu|joulukuu)\s+(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)
+        val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesÃ¤kuu" to 6, "heinÃ¤kuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
+        val mMatch = Regex("""(tammikuu|helmikuu|maaliskuu|huhtikuu|toukokuu|kesÃ¤kuu|heinÃ¤kuu|elokuu|syyskuu|lokakuu|marraskuu|joulukuu)\s+(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)
         if (mMatch != null) {
             val m = months[mMatch.groupValues[1].lowercase()]
             val y = mMatch.groupValues[2].toIntOrNull()
@@ -1914,7 +1904,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractDirectVacationRanges(text: String, defaultYear: Int, vacationDays: MutableList<LocalDate>): Int {
         var foundRanges = 0
-        val rangeRegex = Regex("""(\d{1,2})\.(?:(\d{1,2})\.)?(?:\d{4})?\s*[-–]\s*(\d{1,2})\.(\d{1,2})\.?(?:(\d{4}))?[^\n\r]*(?:loma|\bvl\b)""", RegexOption.IGNORE_CASE)
+        val rangeRegex = Regex("""(\d{1,2})\.(?:(\d{1,2})\.)?(?:\d{4})?\s*[-â€“]\s*(\d{1,2})\.(\d{1,2})\.?(?:(\d{4}))?[^\n\r]*(?:loma|\bvl\b)""", RegexOption.IGNORE_CASE)
         for (m in rangeRegex.findAll(text)) {
             val d1 = m.groupValues[1].toIntOrNull() ?: continue
             val d2 = m.groupValues[3].toIntOrNull() ?: continue
@@ -2013,7 +2003,7 @@ class MainActivity : AppCompatActivity() {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
             return Pair(1, 0)
         }
-        val sMatches = Regex("""(\d{1,2}[:.]\d{2})[\s\t]*[-–][\s\t]*(\d{1,2}[:.]\d{2})""").findAll(block).toList()
+        val sMatches = Regex("""(\d{1,2}[:.]\d{2})[\s\t]*[-â€“][\s\t]*(\d{1,2}[:.]\d{2})""").findAll(block).toList()
         if (sMatches.isNotEmpty()) {
             var added = 0
             for (idx in sMatches.indices) {
@@ -2036,7 +2026,7 @@ class MainActivity : AppCompatActivity() {
             try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
             return Pair(1, 0)
         }
-        val shifts = Regex("""(\d{1,2}[:.]\d{2})[\s\t\r\n]*[-–][\s\t\r\n]*(\d{1,2}[:.]\d{2})""").findAll(txt).toList()
+        val shifts = Regex("""(\d{1,2}[:.]\d{2})[\s\t\r\n]*[-â€“][\s\t\r\n]*(\d{1,2}[:.]\d{2})""").findAll(txt).toList()
         if (shifts.isNotEmpty()) {
             var added = 0
             for (sh in shifts) {
@@ -2053,7 +2043,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun extractLocAndDesc(startStr: String, raw: String): Pair<String, String> {
         val lines = raw.lines().map { it.trim() }.filter {
-            it.length > 2 && !it.equals("Uusi", true) && !it.equals("Lisää uusi", true) &&
+            it.length > 2 && !it.equals("Uusi", true) && !it.equals("LisÃ¤Ã¤ uusi", true) &&
             !it.equals("Valinnat", true) && !it.startsWith("Vk", true) &&
             !it.startsWith("Viikko", true) && !Regex("""^\d{1,2}$""").matches(it)
         }
@@ -2063,7 +2053,7 @@ class MainActivity : AppCompatActivity() {
             return Pair(codeLine ?: lines[0], roleLine ?: lines[1])
         } else if (lines.size == 1) return Pair(lines[0], lines[0])
         val h = startStr.substringBefore(":").toIntOrNull() ?: 7
-        return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro")
+        return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "YÃ¶vuoro")
     }
 
     private fun scheduleShiftAlarms(startMillis: Long, endMillis: Long, startStr: String, endStr: String, title: String) {
@@ -2107,15 +2097,15 @@ class MainActivity : AppCompatActivity() {
             val exId = findShiftOnSameDay(calId, sMs, eMs, dayStartMs, dayEndMs)
 
             if (exId == null) {
-                val newId = insertEvent(calId, "Työvuoro", loc, desc, sMs, eMs, false, sDt.hour)
+                val newId = insertEvent(calId, "TyÃ¶vuoro", loc, desc, sMs, eMs, false, sDt.hour)
                 if (newId != null) {
-                    syncChangesList.add(SyncChangeItem(newId, "ADDED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
+                    syncChangesList.add(SyncChangeItem(newId, "ADDED", dateStr, "$startStr - $endStr", desc.ifEmpty { "TyÃ¶vuoro" }))
                 }
                 newId != null
             } else {
                 val updated = updateEvent(calId, exId, loc, desc, sMs, eMs, sDt.hour)
                 if (updated) {
-                    syncChangesList.add(SyncChangeItem(exId, "UPDATED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
+                    syncChangesList.add(SyncChangeItem(exId, "UPDATED", dateStr, "$startStr - $endStr", desc.ifEmpty { "TyÃ¶vuoro" }))
                 }
                 updated
             }
@@ -2128,7 +2118,7 @@ class MainActivity : AppCompatActivity() {
             if (it.moveToFirst()) return it.getLong(0)
         }
         val daySel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND), daySel, arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString()), null)?.use {
+        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND), daySel, arrayOf(calId.toString(), "TyÃ¶vuoro", dayStartMs.toString(), dayEndMs.toString()), null)?.use {
             while (it.moveToNext()) {
                 val id = it.getLong(0)
                 val oldStart = it.getLong(1)
@@ -2162,7 +2152,7 @@ class MainActivity : AppCompatActivity() {
                 curColor = if (!it.isNull(4)) it.getInt(4) else 0
             }
         }
-        val targetColor = VuorovahtiHelper.getShiftEventColor(desc.ifEmpty { "Työvuoro" }, startHour)
+        val targetColor = VuorovahtiHelper.getShiftEventColor(desc.ifEmpty { "TyÃ¶vuoro" }, startHour)
         val timeChanged = (curStart != sMs || curEnd != eMs)
         val textChanged = (loc.isNotEmpty() && (curLoc != loc || curDesc != desc))
         val colorMissing = (curColor != targetColor)
@@ -2170,12 +2160,12 @@ class MainActivity : AppCompatActivity() {
         if (!timeChanged && !textChanged && !colorMissing) return false
 
         val v = ContentValues().apply {
-            put(CalendarContract.Events.TITLE, "Työvuoro")
+            put(CalendarContract.Events.TITLE, "TyÃ¶vuoro")
             put(CalendarContract.Events.DTSTART, sMs)
             put(CalendarContract.Events.DTEND, eMs)
             if (loc.isNotEmpty()) put(CalendarContract.Events.EVENT_LOCATION, loc)
             if (desc.isNotEmpty()) put(CalendarContract.Events.DESCRIPTION, desc)
-            applyColorWithFallback(this, calId, desc.ifEmpty { "Työvuoro" }, startHour)
+            applyColorWithFallback(this, calId, desc.ifEmpty { "TyÃ¶vuoro" }, startHour)
         }
         try {
             contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(eventId.toString()))
@@ -2204,7 +2194,7 @@ class MainActivity : AppCompatActivity() {
             if (dayEndMs < now) continue
 
             val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
-            val args = arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString())
+            val args = arrayOf(calId.toString(), "TyÃ¶vuoro", dayStartMs.toString(), dayEndMs.toString())
 
             val idsToDelete = mutableListOf<Long>()
             val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
@@ -2220,12 +2210,12 @@ class MainActivity : AppCompatActivity() {
                     val id = c.getLong(0)
                     val sMs = c.getLong(1)
                     val eMs = c.getLong(2)
-                    val desc = c.getString(3) ?: "Työvuoro"
+                    val desc = c.getString(3) ?: "TyÃ¶vuoro"
                     if (sMs > now && !syncedShiftRangesInBatch.contains(Pair(sMs, eMs))) {
                         idsToDelete.add(id)
                         val sStr = Instant.ofEpochMilli(sMs).atZone(zone).toLocalTime().format(timeFmt)
                         val eStr = Instant.ofEpochMilli(eMs).atZone(zone).toLocalTime().format(timeFmt)
-                        syncChangesList.add(SyncChangeItem(id, "REMOVED", dateStr, "$sStr - $eStr", desc.ifEmpty { "Työvuoro" }))
+                        syncChangesList.add(SyncChangeItem(id, "REMOVED", dateStr, "$sStr - $eStr", desc.ifEmpty { "TyÃ¶vuoro" }))
                     }
                 }
             }
@@ -2457,7 +2447,7 @@ class MainActivity : AppCompatActivity() {
     private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8): Long? {
         val colorLabel = if (allDay) "Loma" else desc.ifEmpty { title }
         val v = ContentValues().apply {
-            put(CalendarContract.Events.TITLE, "Työvuoro")
+            put(CalendarContract.Events.TITLE, "TyÃ¶vuoro")
             put(CalendarContract.Events.DTSTART, sMs); put(CalendarContract.Events.DTEND, eMs)
             put(CalendarContract.Events.TITLE, title); put(CalendarContract.Events.EVENT_LOCATION, loc)
             put(CalendarContract.Events.DESCRIPTION, desc); put(CalendarContract.Events.CALENDAR_ID, calId)
