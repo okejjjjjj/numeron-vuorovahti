@@ -1316,20 +1316,86 @@ class MainActivity : AppCompatActivity() {
                 color: #FFFFFF !important;
                 border-radius: 6px !important;
             }
-            .mobileAddDiv {
-                background-color: transparent !important;
-                margin-top: 10px !important;
-                padding: 4px 2px 8px 2px !important;
-                min-height: 44px !important;
-                overflow: visible !important;
+            /* 1. Leimaussivun tyhjät ylälaatikot piiloon */
+            .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
+            .mobileHeader:empty, .punchHeader:empty {
+                display: none !important;
             }
-            .mobileAddButton, .filterButton {
-                color: #38BDF8 !important;
+
+            /* 2. Toiveet-sivun Kendo / Select2 -pudotusvalikot tummiksi */
+            .k-animation-container, .k-popup, .k-list-container, .k-list-scroller, ul.k-list,
+            .select2-dropdown, .select2-results, .chosen-drop, .chosen-results, .ui-menu, .ui-selectmenu-menu {
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
+            }
+            .k-list-filter {
+                background-color: #1E293B !important;
+                padding: 6px !important;
+            }
+            .k-list-filter > input, .k-list-filter .k-textbox, .select2-search__field, .chosen-search input {
+                background-color: #0F172A !important;
+                color: #F1F5F9 !important;
+                border: 1px solid #38BDF8 !important;
+            }
+            ul.k-list > li.k-item, .k-item, .select2-results__option, .chosen-results li, .ui-menu-item, select option {
+                background-color: #1E293B !important;
+                color: #F1F5F9 !important;
+            }
+            ul.k-list > li.k-item.k-state-hover, ul.k-list > li.k-item.k-state-focused, ul.k-list > li.k-item.k-state-selected,
+            .k-state-selected, .k-state-focused, .select2-results__option--highlighted, .chosen-results li.highlighted {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+            }
+
+            /* 3. Kalenterinäkymän Tänään- ja Näkymä-napit samalle riville ja päällimmäiseksi */
+            .mobileAddDiv, .calendarHeaderButtons, .weekNavButtons {
+                display: flex !important;
+                flex-direction: row !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+                background-color: transparent !important;
+                background-image: none !important;
+                margin: 8px 0 10px 0 !important;
+                padding: 4px 2px !important;
                 height: auto !important;
                 min-height: 44px !important;
-                padding-bottom: 6px !important;
-                line-height: 1.4 !important;
                 overflow: visible !important;
+                position: relative !important;
+                z-index: 30 !important;
+            }
+            .mobileAddButton, .filterButton, .todayButton, .viewButton {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                color: #38BDF8 !important;
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                border-radius: 8px !important;
+                height: 40px !important;
+                min-height: 40px !important;
+                padding: 0 14px !important;
+                margin: 0 !important;
+                line-height: 1.2 !important;
+                position: relative !important;
+                top: 0 !important;
+                overflow: visible !important;
+                z-index: 31 !important;
+            }
+
+            /* 4. Listanäkymän valkoiset vuorokortit ja valkoiset häivytyspalkit */
+            .eventItem, .shiftItem, .shiftCard, .calendarEvent, .mobileEvent, .workShiftCard, .fc-event,
+            div[style*="background-color: rgb(255, 255, 255)"], div[style*="background-color:#fff"], div[style*="background-color: #fff"],
+            div[style*="background: rgb(255, 255, 255)"], div[style*="background:#fff"], div[style*="background: #fff"] {
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
+            }
+            .eventItem *, .shiftItem *, .shiftCard *, .calendarEvent *, .mobileEvent *, .workShiftCard * {
+                color: #F1F5F9 !important;
             }
         """.trimIndent().replace("\n", " ")
 
@@ -1377,6 +1443,58 @@ class MainActivity : AppCompatActivity() {
                             if (m) m.remove();
                         }, 5000);
                     }
+                }
+
+                function fixDynamicLightBoxes() {
+                    var nodes = document.querySelectorAll('div, ul, section, header');
+                    for (var i = 0; i < nodes.length; i++) {
+                        var el = nodes[i];
+                        var cs = window.getComputedStyle(el);
+
+                        // Poista valkoiset liukuväripalkit (kalenterilistan yläreunan häivytys)
+                        if (cs.backgroundImage && cs.backgroundImage.indexOf('gradient') !== -1 &&
+                            (cs.backgroundImage.indexOf('255, 255, 255') !== -1 || cs.backgroundImage.indexOf('#fff') !== -1)) {
+                            el.style.setProperty('background-image', 'none', 'important');
+                            el.style.setProperty('background-color', 'transparent', 'important');
+                        }
+
+                        // Muuta dynaamisesti luodut valkoiset kortit ja pudotuslistat tummiksi
+                        if (cs.backgroundColor === 'rgb(255, 255, 255)') {
+                            el.style.setProperty('background-color', '#1E293B', 'important');
+                            el.style.setProperty('color', '#F1F5F9', 'important');
+                            el.style.setProperty('border-color', '#334155', 'important');
+                        }
+
+                        // Piilota leimaussivun tyhjät yläreunan pillerilaatikot
+                        if (el.children.length === 0 && el.textContent.trim() === '' &&
+                            el.offsetHeight > 0 && el.offsetHeight < 42 && el.offsetWidth > 150) {
+                            el.style.setProperty('display', 'none', 'important');
+                        }
+                    }
+
+                    // Korosta "TÄNÄÄN"-osio siistiksi vaaleaksi laatikoksi leimaussivulla
+                    var all = document.querySelectorAll('div, span, p, label');
+                    for (var j = 0; j < all.length; j++) {
+                        if (all[j].textContent.trim() === 'TÄNÄÄN' && all[j].parentElement) {
+                            var box = all[j].parentElement;
+                            if (!box.dataset.styledToday) {
+                                box.dataset.styledToday = 'true';
+                                box.style.setProperty('background-color', '#334155', 'important');
+                                box.style.setProperty('border', '1px solid #475569', 'important');
+                                box.style.setProperty('border-radius', '12px', 'important');
+                                box.style.setProperty('padding', '10px 14px', 'important');
+                                box.style.setProperty('margin-bottom', '12px', 'important');
+                            }
+                        }
+                    }
+                }
+
+                fixDynamicLightBoxes();
+                if (!window._numeronThemeObserver) {
+                    window._numeronThemeObserver = new MutationObserver(function() {
+                        fixDynamicLightBoxes();
+                    });
+                    window._numeronThemeObserver.observe(document.body, { childList: true, subtree: true });
                 }
             })();
         """.trimIndent()
