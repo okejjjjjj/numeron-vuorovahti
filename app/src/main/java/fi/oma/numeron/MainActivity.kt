@@ -597,6 +597,29 @@ class MainActivity : AppCompatActivity() {
                         view?.loadUrl(urlStamping)
                         return
                     }
+
+
+val darkThemeCss = """
+                        var style = document.createElement('style');
+                        style.type = 'text/css';
+                        style.innerHTML = `
+                            /* 1. Piilotetaan Visman yläpalkki ja hampurilaisvalikko */
+                            .navbar, .navbar-default, .top-bar, .app-header, header, nav {
+                                display: none !important;
+                            }
+                            
+                            /* Poistetaan sivun ylämarginaali, joka oli varattu poistetulle palkille */
+                            body { padding-top: 0 !important; }
+                            #page-wrapper, .main-container, .wrapper { margin: 0 !important; padding: 16px !important; }
+                         `;
+                        document.head.appendChild(style);
+                    """.trimIndent()
+                    view?.evaluateJavascript(darkThemeCss, null)
+
+
+
+
+
                     
                     if (currentUrl.contains("/PersonRequests/", ignoreCase = true)) {
                         injectWishProtection()
