@@ -1318,7 +1318,7 @@ class MainActivity : AppCompatActivity() {
             }
             /* 1. Leimaussivun tyhjät ylälaatikot piiloon */
             .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
-            .mobileHeader:empty, .punchHeader:empty {
+            .mobileHeader:empty, .punchHeader:empty, .mobileInfoDiv:empty {
                 display: none !important;
             }
 
@@ -1349,22 +1349,36 @@ class MainActivity : AppCompatActivity() {
                 color: #FFFFFF !important;
             }
 
-            /* 3. Kalenterinäkymän Tänään- ja Näkymä-napit samalle riville ja päällimmäiseksi */
+            /* 3. Kalenterinäkymän Tänään- ja Näkymä-napit näkyviin ruudukon yläpuolelle */
             .mobileAddDiv, .calendarHeaderButtons, .weekNavButtons {
                 display: flex !important;
                 flex-direction: row !important;
                 align-items: center !important;
                 justify-content: space-between !important;
-                gap: 8px !important;
+                gap: 10px !important;
+                width: 100% !important;
+                box-sizing: border-box !important;
                 background-color: transparent !important;
                 background-image: none !important;
-                margin: 8px 0 10px 0 !important;
-                padding: 4px 2px !important;
+                margin: 8px 0 12px 0 !important;
+                padding: 4px 0 !important;
                 height: auto !important;
                 min-height: 44px !important;
-                overflow: visible !important;
+                max-height: none !important;
                 position: relative !important;
-                z-index: 30 !important;
+                top: 0 !important;
+                bottom: auto !important;
+                transform: none !important;
+                overflow: visible !important;
+                z-index: 50 !important;
+            }
+            .mobileAddDiv + div, .mobileAddDiv + table, .mobileAddDiv + section,
+            .calendarHeaderButtons + div, .weekNavButtons + div {
+                position: relative !important;
+                top: 0 !important;
+                margin-top: 8px !important;
+                transform: none !important;
+                z-index: 10 !important;
             }
             .mobileAddButton, .filterButton, .todayButton, .viewButton {
                 display: inline-flex !important;
@@ -1381,8 +1395,9 @@ class MainActivity : AppCompatActivity() {
                 line-height: 1.2 !important;
                 position: relative !important;
                 top: 0 !important;
+                transform: none !important;
                 overflow: visible !important;
-                z-index: 31 !important;
+                z-index: 51 !important;
             }
 
             /* 4. Listanäkymän valkoiset vuorokortit ja valkoiset häivytyspalkit */
@@ -1401,17 +1416,36 @@ class MainActivity : AppCompatActivity() {
 
         val hasCreds = SettingsManager.getUsername(this).isNotEmpty() && SettingsManager.getPassword(this).isNotEmpty()
 
+        view?.setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
         val js = """
             (function() {
-                var styleId = 'custom-numeron-theme';
-                var style = document.getElementById(styleId);
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = styleId;
-                    style.type = 'text/css';
-                    (document.head || document.documentElement).appendChild(style);
+                var cssText = `$css`;
+
+                function ensureThemeStyle() {
+                    var root = document.head || document.documentElement;
+                    if (!root) return false;
+                    var style = document.getElementById('custom-numeron-theme');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'custom-numeron-theme';
+                        style.type = 'text/css';
+                        root.appendChild(style);
+                    }
+                    if (style.textContent !== cssText) {
+                        style.textContent = cssText;
+                    }
+                    return true;
                 }
-                style.innerHTML = `$css`;
+
+                // Kiinnitä tyylit välittömästi ennen kuin <body> ehtii piirtyä (estää vaalean välähdyksen)
+                if (!ensureThemeStyle()) {
+                    var earlyObs = new MutationObserver(function() {
+                        if (ensureThemeStyle()) {
+                            earlyObs.disconnect();
+                        }
+                    });
+                    earlyObs.observe(document, { childList: true, subtree: true });
+                }
 
                 // Piilotetaan lomake vain visuaalisesti (ei display:none, jotta automaattikirjautuminen ja lomakkeen lähetys toimivat)
                 if ($hasCreds && document.getElementById('LoginForm')) {
@@ -1429,7 +1463,6 @@ class MainActivity : AppCompatActivity() {
                         msg.innerText = 'Kirjaudutaan sisään...';
                         form.parentNode.insertBefore(msg, form);
 
-                        // Varamekanismi: palautetaan lomake näkyviin 5 s kuluttua, jos kirjautuminen ei etene
                         setTimeout(function() {
                             var f = document.getElementById('LoginForm');
                             var m = document.getElementById('custom-login-msg');
@@ -1445,7 +1478,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                function fixDynamicLightBoxes() {
+                function fixDynamicLayoutAndTheme() {
+                    ensureThemeStyle();
+                    if (!document.body) return;
+
                     var nodes = document.querySelectorAll('div, ul, section, header');
                     for (var i = 0; i < nodes.length; i++) {
                         var el = nodes[i];
@@ -1465,36 +1501,89 @@ class MainActivity : AppCompatActivity() {
                             el.style.setProperty('border-color', '#334155', 'important');
                         }
 
-                        // Piilota leimaussivun tyhjät yläreunan pillerilaatikot
-                        if (el.children.length === 0 && el.textContent.trim() === '' &&
-                            el.offsetHeight > 0 && el.offsetHeight < 42 && el.offsetWidth > 150) {
+                        // Piilota tyhjät yläreunan pillerilaatikot (vaikka sisällä olisi tyhjä span/div)
+                        var rawText = (el.innerText || el.textContent || '').trim();
+                        if (rawText === '' &&
+                            el.offsetHeight > 0 && el.offsetHeight <= 60 && el.offsetWidth > 120 &&
+                            !el.querySelector('input, select, textarea, button, img, svg, canvas')) {
                             el.style.setProperty('display', 'none', 'important');
                         }
                     }
 
-                    // Korosta "TÄNÄÄN"-osio siistiksi vaaleaksi laatikoksi leimaussivulla
-                    var all = document.querySelectorAll('div, span, p, label');
+                    // Korosta leimaussivun "Tänään"-osio siistiksi vaaleammaksi laatikoksi
+                    var all = document.querySelectorAll('div, span, p, label, h1, h2, h3, h4');
                     for (var j = 0; j < all.length; j++) {
-                        if (all[j].textContent.trim() === 'TÄNÄÄN' && all[j].parentElement) {
+                        var lbl = (all[j].innerText || all[j].textContent || '').trim().toLowerCase();
+                        if (lbl === 'tänään' && all[j].children.length === 0 && all[j].parentElement) {
                             var box = all[j].parentElement;
-                            if (!box.dataset.styledToday) {
-                                box.dataset.styledToday = 'true';
-                                box.style.setProperty('background-color', '#334155', 'important');
-                                box.style.setProperty('border', '1px solid #475569', 'important');
-                                box.style.setProperty('border-radius', '12px', 'important');
-                                box.style.setProperty('padding', '10px 14px', 'important');
-                                box.style.setProperty('margin-bottom', '12px', 'important');
+                            // Jos parent sisältää vain pelkän otsikon, noustaan yhtä tasoa ylemmäs jotta myös sisältörivi mahtuu laatikkoon
+                            var boxText = (box.innerText || box.textContent || '').trim().toLowerCase();
+                            if (boxText === 'tänään' && box.parentElement) {
+                                box = box.parentElement;
                             }
+                            if (box && box.tagName !== 'BODY' && !box.dataset.styledToday) {
+                                box.dataset.styledToday = 'true';
+                                box.style.setProperty('display', 'block', 'important');
+                                box.style.setProperty('background-color', '#334155', 'important');
+                                box.style.setProperty('border', '1px solid #64748B', 'important');
+                                box.style.setProperty('border-radius', '12px', 'important');
+                                box.style.setProperty('padding', '12px 14px', 'important');
+                                box.style.setProperty('margin', '0 0 14px 0', 'important');
+                                box.style.setProperty('color', '#F8FAFC', 'important');
+                                all[j].style.setProperty('color', '#BAE6FD', 'important');
+                                all[j].style.setProperty('font-weight', '700', 'important');
+                            }
+                        }
+                    }
+
+                    // Estä kalenteriruudukkoa/listaa peittämästä Tänään- ja Näkymä-nappeja
+                    var btnRow = document.querySelector('.mobileAddDiv, .calendarHeaderButtons, .weekNavButtons');
+                    if (!btnRow) {
+                        var btns = document.querySelectorAll('button, a, div, span');
+                        for (var k = 0; k < btns.length; k++) {
+                            var bt = (btns[k].innerText || btns[k].textContent || '').trim();
+                            if ((bt === 'Näkymä' || bt === 'Tänään') && btns[k].children.length === 0 && btns[k].parentElement) {
+                                var cand = btns[k].parentElement;
+                                if (cand && cand.offsetHeight > 0 && cand.offsetHeight < 90 && cand.parentElement) {
+                                    btnRow = cand.parentElement.offsetHeight < 90 ? cand.parentElement : cand;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (btnRow) {
+                        btnRow.style.setProperty('display', 'flex', 'important');
+                        btnRow.style.setProperty('flex-direction', 'row', 'important');
+                        btnRow.style.setProperty('align-items', 'center', 'important');
+                        btnRow.style.setProperty('justify-content', 'space-between', 'important');
+                        btnRow.style.setProperty('position', 'relative', 'important');
+                        btnRow.style.setProperty('top', '0px', 'important');
+                        btnRow.style.setProperty('margin', '8px 0 12px 0', 'important');
+                        btnRow.style.setProperty('height', 'auto', 'important');
+                        btnRow.style.setProperty('min-height', '44px', 'important');
+                        btnRow.style.setProperty('overflow', 'visible', 'important');
+                        btnRow.style.setProperty('z-index', '50', 'important');
+
+                        var next = btnRow.nextElementSibling;
+                        if (next) {
+                            next.style.setProperty('position', 'relative', 'important');
+                            next.style.setProperty('top', '0px', 'important');
+                            next.style.setProperty('margin-top', '8px', 'important');
+                            next.style.setProperty('transform', 'none', 'important');
+                            next.style.setProperty('z-index', '10', 'important');
                         }
                     }
                 }
 
-                fixDynamicLightBoxes();
+                fixDynamicLayoutAndTheme();
                 if (!window._numeronThemeObserver) {
                     window._numeronThemeObserver = new MutationObserver(function() {
-                        fixDynamicLightBoxes();
+                        fixDynamicLayoutAndTheme();
                     });
-                    window._numeronThemeObserver.observe(document.body, { childList: true, subtree: true });
+                    var target = document.body || document.documentElement;
+                    if (target) {
+                        window._numeronThemeObserver.observe(target, { childList: true, subtree: true });
+                    }
                 }
             })();
         """.trimIndent()
