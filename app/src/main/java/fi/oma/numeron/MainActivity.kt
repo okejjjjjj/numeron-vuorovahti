@@ -1246,6 +1246,7 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
         styleButton(btnClose, "#7F1D1D", false)
     }
 
+
     private fun tryAutoLoginIfNeeded() {
         if (isDemoActive) return
         val u = SettingsManager.getUsername(this)
@@ -1259,9 +1260,12 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 var passInputs = document.querySelectorAll('input[type="password"]');
                 var hasVisiblePass = false;
                 for (var i = 0; i < passInputs.length; i++) {
-                    if (passInputs[i].offsetParent !== null) { hasVisiblePass = true; break; }
+                    if (passInputs[i].offsetParent !== null || (passInputs[i].closest && passInputs[i].closest('#LoginForm'))) {
+                        hasVisiblePass = true;
+                        break;
+                    }
                 }
-                if (!hasVisiblePass && (bodyTxt.indexOf('istunto on vanhentunut') !== -1 || bodyTxt.indexOf('istuntosi on vanhentunut') !== -1 || bodyTxt.indexOf('session expired') !== -1 || bodyTxt.indexOf('kirjaudu sisÃ¤Ã¤n uudelleen') !== -1 || bodyTxt.indexOf('uloskirjattu') !== -1)) {
+                if (!hasVisiblePass && (bodyTxt.indexOf('istunto on vanhentunut') !== -1 || bodyTxt.indexOf('istuntosi on vanhentunut') !== -1 || bodyTxt.indexOf('session expired') !== -1 || bodyTxt.indexOf('kirjaudu sisään uudelleen') !== -1 || bodyTxt.indexOf('uloskirjattu') !== -1)) {
                     var btns = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
                     for (var b = 0; b < btns.length; b++) {
                         if (btns[b].offsetParent === null) continue;
@@ -1274,6 +1278,9 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                     return "SESSION_EXPIRED_RELOAD";
                 }
                 if ('$safeU' === '' || '$safeP' === '') return "NO_CREDS";
+                var errBox = document.querySelector('.validation-summary-errors, .alert-danger');
+                if (errBox && (errBox.innerText || '').trim().length > 0) return "LOGIN_VALIDATION_ERROR";
+
                 function setNativeValue(el, val) {
                     var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     if (setter) setter.call(el, val);
@@ -1285,11 +1292,14 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 var userEl = null;
                 for (var uIdx = 0; uIdx < userInputs.length; uIdx++) {
                     var inp = userInputs[uIdx];
-                    if (inp.offsetParent !== null && !inp.readOnly && !inp.disabled) { userEl = inp; break; }
+                    var inLoginForm = !!(inp.closest && inp.closest('#LoginForm'));
+                    if ((inp.offsetParent !== null || inLoginForm) && !inp.readOnly && !inp.disabled) { userEl = inp; break; }
                 }
                 var passEl = null;
                 for (var pIdx = 0; pIdx < passInputs.length; pIdx++) {
-                    if (passInputs[pIdx].offsetParent !== null && !passInputs[pIdx].disabled) { passEl = passInputs[pIdx]; break; }
+                    var pInp = passInputs[pIdx];
+                    var pInLoginForm = !!(pInp.closest && pInp.closest('#LoginForm'));
+                    if ((pInp.offsetParent !== null || pInLoginForm) && !pInp.disabled) { passEl = pInp; break; }
                 }
                 if (userEl && !passEl && (window.location.href.toLowerCase().indexOf('login') !== -1 || window.location.href.toLowerCase().indexOf('auth') !== -1 || window.location.href.toLowerCase().indexOf('microsoft') !== -1 || bodyTxt.indexOf('kirjaudu') !== -1)) {
                     setNativeValue(userEl, '$safeU');
@@ -1299,8 +1309,15 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 if (!passEl) return "NO_LOGIN_FORM";
                 if (userEl) setNativeValue(userEl, '$safeU');
                 setNativeValue(passEl, '$safeP');
-                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
-                if (submitBtn && submitBtn.offsetParent !== null) { submitBtn.click(); return "SUBMITTED"; }
+                var submitBtn = document.querySelector('#LoginForm input[type="submit"], #LoginForm button[type="submit"], input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
+                if (submitBtn) {
+                    var sInLoginForm = !!(submitBtn.closest && submitBtn.closest('#LoginForm'));
+                    if (submitBtn.offsetParent !== null || sInLoginForm) {
+                        submitBtn.disabled = false;
+                        submitBtn.click();
+                        return "SUBMITTED";
+                    }
+                }
                 if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
                 return "FILLED";
             })();
@@ -1312,21 +1329,44 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             when {
                 r.contains("SESSION_EXPIRED_RELOAD") -> webView.loadUrl(if (isBackgroundListSync) urlCalendar else urlStamping)
                 r.contains("SESSION_EXPIRED_CLICKED") || r.contains("USER_STEP_SUBMITTED") -> {
-                    if (pendingAutoStamp || isBackgroundListSync) showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisÃ¤Ã¤n...")
+                    if (pendingAutoStamp || isBackgroundListSync) showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään...")
                     webView.postDelayed({ tryAutoLoginIfNeeded() }, 1400)
                 }
                 r.contains("SUBMITTED") -> {
                     if (now - lastAutoLoginAttempt > 4000L) {
                         lastAutoLoginAttempt = now
                         if (pendingAutoStamp || isBackgroundListSync) {
-                            showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisÃ¤Ã¤n, odota hetki...")
+                            showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään, odota hetki...")
                         }
                     }
                     if (pendingAutoStamp) webView.postDelayed({ scheduleAutoStampCheck(1500) }, 2200)
+                    webView.postDelayed({
+                        val uNow = webView.url ?: ""
+                        if (uNow.contains("/Login/", ignoreCase = true)) {
+                            webView.evaluateJavascript("""
+                                (function() {
+                                    var f = document.getElementById('LoginForm');
+                                    var m = document.getElementById('custom-login-status-msg');
+                                    if (f) {
+                                        delete f.dataset.hiddenByTheme;
+                                        f.style.opacity = '1';
+                                        f.style.height = 'auto';
+                                        f.style.overflow = 'visible';
+                                        f.style.pointerEvents = 'auto';
+                                    }
+                                    if (m) m.remove();
+                                })();
+                            """.trimIndent(), null)
+                        }
+                    }, 4000L)
                 }
             }
         }
     }
+
+
+
+    
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
