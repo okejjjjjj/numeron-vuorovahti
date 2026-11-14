@@ -832,22 +832,28 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
     }
 
     
-    private fun injectCleanTheme(view: WebView?, url: String?) {
+
+
+    
+           private fun injectCleanTheme(view: WebView?, url: String?) {
         val css = """
             /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN PIILOTUS === */
             html, body {
                 background-color: #0F172A !important;
+                background-image: none !important;
                 color: #E2E8F0 !important;
                 font-family: sans-serif !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
+            /* Piilotetaan Visman ylänavigaatio, alatunnisteet ja kirjautumissivun turhakkeet */
             nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr {
                 display: none !important;
             }
             .container, .container-fluid {
                 padding: 12px 12px 24px 12px !important;
                 background-color: #0F172A !important;
+                background-image: none !important;
             }
             h1.clear, .blurbox h1 {
                 color: #38BDF8 !important;
@@ -856,10 +862,25 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 margin: 4px 0 14px 0 !important;
             }
 
+            /* === EVÄSTEPALKKI === */
+            #cookieConsent, .cookie-consent, .cookie-banner, [id*="cookie" i], [class*="cookie" i] {
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+                border-bottom: 1px solid #334155 !important;
+                box-shadow: none !important;
+            }
+            #cookieConsent p, #cookieConsent div, #cookieConsent span,
+            [id*="cookie" i] p, [id*="cookie" i] div, [id*="cookie" i] span,
+            [class*="cookie" i] p, [class*="cookie" i] div, [class*="cookie" i] span {
+                color: #CBD5E1 !important;
+            }
+
             /* === KIRJAUTUMISSIVU === */
             .blurbox {
                 background: transparent !important;
                 text-align: center !important;
+                margin-top: 20px !important;
             }
             .whitebox, .panel.panel-default {
                 background-color: #1E293B !important;
@@ -869,13 +890,24 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #E2E8F0 !important;
                 margin-bottom: 12px !important;
             }
+            .validation-summary-errors, .field-validation-error, .alert-danger {
+                background-color: #450A0A !important;
+                border: 1px solid #EF4444 !important;
+                color: #FCA5A5 !important;
+                border-radius: 10px !important;
+                padding: 10px 12px !important;
+                margin-bottom: 12px !important;
+            }
+            .validation-summary-errors ul {
+                margin: 0 !important;
+                padding-left: 18px !important;
+            }
             .panel-body {
                 padding: 14px !important;
-                background-color: transparent !important;
             }
 
-            /* === LOMAKKEET, NAPIT JA PUDOTUSVALIKOT (Yleiset + Visman omat) === */
-            label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption, .forgotten-stamp-labels {
+            /* === LOMAKKEET, NAPIT JA PUDOTUSVALIKOT === */
+            label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption {
                 color: #94A3B8 !important;
                 font-weight: 600 !important;
             }
@@ -883,11 +915,8 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #F8FAFC !important;
                 font-weight: bold !important;
             }
-            .form-control, input[type="text"], input[type="password"], select, textarea, .k-textbox, .k-input,
-            #NewStampDate, #NewStampTime, .k-picker-wrap, .k-picker-wrap.k-state-default {
-                background: #0F172A !important;
+            .form-control, input[type="text"], input[type="password"], select, textarea, .k-textbox, .k-input {
                 background-color: #0F172A !important;
-                background-image: none !important;
                 color: #FFFFFF !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
@@ -896,28 +925,14 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             .form-control:focus, input:focus, textarea:focus {
                 border-color: #38BDF8 !important;
             }
-            .btn-default, a.btn-default, button.btn-default, .dropdown-toggle,
-            .fixed-menu-bar .btn-default, .btn-group .btn-default,
-            .punch-reason-code-selector .btn-default, .punch-reason-code-selector2 .btn-default,
-            .forgotten-stamp-direction-selector .btn-default,
-            #dropdownMenu1, #dropdownMenu2, #dropdownMenuStampDirection,
-            #pcViewButt, #todayButt, .pcViewDropdown .btn, .mobileViewDropdown .btn {
-                background: #0F172A !important;
+            .btn-default, .dropdown-toggle {
                 background-color: #0F172A !important;
-                background-image: none !important;
-                color: #F8FAFC !important;
+                color: #E2E8F0 !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
-                box-shadow: none !important;
-                text-shadow: none !important;
             }
-            .punch-reason-code-button-text, .punch-reason-code-button-text2, .forgotten-stamp-direction-button-text {
-                color: #F8FAFC !important;
-            }
-            .btn-primary, input[type="submit"], #punchButton, #punchForgottenButton, #pcAddButt {
-                background: #0284C7 !important;
+            .btn-primary, input[type="submit"], #punchButton {
                 background-color: #0284C7 !important;
-                background-image: none !important;
                 border: none !important;
                 border-radius: 12px !important;
                 color: #FFFFFF !important;
@@ -950,40 +965,25 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 color: #38BDF8 !important;
                 border-bottom: 2px solid #38BDF8 !important;
             }
-            #table-latest-stamps, #table-latest-stamps tbody,
-            #table-latest-stamps tr, #table-latest-stamps tbody > tr,
-            #table-latest-stamps.table-active > tbody > tr > td,
-            #table-latest-stamps.table-hover > tbody > tr > td {
-                background: #1E293B !important;
-                background-color: #1E293B !important;
-                color: #E2E8F0 !important;
-            }
             #table-latest-stamps tr {
                 border-bottom: 1px solid #334155 !important;
+                background-color: transparent !important;
             }
-            #table-latest-stamps tr:hover, #table-latest-stamps tr:hover > td {
+            #table-latest-stamps tr:hover {
                 background-color: #334155 !important;
-                color: #FFFFFF !important;
             }
             #table-latest-stamps td {
                 color: #E2E8F0 !important;
                 border: none !important;
                 padding: 10px 6px !important;
             }
-            /* Puuttuvan leimauksen liukupaneeli */
-            #forgotStampPanel, #stamp-edit-modal,
-            #stamp-edit-modal .modal-header, .forgotten-stamp-pane .modal-header,
-            .modal-header, .modal-footer {
-                background: #1E293B !important;
+            #forgotStampPanel, #stamp-edit-modal {
                 background-color: #1E293B !important;
-                background-image: none !important;
-                border-color: #334155 !important;
-                color: #F8FAFC !important;
+                color: #E2E8F0 !important;
             }
-            #stamp-edit-modal .modal-header h4, .modal-header h4, .modal-title, .modal-header .close {
-                color: #F8FAFC !important;
-                opacity: 1 !important;
-                text-shadow: none !important;
+            .modal-header, .modal-footer {
+                border-color: #334155 !important;
+                background-color: #1E293B !important;
             }
             .modal-content {
                 background-color: #1E293B !important;
@@ -998,7 +998,6 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                 border-color: #334155 !important;
             }
             .k-grid-header th.k-header, .k-grid-header th.k-header .k-link {
-                background: #0F172A !important;
                 background-color: #0F172A !important;
                 color: #94A3B8 !important;
                 border-color: #334155 !important;
@@ -1021,19 +1020,6 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
             .k-state-selected, .k-grid tr.k-state-selected td {
                 background-color: #0284C7 !important;
                 color: #FFFFFF !important;
-            }
-            .k-pager-wrap .k-link, .k-pager-sizes .k-dropdown-wrap {
-                background: #0F172A !important;
-                background-color: #0F172A !important;
-                border: 1px solid #334155 !important;
-                color: #E2E8F0 !important;
-            }
-            .k-pager-wrap .k-state-selected {
-                background-color: #0284C7 !important;
-                color: #FFFFFF !important;
-            }
-            input[type="checkbox"] {
-                accent-color: #0284C7 !important;
             }
 
             /* === KALENTERI (/Calendar/Month) === */
@@ -1128,19 +1114,50 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
                     style = document.createElement('style');
                     style.id = styleId;
                     style.type = 'text/css';
+                    (document.head || document.documentElement).appendChild(style);
                 }
                 style.innerHTML = `$css`;
-                (document.body || document.head || document.documentElement).appendChild(style);
 
-                if ($hasCreds && document.getElementById('LoginForm')) {
-                    var form = document.getElementById('LoginForm');
-                    if (form && !form.dataset.hiddenByTheme) {
-                        form.dataset.hiddenByTheme = 'true';
-                        form.style.display = 'none';
-                        var msg = document.createElement('div');
-                        msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
-                        msg.innerText = 'Kirjaudutaan sisään...';
-                        form.parentNode.insertBefore(msg, form);
+                // Hyväksytään evästepalkki automaattisesti, jotta se ei jää yläreunaan
+                var cookieBtns = document.querySelectorAll('#cookieConsent button, #cookieConsent a, [id*="cookie" i] button, [class*="cookie" i] button');
+                for (var cb = 0; cb < cookieBtns.length; cb++) {
+                    var cTxt = (cookieBtns[cb].innerText || cookieBtns[cb].value || "").trim().toLowerCase();
+                    if (cTxt === 'hyväksy' || cTxt === 'accept' || cTxt === 'selvä' || cTxt === 'ok') {
+                        cookieBtns[cb].click();
+                        break;
+                    }
+                }
+
+                // Piilotetaan lomake visuaalisesti (ei display:none, jotta kentät löytyvät DOM:sta)
+                var loginForm = document.getElementById('LoginForm');
+                if (loginForm) {
+                    var errBox = document.querySelector('.validation-summary-errors, .alert-danger');
+                    var hasErr = !!(errBox && (errBox.innerText || '').trim().length > 0);
+                    var oldMsg = document.getElementById('custom-login-status-msg');
+                    if ($hasCreds && !hasErr) {
+                        if (!loginForm.dataset.hiddenByTheme) {
+                            loginForm.dataset.hiddenByTheme = 'true';
+                            loginForm.style.opacity = '0';
+                            loginForm.style.height = '0';
+                            loginForm.style.overflow = 'hidden';
+                            loginForm.style.pointerEvents = 'none';
+                            loginForm.style.margin = '0';
+                            loginForm.style.padding = '0';
+                            if (!oldMsg) {
+                                var msg = document.createElement('div');
+                                msg.id = 'custom-login-status-msg';
+                                msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
+                                msg.innerText = 'Kirjaudutaan sisään...';
+                                loginForm.parentNode.insertBefore(msg, loginForm);
+                            }
+                        }
+                    } else {
+                        delete loginForm.dataset.hiddenByTheme;
+                        loginForm.style.opacity = '1';
+                        loginForm.style.height = 'auto';
+                        loginForm.style.overflow = 'visible';
+                        loginForm.style.pointerEvents = 'auto';
+                        if (oldMsg) oldMsg.remove();
                     }
                 }
             })();
@@ -1148,6 +1165,7 @@ btnClose = createNavButton("\u2715", 0.68f) { finishAndRemoveTask() }
 
         view?.evaluateJavascript(js, null)
     }
+
 
 
     private fun injectWishProtection() {
