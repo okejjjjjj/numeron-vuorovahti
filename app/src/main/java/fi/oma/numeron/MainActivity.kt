@@ -1331,8 +1331,7 @@ class MainActivity : AppCompatActivity() {
                 line-height: 1.4 !important;
                 overflow: visible !important;
             }
-        """.trimIndent().replace("
-", " ")
+        """.trimIndent().replace("\n", " ")
 
         val hasCreds = SettingsManager.getUsername(this).isNotEmpty() && SettingsManager.getPassword(this).isNotEmpty()
 
