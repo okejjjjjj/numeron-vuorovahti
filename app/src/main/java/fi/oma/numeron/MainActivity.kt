@@ -1852,7 +1852,28 @@ class MainActivity : AppCompatActivity() {
 
         val js = """
             (function() {
-                var bodyText = document.body ? document.body.innerText : "";
+                function isIgnoredRowText(str) {
+                    if (!str) return false;
+                    var low = str.toLowerCase();
+                    return low.indexOf('toive') !== -1 ||
+                           low.indexOf('toivottu') !== -1 ||
+                           low.indexOf('vapaa') !== -1 ||
+                           /\bvp\b/.test(low) ||
+                           low.indexOf('ei käytettävissä') !== -1;
+                }
+                var bodyText = "";
+                if (document.body) {
+                    var bodyClone = document.body.cloneNode(true);
+                    var uiChrome = bodyClone.querySelectorAll('nav, #pc_AddButton, #mobile_AddButton, #pcViewDropdown, #mobileViewDropdown, .dropdown-menu');
+                    for (var u = 0; u < uiChrome.length; u++) uiChrome[u].remove();
+                    var badEls = bodyClone.querySelectorAll('.request, .opportunity, .schedule-item-request, .schedule-item-opportunity, .month-item.request, .month-item.opportunity, [class*="request" i], [class*="opportunity" i], [class*="wish" i]');
+                    for (var b = 0; b < badEls.length; b++) badEls[b].remove();
+                    var rows = bodyClone.querySelectorAll('tr, .list-item, .schedule-item, .calendar-list-item, .list-day-item');
+                    for (var r = 0; r < rows.length; r++) {
+                        if (isIgnoredRowText(rows[r].innerText)) rows[r].remove();
+                    }
+                    bodyText = bodyClone.innerText || "";
+                }
                 var pathLower = (window.location.pathname || "").toLowerCase();
                 var isListPage = pathLower.indexOf('/calendar/list') !== -1 || pathLower.indexOf('demo_shifts') !== -1;
                 var isGrid = /Vk\.?\s+Ma\s+Ti\s+Ke/i.test(bodyText) || document.querySelector('.month-table') !== null;
@@ -1946,8 +1967,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun switchBackToMonthView() {
+        if (!::webView.isInitialized || isDemoActive) return
+        webView.post {
+            webView.evaluateJavascript(
+                """
+                (function() {
+                    var directMonth = document.querySelector('#go-to-month a, #go-to-month-mobile a, a[href*="/Calendar/Month" i]');
+                    if (directMonth && directMonth.href && directMonth.href.indexOf('#') === -1) {
+                        window.location.href = directMonth.href;
+                        return "MONTH_NAVIGATED";
+                    }
+                    var selects = document.querySelectorAll('select');
+                    for (var s = 0; s < selects.length; s++) {
+                        for (var o = 0; o < selects[s].options.length; o++) {
+                            var optTxt = (selects[s].options[o].text || "").toLowerCase();
+                            if (optTxt.indexOf('kuukausi') !== -1 || optTxt.indexOf('month') !== -1) {
+                                selects[s].selectedIndex = o;
+                                selects[s].dispatchEvent(new Event('change', { bubbles: true }));
+                                return "MONTH_SELECTED";
+                            }
+                        }
+                    }
+                    var btns = document.querySelectorAll('a, button, li, span');
+                    for (var i = 0; i < btns.length; i++) {
+                        var t = (btns[i].innerText || "").trim().toLowerCase();
+                        if (t === 'kuukausi' || t === 'month' || t === 'kuukausinäkymä') {
+                            btns[i].click();
+                            return "MONTH_CLICKED";
+                        }
+                    }
+                    window.location.href = '/Calendar/Month';
+                    return "MONTH_FALLBACK";
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+    }
+
     private fun finishCalendarSyncBatch(calId: Long, toastPrefix: String) {
         totalRemovedInBatch += reconcileRemovedShifts(calId)
+        switchBackToMonthView()
         hideStampOverlay()
         isBackgroundListSync = false
         VuorovahtiHelper.saveLastSyncStatus(this, totalFoundInBatch)
@@ -2003,7 +2064,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (consecutiveEmptyPages >= 3) {
                     pagesRemainingToSync = 0
-                    finishCalendarSyncBatch(calId, "Haku keskeytetty (3 tyhjää jaksoa). Tarkistettu $totalFoundInBatch merkintää:")
+                    finishCalendarSyncBatch(calId, "Haku keskeytetty (3 viikkoa ilman työvuoroja tai lomaa). Tarkistettu $totalFoundInBatch merkintää:")
                 } else if (pagesRemainingToSync > 0) {
                     pagesRemainingToSync--
                     if (isBackgroundListSync || stampOverlay.visibility == View.VISIBLE) {
@@ -2419,6 +2480,7 @@ class MainActivity : AppCompatActivity() {
     private fun isIgnoredEntry(text: String): Boolean {
         val low = text.lowercase()
         return low.contains("toive") ||
+            low.contains("toivottu") ||
             low.contains("vapaa") ||
             Regex("""\bvp\b""").containsMatchIn(low) ||
             low.contains("ei käytettävissä") ||
@@ -2525,6 +2587,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveWorkShift(calId: Long, dateStr: String, startStr: String, endStr: String, raw: String, fmt: DateTimeFormatter): Boolean {
+        if (isIgnoredEntry(raw)) return false
         return try {
             val sDt = LocalDateTime.parse("$dateStr $startStr", fmt)
             var eDt = LocalDateTime.parse("$dateStr $endStr", fmt)
