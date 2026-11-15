@@ -117,6 +117,18 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
+    private fun fadeWebViewOut() {
+        webView.animate().cancel()
+        webView.alpha = 0f
+    }
+
+    private fun fadeWebViewIn() {
+        webView.animate()
+            .alpha(1f)
+            .setDuration(180L)
+            .start()
+    }
+
     private fun navigateToTab(tab: Tab) {
         currentTab = tab
         updateDemoBanner()
