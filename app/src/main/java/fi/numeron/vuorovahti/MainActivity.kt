@@ -28,6 +28,7 @@ import org.json.JSONTokener
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -104,6 +105,18 @@ class MainActivity : AppCompatActivity() {
         bannerDemoMode.visibility = if (DemoModeHelper.isDemoEnabled(this)) View.VISIBLE else View.GONE
     }
 
+    private fun fadeWebViewOut() {
+        webView.animate().cancel()
+        webView.alpha = 0f
+    }
+
+    private fun fadeWebViewIn() {
+        webView.animate()
+            .alpha(1f)
+            .setDuration(180L)
+            .start()
+    }
+
     private fun navigateToTab(tab: Tab) {
         currentTab = tab
         updateDemoBanner()
@@ -113,6 +126,8 @@ class MainActivity : AppCompatActivity() {
             Tab.REQUESTS -> setActiveTab(btnNavRequests)
             Tab.SHIFTS -> setActiveTab(btnNavShifts)
         }
+
+        fadeWebViewOut()
 
         if (DemoModeHelper.isDemoEnabled(this)) {
             val html = when (tab) {
@@ -276,7 +291,8 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         webView.setBackgroundColor(Color.parseColor("#0F1722"))
-        webView.clearCache(true) // Tyhjentää vanhat välimuistiin jääneet Visman CSS-tiedostot
+        (webView.parent as? View)?.setBackgroundColor(Color.parseColor("#0F1722"))
+
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -298,6 +314,12 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                fadeWebViewOut()
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
@@ -326,6 +348,7 @@ class MainActivity : AppCompatActivity() {
 
                 return super.shouldInterceptRequest(view, request)
             }
+
             override fun onPageCommitVisible(view: WebView?, url: String?) {
                 super.onPageCommitVisible(view, url)
                 if (url != null && !url.startsWith("https://demo.local/")) {
@@ -339,6 +362,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (url.startsWith("https://demo.local/")) {
                     handleDemoAutoStamp()
+                    fadeWebViewIn()
                     return
                 }
 
@@ -353,11 +377,15 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/PersonRequests", ignoreCase = true) -> {
                         setActiveTab(btnNavRequests)
                     }
-                    url.contains("/Calendar/Month", ignoreCase = true) -> {
+                    url.contains("/Calendar", ignoreCase = true) -> {
                         setActiveTab(btnNavShifts)
                         handleCalendarPage()
                     }
                 }
+
+                view?.postDelayed({
+                    fadeWebViewIn()
+                }, 70L)
             }
         }
     }
@@ -382,12 +410,13 @@ class MainActivity : AppCompatActivity() {
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
                 background-color: #0F1722 !important;
+                background-image: none !important;
                 color: #F1F5F9 !important;
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            header, nav.navbar, footer, .footer, .copyright, .loginnav, .bottom-nav {
+            header, nav.navbar, footer, .footer, .copyright, .loginnav, .bottom-nav, .fade-in-box, .fade-out-box {
                 display: none !important;
             }
             .container, .container-fluid {
@@ -410,7 +439,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             /* === 2. KORTIT, PANEELIT JA SYÖTTÖKENTÄT === */
-            .panel, .panel-default, .whitebox, .card, .stamping-box, .box {
+            .panel, .panel-default, .whitebox, .card, .stamping-box, .box, .panel-footer, .form-actions {
                 background-color: #182332 !important;
                 border: 1px solid #2A394A !important;
                 border-radius: 12px !important;
@@ -437,6 +466,11 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #37475A !important;
                 border-radius: 8px !important;
                 box-shadow: none !important;
+            }
+            input[type="checkbox"], input[type="radio"] {
+                accent-color: #1982C4 !important;
+                width: 18px !important;
+                height: 18px !important;
             }
             input::placeholder, textarea::placeholder {
                 color: #64748B !important;
@@ -480,32 +514,42 @@ class MainActivity : AppCompatActivity() {
                 color: #94A3B8 !important;
             }
 
-            /* === 4. KIRJAUTUMISSIVU (login.txt) === */
+            /* === 4. KIRJAUTUMISSIVU === */
+            .content {
+                padding: 16px !important;
+                float: none !important;
+                margin: 0 auto !important;
+            }
             .blurbox h1 {
                 text-align: center !important;
-                font-size: 26px !important;
-                margin: 20px 0 16px 0 !important;
+                font-size: 28px !important;
+                font-weight: 700 !important;
+                margin: 28px 0 20px 0 !important;
+                color: #F1F5F9 !important;
             }
             .whitebox {
                 padding: 20px !important;
                 margin: 0 auto !important;
             }
-            .whitebox img {
+            .whitebox img, .whitebox hr {
                 display: none !important;
             }
+            #LoginForm .form-group {
+                margin-bottom: 14px !important;
+            }
+            #LoginForm .pull-left, #LoginForm .pull-right {
+                margin-bottom: 12px !important;
+                font-size: 13px !important;
+            }
             #LoginForm input[type="submit"] {
-                margin-top: 14px !important;
+                margin-top: 8px !important;
                 padding: 12px !important;
+                font-size: 16px !important;
             }
 
-            /* === 5. TYÖAIKALEIMAUS (leimaussivu.txt) === */
-            .punching-overview-container {
-                display: flex !important;
-                justify-content: space-between !important;
-                gap: 12px !important;
-            }
-            .punching-shift-container, .punching-balance-overview-container {
-                flex: 1 !important;
+            /* === 5. TYÖAIKALEIMAUS === */
+            .punching-balance-overview-container {
+                display: none !important;
             }
             .punching-shift-caption, .previous-stamps-caption, .punching-caption {
                 display: block !important;
@@ -515,6 +559,11 @@ class MainActivity : AppCompatActivity() {
                 color: #94A3B8 !important;
                 margin-bottom: 6px !important;
                 font-weight: 600 !important;
+            }
+            .punching-shift-name {
+                font-size: 16px !important;
+                font-weight: 600 !important;
+                color: #F1F5F9 !important;
             }
             .punching-reason-code-label, .punching-stamp-comment-label, .forgotten-stamp-labels {
                 color: #CBD5E1 !important;
@@ -567,19 +616,22 @@ class MainActivity : AppCompatActivity() {
             #table-latest-stamps tr:hover td {
                 background-color: #233040 !important;
             }
-            #forgotStampPanel.minimized {
+            #forgotStampPanel {
                 display: none !important;
             }
-            #forgotStampPanel:not(.minimized) {
+            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"] {
+                display: block !important;
                 position: fixed !important;
                 left: 8px !important;
                 right: 8px !important;
                 bottom: 8px !important;
                 top: auto !important;
                 z-index: 1050 !important;
+                max-height: 88vh !important;
+                overflow-y: auto !important;
             }
 
-            /* === 6. TOIVEET & KENDO UI (toiveet.txt) === */
+            /* === 6. TOIVEET & KENDO UI === */
             label[for="filterOptions"] {
                 color: #F1F5F9 !important;
                 margin-right: 6px !important;
@@ -595,7 +647,7 @@ class MainActivity : AppCompatActivity() {
                 color: #F1F5F9 !important;
                 border-color: #2A394A !important;
             }
-            .k-grid-header th.k-header {
+            .k-grid-header th.k-header, .k-grid-header th.k-header > .k-link {
                 background-color: #233040 !important;
                 color: #F1F5F9 !important;
                 border-color: #2A394A !important;
@@ -621,13 +673,22 @@ class MainActivity : AppCompatActivity() {
                 background-color: #1982C4 !important;
                 color: #FFFFFF !important;
             }
-            .k-pager-wrap .k-link, .k-pager-info, .k-dropdown-wrap {
-                background-color: #233040 !important;
+            .k-widget, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-select, .k-input, .k-pager-wrap .k-link, .k-pager-info {
+                background-color: #111923 !important;
                 color: #F1F5F9 !important;
                 border-color: #37475A !important;
             }
+            .k-list-container, .k-list, .k-calendar, .k-calendar .k-header {
+                background-color: #1E293B !important;
+                color: #F1F5F9 !important;
+                border-color: #37475A !important;
+            }
+            .k-list .k-item:hover, .k-list .k-state-focused, .k-list .k-state-selected {
+                background-color: #2A394A !important;
+                color: #FFFFFF !important;
+            }
 
-            /* === 7. KALENTERI / VUOROT (kalenteri.txt) === */
+            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
             .calendar-heading {
                 box-shadow: none !important;
                 display: flex !important;
@@ -637,7 +698,7 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #2A394A !important;
                 border-radius: 12px !important;
                 padding: 8px 12px !important;
-                margin-bottom: 10px !important;
+                margin-bottom: 12px !important;
             }
             .monthSelector .panel-body {
                 padding: 4px !important;
@@ -731,11 +792,128 @@ class MainActivity : AppCompatActivity() {
             .month-item.work .itemName {
                 display: none !important;
             }
+
+            /* === 8. KALENTERI: LUETTELONÄKYMÄ (/Calendar/List) === */
+            #calendar-content {
+                height: auto !important;
+                overflow-y: visible !important;
+            }
+            .schedule-week-separator {
+                margin: 14px 0 8px 0 !important;
+                padding: 4px 2px !important;
+                border-bottom: 1px solid #2A394A !important;
+            }
+            .schedule-week-separator-text {
+                color: #38BDF8 !important;
+                font-size: 13px !important;
+                font-weight: 700 !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+            }
+            .schedule-day-container {
+                background-color: #182332 !important;
+                border: 1px solid #2A394A !important;
+                border-radius: 12px !important;
+                padding: 12px !important;
+                margin-bottom: 10px !important;
+            }
+            .schedule-day-information {
+                display: flex !important;
+                align-items: center !important;
+                margin-bottom: 8px !important;
+                padding-bottom: 6px !important;
+                border-bottom: 1px solid #233040 !important;
+            }
+            .schedule-day {
+                color: #94A3B8 !important;
+                font-size: 12px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.04em !important;
+            }
+            .schedule-day-date {
+                color: #F1F5F9 !important;
+                font-size: 14px !important;
+                font-weight: 700 !important;
+            }
+            .schedule-item-container {
+                display: flex !important;
+                align-items: stretch !important;
+                background-color: #111923 !important;
+                border: 1px solid #2A394A !important;
+                border-left: 4px solid #0284C7 !important;
+                border-radius: 8px !important;
+                padding: 10px !important;
+                margin-bottom: 8px !important;
+            }
+            .schedule-item-container.schedule-item-absence {
+                border-left-color: #F59E0B !important;
+            }
+            .schedule-item-container.schedule-item-request {
+                border-left-color: #8B5CF6 !important;
+            }
+            .schedule-item-container.schedule-item-opportunity {
+                border-left-color: #10B981 !important;
+            }
+            .schedule-item-color-bar, .schedule-item-icon-td, .clear-float {
+                display: none !important;
+            }
+            .schedule-item-content {
+                width: 100% !important;
+            }
+            .schedule-item-body {
+                display: flex !important;
+                flex-direction: column !important;
+                gap: 4px !important;
+            }
+            .schedule-item-times {
+                color: #38BDF8 !important;
+                font-size: 15px !important;
+                font-weight: 700 !important;
+            }
+            .schedule-item-description-table {
+                width: 100% !important;
+            }
+            .schedule-item-description-heading {
+                color: #F1F5F9 !important;
+                font-size: 14px !important;
+                font-weight: 600 !important;
+            }
+            .schedule-item-description-subheading {
+                color: #94A3B8 !important;
+                font-size: 12px !important;
+                margin-top: 2px !important;
+            }
+            .schedule-day-content > div[style*="max-height"] {
+                max-height: none !important;
+                margin-top: 6px !important;
+            }
+            .schedule-add-button {
+                display: inline-block !important;
+                color: #38BDF8 !important;
+                font-size: 13px !important;
+                font-weight: 600 !important;
+                padding: 4px 0 !important;
+                cursor: pointer !important;
+            }
+            .schedule-add-options {
+                margin-top: 6px !important;
+                display: flex !important;
+                gap: 8px !important;
+            }
+            .schedule-option-link {
+                background-color: #233040 !important;
+                border: 1px solid #37475A !important;
+                border-radius: 6px !important;
+                padding: 6px 10px !important;
+                font-size: 13px !important;
+                text-decoration: none !important;
+            }
             .mobileAddDiv {
                 display: flex !important;
                 justify-content: space-between !important;
+                align-items: center !important;
                 margin-top: 10px !important;
-                padding: 4px 8px !important;
+                padding: 4px 0 !important;
             }
             .mobileAddButton, .filterButton {
                 background-color: #233040 !important;
@@ -746,7 +924,11 @@ class MainActivity : AppCompatActivity() {
                 text-decoration: none !important;
                 display: inline-block !important;
             }
-        """.trimIndent().replace("\n", " ")
+            #mobileViewDropdown {
+                margin-top: 8px !important;
+            }
+        """.trimIndent().replace("
+", " ")
 
         val js = """
             (function() {
