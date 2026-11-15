@@ -164,12 +164,18 @@ object SettingsDialogHelper {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
         }
-        val list = mutableListOf<CalendarInfo>()
+        val primaryGoogle = mutableListOf<CalendarInfo>()
+        val otherGoogle = mutableListOf<CalendarInfo>()
+        val others = mutableListOf<CalendarInfo>()
+
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
-            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY
         )
-        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}"
+        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR} AND " +
+                "${CalendarContract.Calendars.VISIBLE} = 1"
         context.contentResolver.query(
             CalendarContract.Calendars.CONTENT_URI,
             projection,
@@ -180,9 +186,17 @@ object SettingsDialogHelper {
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(0)
                 val name = cursor.getString(1) ?: "Kalenteri $id"
-                list.add(CalendarInfo(id, name))
+                val accountType = cursor.getString(2) ?: ""
+                val isPrimary = cursor.getInt(3) == 1
+                val info = CalendarInfo(id, name)
+
+                if (accountType == "com.google") {
+                    if (isPrimary) primaryGoogle.add(info) else otherGoogle.add(info)
+                } else {
+                    others.add(info)
+                }
             }
         }
-        return list
+        return primaryGoogle + otherGoogle + others
     }
 }

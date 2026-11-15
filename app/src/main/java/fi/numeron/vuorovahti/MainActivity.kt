@@ -30,6 +30,13 @@ import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.widget.ProgressBar
+import android.widget.FrameLayout
+import android.view.ViewGroup
+import android.view.Gravity
+import android.graphics.Shader
+import android.graphics.RenderEffect
+import android.content.res.ColorStateList
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import java.io.ByteArrayInputStream
@@ -105,15 +112,69 @@ class MainActivity : AppCompatActivity() {
         bannerDemoMode.visibility = if (DemoModeHelper.isDemoEnabled(this)) View.VISIBLE else View.GONE
     }
 
-    private fun fadeWebViewOut() {
-        webView.animate().cancel()
-        webView.alpha = 0f
+    private var transitionOverlay: FrameLayout? = null
+    private var isTransitionActive: Boolean = false
+
+    private fun ensureTransitionOverlay(): FrameLayout {
+        transitionOverlay?.let { return it }
+        val parent = webView.parent as ViewGroup
+        val overlay = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#B80F1722"))
+            alpha = 0f
+            visibility = View.GONE
+            isClickable = true
+            isFocusable = true
+        }
+        val spinner = ProgressBar(this).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
+        }
+        val sizePx = (34 * resources.displayMetrics.density).toInt()
+        val lp = FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
+        overlay.addView(spinner, lp)
+        parent.addView(
+            overlay,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        transitionOverlay = overlay
+        return overlay
     }
 
-    private fun fadeWebViewIn() {
-        webView.animate()
-            .alpha(1f)
-            .setDuration(180L)
+    private fun startBlurTransition() {
+        val overlay = ensureTransitionOverlay()
+        overlay.animate().cancel()
+        if (!isTransitionActive) {
+            isTransitionActive = true
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val radius = 22f * resources.displayMetrics.density
+                webView.setRenderEffect(
+                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+                )
+            }
+            overlay.visibility = View.VISIBLE
+            overlay.animate()
+                .alpha(1f)
+                .setDuration(120L)
+                .start()
+        }
+    }
+
+    private fun endBlurTransition() {
+        val overlay = transitionOverlay ?: return
+        overlay.animate().cancel()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            webView.setRenderEffect(null)
+        }
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(220L)
+            .withEndAction {
+                overlay.visibility = View.GONE
+                isTransitionActive = false
+            }
             .start()
     }
 
@@ -127,7 +188,7 @@ class MainActivity : AppCompatActivity() {
             Tab.SHIFTS -> setActiveTab(btnNavShifts)
         }
 
-        fadeWebViewOut()
+        startBlurTransition()
 
         if (DemoModeHelper.isDemoEnabled(this)) {
             val html = when (tab) {
@@ -317,7 +378,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                fadeWebViewOut()
+                startBlurTransition()
             }
 
             override fun shouldInterceptRequest(
@@ -362,7 +423,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (url.startsWith("https://demo.local/")) {
                     handleDemoAutoStamp()
-                    fadeWebViewIn()
+                    endBlurTransition()
                     return
                 }
 
@@ -383,9 +444,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
+                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 160L else 80L
                 view?.postDelayed({
-                    fadeWebViewIn()
-                }, 70L)
+                    endBlurTransition()
+                }, revealDelay)
             }
         }
     }
