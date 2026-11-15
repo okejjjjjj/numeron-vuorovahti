@@ -1,4 +1,3 @@
-import re
 import sys
 from pathlib import Path
 
@@ -12,136 +11,127 @@ def main():
     content = TARGET_FILE.read_text(encoding="utf-8")
     original_content = content
 
-    # 1. Varmistetaan consecutiveEmptyPages-laskuri
-    if "private var consecutiveEmptyPages = 0" not in content:
-        content, count = re.subn(
-            r"(private var pagesRemainingToSync = 0)",
-            r"\1\n    private var consecutiveEmptyPages = 0",
-            content,
-            count=1
-        )
-        if count == 0:
-            raise RuntimeError("Kohdetta 'pagesRemainingToSync' ei löytynyt.")
+    # 1. Suodatetaan toiveet ja vapaat vuorot pois bodyText-keräyksessä (extractShiftsFromPage)
+    target_body_text = 'var bodyText = document.body ? document.body.innerText : "";'
+    replacement_body_text = """function isIgnoredRowText(str) {
+                    if (!str) return false;
+                    var low = str.toLowerCase();
+                    return low.indexOf('toive') !== -1 ||
+                           low.indexOf('toivottu') !== -1 ||
+                           low.indexOf('vapaa') !== -1 ||
+                           /\\bvp\\b/.test(low) ||
+                           low.indexOf('ei käytettävissä') !== -1;
+                }
+                var bodyText = "";
+                if (document.body) {
+                    var bodyClone = document.body.cloneNode(true);
+                    var uiChrome = bodyClone.querySelectorAll('nav, #pc_AddButton, #mobile_AddButton, #pcViewDropdown, #mobileViewDropdown, .dropdown-menu');
+                    for (var u = 0; u < uiChrome.length; u++) uiChrome[u].remove();
+                    var badEls = bodyClone.querySelectorAll('.request, .opportunity, .schedule-item-request, .schedule-item-opportunity, .month-item.request, .month-item.opportunity, [class*="request" i], [class*="opportunity" i], [class*="wish" i]');
+                    for (var b = 0; b < badEls.length; b++) badEls[b].remove();
+                    var rows = bodyClone.querySelectorAll('tr, .list-item, .schedule-item, .calendar-list-item, .list-day-item');
+                    for (var r = 0; r < rows.length; r++) {
+                        if (isIgnoredRowText(rows[r].innerText)) rows[r].remove();
+                    }
+                    bodyText = bodyClone.innerText || "";
+                }"""
 
-    if "consecutiveEmptyPages = 0" not in content.split("resetSyncBatch", 1)[-1][:300]:
-        content, count = re.subn(
-            r"(fun resetSyncBatch\(pages: Int\)\s*\{\s*pagesRemainingToSync = pages)",
-            r"\1\n        consecutiveEmptyPages = 0",
-            content,
-            count=1
-        )
-        if count == 0:
-            raise RuntimeError("Kohdetta 'resetSyncBatch' ei löytynyt.")
+    if "function isIgnoredRowText(str)" not in content:
+        if target_body_text not in content:
+            raise RuntimeError("Kohdetta 'var bodyText = document.body' ei löytynyt.")
+        content = content.replace(target_body_text, replacement_body_text, 1)
 
-    # 2. Suodatetaan toiveet (.request) ja vapaat (.opportunity) suoraan JS-puolella pageTextistä
-    js_replacement = """function isIgnoredText(str) {
-                            if (!str) return false;
-                            var low = str.toLowerCase();
-                            return low.indexOf('toive') !== -1 ||
-                                   low.indexOf('vapaa') !== -1 ||
-                                   /\\bvp\\b/.test(low) ||
-                                   low.indexOf('ei käytettävissä') !== -1;
-                        }
-                        var bodyClone = document.body.cloneNode(true);
-                        var badEls = bodyClone.querySelectorAll('.request, .opportunity, .schedule-item-request, .schedule-item-opportunity, .month-item.request, .month-item.opportunity, [class*="request"], [class*="opportunity"], [class*="wish"]');
-                        for (var b = 0; b < badEls.length; b++) badEls[b].remove();
-                        var rows = bodyClone.querySelectorAll('tr, .list-row, .schedule-row, .day-row');
-                        for (var r = 0; r < rows.length; r++) {
-                            if (isIgnoredText(rows[r].innerText)) rows[r].remove();
-                        }
-                        var pageText = bodyClone.innerText || "";"""
-
-    if "function isIgnoredText(str)" not in content:
-        target_page_text = 'var pageText = document.body.innerText || "";'
-        if target_page_text not in content:
-            raise RuntimeError("Kohdetta 'var pageText = document.body.innerText' ei löytynyt.")
-        content = content.replace(target_page_text, js_replacement, 1)
-
-    # 3. Tiukennetaan Kotlin-puolen suodatusta: toiveet eivät koskaan päädy kalenteriin eivätkä nosta found-laskuria
-    if "private fun isIgnoredEntry(text: String): Boolean" not in content:
-        target_list_block = "private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {"
-        replacement_list_block = """private fun isIgnoredEntry(text: String): Boolean {
+    # 2. Tiukennetaan Kotlin-puolen isIgnoredEntry + lukitaan saveWorkShift
+    target_ignored_fn = """    private fun isIgnoredEntry(text: String): Boolean {
         val low = text.lowercase()
         return low.contains("toive") ||
             low.contains("vapaa") ||
             Regex(\"\"\"\\bvp\\b\"\"\").containsMatchIn(low) ||
             low.contains("ei käytettävissä") ||
             low.contains("vapaa vuoro")
-    }
+    }"""
 
-    private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
-        val cleanLines = block.lines().filter { !isIgnoredEntry(it) }
-        val filteredBlock = cleanLines.joinToString("\\n").trim()
-        if (filteredBlock.isEmpty()) return Pair(0, 0)
-"""
-        if target_list_block not in content:
-            raise RuntimeError("Kohdetta 'processListBlock' ei löytynyt.")
-        content = content.replace(target_list_block, replacement_list_block, 1)
-        content = content.replace("block.lowercase()", "filteredBlock.lowercase()", 1)
-        content = content.replace(".findAll(block).toList()", ".findAll(filteredBlock).toList()", 1)
-        content = content.replace("else block.length", "else filteredBlock.length", 1)
-        content = content.replace("block.substring(", "filteredBlock.substring(", 2)
+    replacement_ignored_fn = """    private fun isIgnoredEntry(text: String): Boolean {
+        val low = text.lowercase()
+        return low.contains("toive") ||
+            low.contains("toivottu") ||
+            low.contains("vapaa") ||
+            Regex(\"\"\"\\bvp\\b\"\"\").containsMatchIn(low) ||
+            low.contains("ei käytettävissä") ||
+            low.contains("vapaa vuoro")
+    }"""
 
-    # Suodatetaan myös insertOrUpdateEvent-tasolla viimeisenä lukkona, ettei "Toive" voi koskaan tallentua
-    if "if (isIgnoredEntry(details)) return false" not in content:
-        target_insert_guard = "private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {"
-        replacement_insert_guard = """private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {
-        if (isIgnoredEntry(details)) return false"""
-        if target_insert_guard not in content:
-            raise RuntimeError("Kohdetta 'insertOrUpdateEvent' ei löytynyt.")
-        content = content.replace(target_insert_guard, replacement_insert_guard, 1)
+    if target_ignored_fn in content:
+        content = content.replace(target_ignored_fn, replacement_ignored_fn, 1)
 
-    # 4. Varmistetaan keskeytys 3 tyhjän jakson jälkeen (ei työvuoroja eikä lomia)
-    if "consecutiveEmptyPages >= 3" not in content:
-        target_process_cb = """val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
-                totalFoundInBatch += found
-                totalAddedInBatch += added
+    target_save_shift = """    private fun saveWorkShift(calId: Long, dateStr: String, startStr: String, endStr: String, raw: String, fmt: DateTimeFormatter): Boolean {
+        return try {"""
+    replacement_save_shift = """    private fun saveWorkShift(calId: Long, dateStr: String, startStr: String, endStr: String, raw: String, fmt: DateTimeFormatter): Boolean {
+        if (isIgnoredEntry(raw)) return false
+        return try {"""
 
-                if (pagesRemainingToSync > 0) {"""
-        replacement_process_cb = """val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
-                totalFoundInBatch += found
-                totalAddedInBatch += added
+    if "if (isIgnoredEntry(raw)) return false" not in content:
+        if target_save_shift not in content:
+            raise RuntimeError("Kohdetta 'saveWorkShift' ei löytynyt.")
+        content = content.replace(target_save_shift, replacement_save_shift, 1)
 
-                if (found == 0) {
-                    consecutiveEmptyPages++
-                } else {
-                    consecutiveEmptyPages = 0
-                }
+    # 3. Selkeytetään keskeytysilmoitus 3 viikon (jakson) jälkeen
+    target_empty_msg = 'finishCalendarSyncBatch(calId, "Haku keskeytetty (3 tyhjää jaksoa). Tarkistettu $totalFoundInBatch merkintää:")'
+    replacement_empty_msg = 'finishCalendarSyncBatch(calId, "Haku keskeytetty (3 viikkoa ilman työvuoroja tai lomaa). Tarkistettu $totalFoundInBatch merkintää:")'
+    if target_empty_msg in content:
+        content = content.replace(target_empty_msg, replacement_empty_msg, 1)
 
-                if (consecutiveEmptyPages >= 3) {
-                    pagesRemainingToSync = 0
-                    finishCalendarSyncBatch(calId, "Haku keskeytetty (3 tyhjää jaksoa ilman työvuoroja tai lomaa). Tarkistettu $totalFoundInBatch merkintää:")
-                } else if (pagesRemainingToSync > 0) {"""
-        if target_process_cb not in content:
-            raise RuntimeError("Kohdetta 'parseAndInsertCalendar' kutsua ei löytynyt.")
-        content = content.replace(target_process_cb, replacement_process_cb, 1)
+    # 4. Palataan automaattisesti kuukausinäkymään haun loputtua
+    target_finish_batch = """    private fun finishCalendarSyncBatch(calId: Long, toastPrefix: String) {
+        totalRemovedInBatch += reconcileRemovedShifts(calId)"""
 
-    # 5. Lisätään paluu kuukausinäkymään finishCalendarSyncBatch-metodiin
-    switch_to_month_js = """        webView.post {
+    replacement_finish_batch = """    private fun switchBackToMonthView() {
+        if (!::webView.isInitialized || isDemoActive) return
+        webView.post {
             webView.evaluateJavascript(
                 \"\"\"
                 (function() {
-                    var btns = document.querySelectorAll('a, button, li, span, div[role="button"]');
+                    var directMonth = document.querySelector('#go-to-month a, #go-to-month-mobile a, a[href*="/Calendar/Month" i]');
+                    if (directMonth && directMonth.href && directMonth.href.indexOf('#') === -1) {
+                        window.location.href = directMonth.href;
+                        return "MONTH_NAVIGATED";
+                    }
+                    var selects = document.querySelectorAll('select');
+                    for (var s = 0; s < selects.length; s++) {
+                        for (var o = 0; o < selects[s].options.length; o++) {
+                            var optTxt = (selects[s].options[o].text || "").toLowerCase();
+                            if (optTxt.indexOf('kuukausi') !== -1 || optTxt.indexOf('month') !== -1) {
+                                selects[s].selectedIndex = o;
+                                selects[s].dispatchEvent(new Event('change', { bubbles: true }));
+                                return "MONTH_SELECTED";
+                            }
+                        }
+                    }
+                    var btns = document.querySelectorAll('a, button, li, span');
                     for (var i = 0; i < btns.length; i++) {
                         var t = (btns[i].innerText || "").trim().toLowerCase();
                         if (t === 'kuukausi' || t === 'month' || t === 'kuukausinäkymä') {
                             btns[i].click();
-                            return "clicked_month";
+                            return "MONTH_CLICKED";
                         }
                     }
-                    return "month_not_found";
+                    window.location.href = '/Calendar/Month';
+                    return "MONTH_FALLBACK";
                 })();
                 \"\"\".trimIndent(),
                 null
             )
-        }"""
+        }
+    }
 
-    if "clicked_month" not in content:
-        target_finish = "private fun finishCalendarSyncBatch(calId: Long, prefixMsg: String) {"
-        replacement_finish = f"{target_finish}\n{switch_to_month_js}"
-        if target_finish not in content:
+    private fun finishCalendarSyncBatch(calId: Long, toastPrefix: String) {
+        totalRemovedInBatch += reconcileRemovedShifts(calId)
+        switchBackToMonthView()"""
+
+    if "private fun switchBackToMonthView()" not in content:
+        if target_finish_batch not in content:
             raise RuntimeError("Kohdetta 'finishCalendarSyncBatch' ei löytynyt.")
-        content = content.replace(target_finish, replacement_finish, 1)
+        content = content.replace(target_finish_batch, replacement_finish_batch, 1)
 
     if content == original_content:
         print("Tiedosto on jo ajan tasalla, muutoksia ei tarvittu.")
