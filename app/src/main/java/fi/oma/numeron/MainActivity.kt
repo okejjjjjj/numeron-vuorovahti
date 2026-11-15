@@ -2565,7 +2565,7 @@ class MainActivity : AppCompatActivity() {
             .replace(Regex("""\s+"""), " ")
             .trim()
 
-        // Erotetaan työn suoritussijainti (esim. "Outokumpu Onni") ja vuoron kuvaus ("ilta hoitaja", "aamu hoitaja")
+        // Erotetaan työn suoritussijainti (esim. "K-talo") ja vuoron kuvaus ("ilta hoitaja", "aamu hoitaja")
         val shiftSplitRegex = Regex(
             """^(.*?)\s+((?:aamu|ilta|yö|päivä|väli|pitkä|tupla|viikonloppu|ilta\s+välivuoro|aamu\s+välivuoro).*)$""",
             RegexOption.IGNORE_CASE
@@ -2601,7 +2601,7 @@ class MainActivity : AppCompatActivity() {
             syncedShiftRangesInBatch.add(Pair(sMs, eMs))
 
             val (loc, desc) = extractLocAndDesc(startStr, raw)
-            val workplace = if (loc.isNotEmpty()) loc else "Outokumpu Onni"
+            val workplace = if (loc.isNotEmpty()) loc else "ei tiedossa"
             val finalLocation = if (desc.isNotEmpty()) "$workplace, $desc" else workplace
             if (loc.isEmpty() || desc.isEmpty()) {
                 missingFieldsCount++
