@@ -28,6 +28,11 @@ import org.json.JSONTokener
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import android.graphics.Color
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import java.io.ByteArrayInputStream
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -270,6 +275,8 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        webView.setBackgroundColor(Color.parseColor("#0F1722"))
+        webView.clearCache(true) // Tyhjentää vanhat välimuistiin jääneet Visman CSS-tiedostot
         webView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
@@ -291,6 +298,41 @@ class MainActivity : AppCompatActivity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                val url = request?.url?.toString()?.lowercase()
+                    ?: return super.shouldInterceptRequest(view, request)
+
+                val blockedCssPatterns = listOf(
+                    "/content/css/cssvisma",
+                    "/content/css/login.css",
+                    "/content/css/calendar.css",
+                    "/content/css/buttons.css",
+                    "/bundles/cssworktimestamping",
+                    "/content/css/worktimestamping.css",
+                    "/content/css/listlayout.css",
+                    "fonts.googleapis.com"
+                )
+
+                if (blockedCssPatterns.any { url.contains(it) }) {
+                    return WebResourceResponse(
+                        "text/css",
+                        "UTF-8",
+                        ByteArrayInputStream(ByteArray(0))
+                    )
+                }
+
+                return super.shouldInterceptRequest(view, request)
+            }
+            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                super.onPageCommitVisible(view, url)
+                if (url != null && !url.startsWith("https://demo.local/")) {
+                    injectDarkTheme(view)
+                }
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (url == null) return
@@ -335,33 +377,374 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun injectDarkTheme(view: WebView?) {
+        private fun injectDarkTheme(view: WebView?) {
         val css = """
-            body, .page-container, .main-content {
+            /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
+            html, body {
                 background-color: #0F1722 !important;
-                color: #E0E6ED !important;
+                color: #F1F5F9 !important;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }
-            .card, .panel, .stamping-box, .box {
+            header, nav.navbar, footer, .footer, .copyright, .loginnav, .bottom-nav {
+                display: none !important;
+            }
+            .container, .container-fluid {
+                padding: 12px !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            h1, h2, h3, h4, .h1, .h2, .h3, .h4 {
+                color: #F1F5F9 !important;
+                font-size: 20px !important;
+                font-weight: 600 !important;
+                margin-top: 4px !important;
+                margin-bottom: 12px !important;
+            }
+            label, span, p, div {
+                color: inherit;
+            }
+            a {
+                color: #38BDF8 !important;
+            }
+
+            /* === 2. KORTIT, PANEELIT JA SYÖTTÖKENTÄT === */
+            .panel, .panel-default, .whitebox, .card, .stamping-box, .box {
                 background-color: #182332 !important;
                 border: 1px solid #2A394A !important;
                 border-radius: 12px !important;
-                color: #E0E6ED !important;
+                color: #F1F5F9 !important;
+                box-shadow: none !important;
+                margin-bottom: 14px !important;
             }
-            input, select, textarea, .form-control {
+            .panel-body {
+                padding: 14px !important;
+            }
+            .panel-heading, .modal-header, .modal-footer {
+                background-color: #1E293B !important;
+                border-color: #2A394A !important;
+                color: #F1F5F9 !important;
+            }
+            .modal-content {
+                background-color: #182332 !important;
+                border: 1px solid #37475A !important;
+                color: #F1F5F9 !important;
+            }
+            input, select, textarea, .form-control, .k-textbox {
                 background-color: #111923 !important;
                 color: #FFFFFF !important;
                 border: 1px solid #37475A !important;
                 border-radius: 8px !important;
+                box-shadow: none !important;
             }
-            #punchButton {
+            input::placeholder, textarea::placeholder {
+                color: #64748B !important;
+            }
+
+            /* === 3. PAINIKKEET JA PUDOTUSVALIKOT === */
+            .btn, .btn-default {
+                background-color: #233040 !important;
+                color: #F1F5F9 !important;
+                border: 1px solid #37475A !important;
+                border-radius: 8px !important;
+                padding: 8px 14px !important;
+                font-weight: 500 !important;
+            }
+            .btn-primary {
                 background-color: #1982C4 !important;
                 border-color: #1982C4 !important;
                 color: #FFFFFF !important;
-                border-radius: 10px !important;
-                font-weight: bold !important;
+                font-weight: 600 !important;
             }
-            header, .navbar, .footer, .bottom-nav {
+            .btn-text, .btn-link {
+                background-color: transparent !important;
+                border: none !important;
+                color: #38BDF8 !important;
+                padding: 6px 0 !important;
+            }
+            .dropdown-menu {
+                background-color: #1E293B !important;
+                border: 1px solid #37475A !important;
+                border-radius: 8px !important;
+            }
+            .dropdown-menu > li > a {
+                color: #F1F5F9 !important;
+                padding: 8px 14px !important;
+            }
+            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus {
+                background-color: #2A394A !important;
+                color: #FFFFFF !important;
+            }
+            .dropdown-header {
+                color: #94A3B8 !important;
+            }
+
+            /* === 4. KIRJAUTUMISSIVU (login.txt) === */
+            .blurbox h1 {
+                text-align: center !important;
+                font-size: 26px !important;
+                margin: 20px 0 16px 0 !important;
+            }
+            .whitebox {
+                padding: 20px !important;
+                margin: 0 auto !important;
+            }
+            .whitebox img {
                 display: none !important;
+            }
+            #LoginForm input[type="submit"] {
+                margin-top: 14px !important;
+                padding: 12px !important;
+            }
+
+            /* === 5. TYÖAIKALEIMAUS (leimaussivu.txt) === */
+            .punching-overview-container {
+                display: flex !important;
+                justify-content: space-between !important;
+                gap: 12px !important;
+            }
+            .punching-shift-container, .punching-balance-overview-container {
+                flex: 1 !important;
+            }
+            .punching-shift-caption, .previous-stamps-caption, .punching-caption {
+                display: block !important;
+                font-size: 12px !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                color: #94A3B8 !important;
+                margin-bottom: 6px !important;
+                font-weight: 600 !important;
+            }
+            .punching-reason-code-label, .punching-stamp-comment-label, .forgotten-stamp-labels {
+                color: #CBD5E1 !important;
+                font-size: 13px !important;
+                margin-top: 10px !important;
+                margin-bottom: 4px !important;
+            }
+            .punch-reason-code-selector .btn, #dropdownMenu1, #dropdownMenu2, #dropdownMenuStampDirection {
+                width: 100% !important;
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                background-color: #111923 !important;
+            }
+            #punchButton {
+                background-color: #2E7D32 !important;
+                border-color: #2E7D32 !important;
+                color: #FFFFFF !important;
+                border-radius: 10px !important;
+                padding: 12px !important;
+                margin-top: 16px !important;
+                font-weight: 700 !important;
+            }
+            .nav-tabs-wts {
+                list-style: none !important;
+                padding: 0 !important;
+                margin: 0 0 10px 0 !important;
+                border-bottom: 1px solid #2A394A !important;
+                display: flex !important;
+            }
+            .nav-tabs-wts > li > a {
+                display: inline-block !important;
+                padding: 8px 14px !important;
+                color: #F1F5F9 !important;
+                border-bottom: 2px solid #2196F3 !important;
+                text-decoration: none !important;
+                font-weight: 600 !important;
+            }
+            #table-latest-stamps, .table {
+                background-color: transparent !important;
+                color: #F1F5F9 !important;
+                margin-bottom: 8px !important;
+            }
+            #table-latest-stamps td, .table td, .table th {
+                background-color: transparent !important;
+                border-top: 1px solid #2A394A !important;
+                color: #F1F5F9 !important;
+                padding: 10px 6px !important;
+            }
+            #table-latest-stamps tr:hover td {
+                background-color: #233040 !important;
+            }
+            #forgotStampPanel.minimized {
+                display: none !important;
+            }
+            #forgotStampPanel:not(.minimized) {
+                position: fixed !important;
+                left: 8px !important;
+                right: 8px !important;
+                bottom: 8px !important;
+                top: auto !important;
+                z-index: 1050 !important;
+            }
+
+            /* === 6. TOIVEET & KENDO UI (toiveet.txt) === */
+            label[for="filterOptions"] {
+                color: #F1F5F9 !important;
+                margin-right: 6px !important;
+            }
+            .fixed-menu-bar {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                gap: 8px !important;
+                align-items: center !important;
+            }
+            .k-grid, .k-grid-header, .k-grid-content, .k-pager-wrap {
+                background-color: #182332 !important;
+                color: #F1F5F9 !important;
+                border-color: #2A394A !important;
+            }
+            .k-grid-header th.k-header {
+                background-color: #233040 !important;
+                color: #F1F5F9 !important;
+                border-color: #2A394A !important;
+                padding: 10px 8px !important;
+            }
+            .k-grid tr {
+                background-color: #182332 !important;
+                color: #F1F5F9 !important;
+            }
+            .k-grid tr.k-alt {
+                background-color: #131C28 !important;
+            }
+            .k-grid td {
+                border-color: #2A394A !important;
+                color: #F1F5F9 !important;
+                padding: 10px 8px !important;
+            }
+            .k-grid tr:hover td {
+                background-color: #233040 !important;
+                color: #FFFFFF !important;
+            }
+            .k-grid tr.k-state-selected td {
+                background-color: #1982C4 !important;
+                color: #FFFFFF !important;
+            }
+            .k-pager-wrap .k-link, .k-pager-info, .k-dropdown-wrap {
+                background-color: #233040 !important;
+                color: #F1F5F9 !important;
+                border-color: #37475A !important;
+            }
+
+            /* === 7. KALENTERI / VUOROT (kalenteri.txt) === */
+            .calendar-heading {
+                box-shadow: none !important;
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                background-color: #182332 !important;
+                border: 1px solid #2A394A !important;
+                border-radius: 12px !important;
+                padding: 8px 12px !important;
+                margin-bottom: 10px !important;
+            }
+            .monthSelector .panel-body {
+                padding: 4px !important;
+                display: flex !important;
+                align-items: center !important;
+                gap: 12px !important;
+            }
+            #monthText {
+                color: #F1F5F9 !important;
+                font-size: 18px !important;
+                font-weight: 600 !important;
+                margin: 0 !important;
+            }
+            .prevButton::before {
+                content: "◀" !important;
+                color: #38BDF8 !important;
+                font-size: 16px !important;
+                text-decoration: none !important;
+            }
+            .nextButton::before {
+                content: "▶" !important;
+                color: #38BDF8 !important;
+                font-size: 16px !important;
+                text-decoration: none !important;
+            }
+            .month-table {
+                width: 100% !important;
+                table-layout: fixed !important;
+                border-collapse: collapse !important;
+                background-color: #182332 !important;
+            }
+            .month-week-days td {
+                background-color: #233040 !important;
+                color: #CBD5E1 !important;
+                font-weight: 600 !important;
+                font-size: 12px !important;
+                padding: 6px 2px !important;
+                border: 1px solid #2A394A !important;
+                text-align: center !important;
+            }
+            .month-week-number {
+                width: 26px !important;
+                background-color: #131C28 !important;
+                color: #64748B !important;
+                font-size: 11px !important;
+                text-align: center !important;
+                vertical-align: top !important;
+                padding-top: 6px !important;
+                border: 1px solid #2A394A !important;
+            }
+            td.month-day {
+                background-color: #182332 !important;
+                border: 1px solid #2A394A !important;
+                vertical-align: top !important;
+                height: 68px !important;
+                padding: 2px !important;
+            }
+            td.month-day.past-day, td.month-day.day-different-month {
+                background-color: #121A24 !important;
+            }
+            td.month-day.todayTd {
+                background-color: #1E3A5F !important;
+                border: 1px solid #38BDF8 !important;
+            }
+            .month-day-header {
+                margin-bottom: 2px !important;
+            }
+            .dayNum {
+                color: #F1F5F9 !important;
+                font-size: 12px !important;
+                font-weight: 600 !important;
+                padding-left: 3px !important;
+            }
+            td.day-different-month .dayNum {
+                color: #64748B !important;
+            }
+            .month-item.work {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+                border-radius: 4px !important;
+                padding: 2px 3px !important;
+                margin-bottom: 2px !important;
+                font-size: 11px !important;
+                line-height: 1.2 !important;
+            }
+            .month-item.work .itemTimes {
+                display: block !important;
+                color: #FFFFFF !important;
+                font-weight: 600 !important;
+            }
+            .month-item.work .itemName {
+                display: none !important;
+            }
+            .mobileAddDiv {
+                display: flex !important;
+                justify-content: space-between !important;
+                margin-top: 10px !important;
+                padding: 4px 8px !important;
+            }
+            .mobileAddButton, .filterButton {
+                background-color: #233040 !important;
+                color: #F1F5F9 !important;
+                border: 1px solid #37475A !important;
+                border-radius: 8px !important;
+                padding: 8px 14px !important;
+                text-decoration: none !important;
+                display: inline-block !important;
             }
         """.trimIndent().replace("\n", " ")
 
@@ -371,13 +754,14 @@ class MainActivity : AppCompatActivity() {
                 if (!style) {
                     style = document.createElement('style');
                     style.id = 'custom-dark-theme';
-                    style.innerHTML = '$css';
                     document.head.appendChild(style);
                 }
+                style.innerHTML = '$css';
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
     }
+
 
     private fun handleAutoLogin() {
         val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
