@@ -17,69 +17,187 @@ def patch_main_activity(path):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    old_css_block = """            .nav-tabs-wts { border-bottom: 1px solid #334155 !important; }
-            .nav-tabs-wts > li.active > a { background-color: transparent !important; color: #38BDF8 !important; border-bottom: 2px solid #38BDF8 !important; }
-            .table, .table > tbody > tr > td, .table > tbody > tr > th, .table-active, .table-active > td {
-                background: transparent !important;
-                background-color: transparent !important;
-                color: #E2E8F0 !important;
+    old_calendar_css = """            .calendar-body, .calendar-heading {
+                background-color: #1E293B !important;
+                box-shadow: none !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                padding: 8px !important;
+                margin-bottom: 10px !important;
             }
-            #table-latest-stamps tr { border-bottom: 1px solid #334155 !important; }
-            #table-latest-stamps tr:hover td, #table-latest-stamps tr:active td { background-color: #334155 !important; color: #FFFFFF !important; }
-            #table-latest-stamps td { border: none !important; padding: 10px 6px !important; }"""
+            .calendar-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 10px !important; }
+            .calendar-heading .monthSelector { display: contents !important; }
+            .calendar-heading .monthSelector .panel-body {
+                order: 1 !important;
+                width: 100% !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                padding: 0 4px 4px 4px !important;
+                margin: 0 !important;
+                float: none !important;
+            }
+            #monthText { color: #F8FAFC !important; font-size: 18px !important; font-weight: bold !important; margin: 0 !important; }
+            #pc_AddButton { order: 2 !important; width: 100% !important; display: flex !important; gap: 8px !important; margin: 0 !important; float: none !important; }
+            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown { flex: 1 !important; margin: 0 !important; display: block !important; }
+            #pcAddButt, #pc_AddButton .filterButton {
+                width: 100% !important;
+                height: 36px !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 6px 10px !important;
+                font-size: 13px !important;
+            }
+            #pcTodayButton, #pcViewDropdown { order: 3 !important; flex: 1 1 46% !important; display: block !important; margin: 0 !important; float: none !important; }
+            #todayButt, #pcViewButt { width: 100% !important; max-width: none !important; min-width: 0 !important; height: 36px !important; padding: 6px 10px !important; font-size: 13px !important; }
+            #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }"""
 
-    new_css_block = """            #panel-body-tabs, .punching-events-container-header, .punching-events-caption,
-            .tab-content-wts, .tab-pane-wts, #latestStampsContainer, .punching-bottom-container,
-            .punching-previous-stamps, .punching-previous-stamps-container-header, .punching-show-more-button {
-                background: transparent !important;
-                background-color: transparent !important;
-                color: #E2E8F0 !important;
+    new_calendar_css = """            .calendar-body, .calendar-heading {
+                background-color: #1E293B !important;
+                box-shadow: none !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                padding: 8px !important;
+                margin-bottom: 10px !important;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
             }
-            .nav-tabs-wts { border-bottom: 1px solid #334155 !important; background: transparent !important; }
-            .nav-tabs-wts > li > a, .wts-tab-item > a {
-                background: transparent !important;
-                background-color: transparent !important;
-                color: #94A3B8 !important;
-                border: none !important;
+            .calendar-heading {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+                padding: 10px !important;
+                position: static !important;
             }
-            .nav-tabs-wts > li.active > a, .nav-tabs-wts > li.active > a:focus, .nav-tabs-wts > li.active > a:hover {
-                background: transparent !important;
-                background-color: transparent !important;
+            .calendar-heading .monthSelector, .calendar-heading .weekSelector { display: contents !important; }
+            .calendar-heading .monthSelector .panel-body, .calendar-heading .weekSelector .panel-body {
+                order: 1 !important;
+                width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                padding: 0 4px 4px 4px !important;
+                margin: 0 !important;
+                float: none !important;
+                position: static !important;
+            }
+            #monthText, #weekText, .calendar-heading .view-label {
+                color: #F8FAFC !important;
+                font-size: 18px !important;
+                font-weight: bold !important;
+                margin: 0 !important;
+                line-height: 1.2 !important;
+            }
+            #pc_AddButton {
+                order: 2 !important;
+                width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: flex !important;
+                gap: 8px !important;
+                margin: 0 !important;
+                float: none !important;
+                position: static !important;
+            }
+            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown {
+                flex: 1 !important;
+                margin: 0 !important;
+                display: block !important;
+                position: relative !important;
+            }
+            #pcAddButt, #pc_AddButton .filterButton {
+                width: 100% !important;
+                height: 36px !important;
+                min-height: 36px !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 6px 10px !important;
+                margin: 0 !important;
+                font-size: 13px !important;
+                line-height: 1.2 !important;
+                position: static !important;
+                top: auto !important;
+            }
+            #pcTodayButton, #pcViewDropdown {
+                order: 3 !important;
+                flex: 1 1 46% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: block !important;
+                margin: 0 !important;
+                float: none !important;
+                position: relative !important;
+                top: auto !important;
+            }
+            #todayButt, #pcViewButt {
+                width: 100% !important;
+                max-width: none !important;
+                min-width: 0 !important;
+                height: 36px !important;
+                min-height: 36px !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 6px 10px !important;
+                margin: 0 !important;
+                font-size: 13px !important;
+                line-height: 1.2 !important;
+                position: static !important;
+                top: auto !important;
+            }
+            #pcViewDropdown .dropdown-menu, #pc_AddButton .dropdown-menu {
+                z-index: 1060 !important;
+                top: 100% !important;
+                margin-top: 4px !important;
+            }
+            #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }
+            #calendar-content {
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
+                clear: both !important;
+                position: static !important;
+            }
+            #calendar-content hr { border-color: #334155 !important; margin: 8px 0 !important; }
+            #calendar-content .list-week-header, #calendar-content .week-header, #calendar-content h3, #calendar-content h4 {
                 color: #38BDF8 !important;
-                border: none !important;
-                border-bottom: 2px solid #38BDF8 !important;
-            }
-            .table, .table > tbody, .table > tbody > tr, .table > tbody > tr > td, .table > tbody > tr > th,
-            .table-active, .table-active > tbody > tr, .table-active > tbody > tr > td, .table-active > td,
-            #table-latest-stamps, #table-latest-stamps tbody, #table-latest-stamps tr, #table-latest-stamps td {
+                border-color: #334155 !important;
                 background: transparent !important;
-                background-color: transparent !important;
+            }
+            #calendar-content .list-day-header, #calendar-content .day-header, #calendar-content .list-date-header {
+                color: #F8FAFC !important;
+                background: transparent !important;
+            }
+            #calendar-content .list-item, #calendar-content .list-item-work, #calendar-content .list-item-content,
+            #calendar-content .calendar-list-item, #calendar-content .schedule-item, #calendar-content .schedule-item-work,
+            #calendar-content .list-day-item, #calendar-content .shift-item {
+                background-color: #1E293B !important;
                 background-image: none !important;
-                color: #E2E8F0 !important;
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
             }
-            #table-latest-stamps tr { border-bottom: 1px solid #334155 !important; }
-            #table-latest-stamps tr:hover, #table-latest-stamps tr:hover td,
-            #table-latest-stamps tr:active, #table-latest-stamps tr:active td {
-                background-color: #334155 !important;
-                color: #FFFFFF !important;
+            #calendar-content .list-item, #calendar-content .calendar-list-item, #calendar-content .schedule-item {
+                border: 1px solid #334155 !important;
+                border-left: 4px solid #0284C7 !important;
+                border-radius: 12px !important;
+                padding: 8px 10px !important;
+                margin: 6px 0 !important;
             }
-            #table-latest-stamps td { border: none !important; padding: 10px 6px !important; }
-            .visma-icon-arrow-next-icon { filter: invert(0.85) brightness(1.2) !important; }"""
+            #calendar-content .list-item *, #calendar-content .calendar-list-item *, #calendar-content .schedule-item * {
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
+            }"""
 
-    old_attach_block = """                function attachTheme() {
-                    var root = document.head || document.documentElement;
-                    if (!root) return false;
-                    var style = document.getElementById('custom-numeron-theme');
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = 'custom-numeron-theme';
-                        style.textContent = cssText;
-                        root.appendChild(style);
-                    }
-                    return true;
-                }"""
-
-    new_attach_block = """                function attachTheme() {
+    old_js_block = """                function attachTheme() {
                     var root = document.documentElement || document.head;
                     if (!root) return false;
                     var style = document.getElementById('custom-numeron-theme');
@@ -92,28 +210,90 @@ def patch_main_activity(path):
                         root.appendChild(style);
                     }
                     return true;
+                }
+                if (!attachTheme()) {
+                    var obs = new MutationObserver(function() {
+                        if (attachTheme()) obs.disconnect();
+                    });
+                    obs.observe(document, { childList: true, subtree: true });
+                }"""
+
+    new_js_block = """                function fixCalendarListTheme() {
+                    var rootEl = document.getElementById('calendar-content') || document.querySelector('.calendar-body');
+                    if (!rootEl) return;
+                    var nodes = rootEl.querySelectorAll('div, table, tbody, tr, td, section, article, ul, li');
+                    for (var i = 0; i < nodes.length; i++) {
+                        var el = nodes[i];
+                        if (el.classList && (el.classList.contains('month-item') || el.classList.contains('month-day'))) continue;
+                        var cs = window.getComputedStyle(el);
+                        var bg = cs.backgroundColor;
+                        var m = bg && bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
+                        if (m) {
+                            var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+                            if (a > 0.1 && parseInt(m[1], 10) > 205 && parseInt(m[2], 10) > 205 && parseInt(m[3], 10) > 205) {
+                                el.style.setProperty('background-color', '#1E293B', 'important');
+                                el.style.setProperty('background-image', 'none', 'important');
+                                el.style.setProperty('border-color', '#334155', 'important');
+                                if (el.offsetHeight >= 44 && el.offsetHeight <= 260 && el.offsetWidth > 180) {
+                                    el.style.setProperty('border', '1px solid #334155', 'important');
+                                    el.style.setProperty('border-left', '4px solid #0284C7', 'important');
+                                    el.style.setProperty('border-radius', '12px', 'important');
+                                }
+                            }
+                        }
+                        var col = cs.color;
+                        var cm = col && col.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                        if (cm) {
+                            var r = parseInt(cm[1], 10), g = parseInt(cm[2], 10), b = parseInt(cm[3], 10);
+                            if (r < 130 && g < 130 && b < 130) {
+                                el.style.setProperty('color', '#E2E8F0', 'important');
+                            }
+                        }
+                    }
+                }
+                function attachTheme() {
+                    var root = document.documentElement || document.head;
+                    if (!root) return false;
+                    var style = document.getElementById('custom-numeron-theme');
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = 'custom-numeron-theme';
+                        style.textContent = cssText;
+                    }
+                    if (style.parentNode !== root || root.lastElementChild !== style) {
+                        root.appendChild(style);
+                    }
+                    fixCalendarListTheme();
+                    return true;
+                }
+                attachTheme();
+                if (!window._numeronThemeObserver) {
+                    window._numeronThemeObserver = new MutationObserver(function() {
+                        attachTheme();
+                    });
+                    window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
                 }"""
 
     updated = False
 
-    if old_css_block in content:
-        content = content.replace(old_css_block, new_css_block, 1)
+    if old_calendar_css in content:
+        content = content.replace(old_calendar_css, new_calendar_css, 1)
         updated = True
-        print(f"[OK] CSS-säännöt päivitetty: {path}")
-    elif ".visma-icon-arrow-next-icon" in content:
-        print(f"[INFO] CSS-säännöt olivat jo ajan tasalla: {path}")
+        print(f"[OK] Kalenteri- ja listanäkymän CSS päivitetty: {path}")
+    elif "#calendar-content .schedule-item" in content:
+        print(f"[INFO] Kalenteri- ja listanäkymän CSS oli jo ajan tasalla: {path}")
     else:
-        print(f"[VIRHE] CSS-kohtaa ei löytynyt tiedostosta {path}")
+        print(f"[VIRHE] Kalenterin CSS-lohkoa ei löytynyt tiedostosta {path}")
         return False
 
-    if old_attach_block in content:
-        content = content.replace(old_attach_block, new_attach_block, 1)
+    if old_js_block in content:
+        content = content.replace(old_js_block, new_js_block, 1)
         updated = True
-        print(f"[OK] attachTheme() päivitetty: {path}")
-    elif "root.lastElementChild !== style" in content:
-        print(f"[INFO] attachTheme() oli jo ajan tasalla: {path}")
+        print(f"[OK] fixCalendarListTheme() ja MutationObserver päivitetty: {path}")
+    elif "fixCalendarListTheme()" in content:
+        print(f"[INFO] JS-teemapäivitys oli jo ajan tasalla: {path}")
     else:
-        print(f"[VIRHE] attachTheme()-kohtaa ei löytynyt tiedostosta {path}")
+        print(f"[VIRHE] attachTheme()-lohkoa ei löytynyt tiedostosta {path}")
         return False
 
     if updated:
@@ -126,7 +306,6 @@ def bump_gradle_version(path):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Korottaa versionCode-arvoa +1 (esim. versionCode = 14 -> 15 tai versionCode 14 -> 15)
     vc_pattern = re.compile(r'(\bversionCode\s*=?\s*)(\d+)')
     vc_match = vc_pattern.search(content)
     if not vc_match:
@@ -137,7 +316,6 @@ def bump_gradle_version(path):
     new_vc = old_vc + 1
     content = vc_pattern.sub(rf'\g<1>{new_vc}', content, count=1)
 
-    # Korottaa versionName-merkkijonon viimeistä numeroa +1 (esim. "1.4.2" -> "1.4.3")
     vn_pattern = re.compile(r'(\bversionName\s*=?\s*["\'])([^"\']+)(["\'])')
     vn_match = vn_pattern.search(content)
     vn_info = ""
