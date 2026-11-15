@@ -4,36 +4,22 @@ plugins {
 }
 
 android {
-    namespace = "fi.oma.numeron"
-    compileSdk = 36
+    namespace = "fi.numeron.vuorovahti"
+    compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.numeron_vuorovahti"
+        applicationId = "fi.numeron.vuorovahti"
         minSdk = 26
-        targetSdk = 36
-        versionCode = 58
-        versionName = "1.49.9"
+        targetSdk = 34
+        versionCode = 3
+        versionName = "3.0"
     }
 
-    signingConfigs {
-        create("release") {
-            storeFile = file("release-key.jks")
-            storePassword = System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
-        }
-    }
     buildTypes {
-        getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            isShrinkResources = true
-            isShrinkResources = false
+        release {
+            isMinifyEnabled = false
         }
     }
-
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -44,11 +30,10 @@ android {
 }
 
 dependencies {
-    implementation("com.google.android.play:app-update:2.1.0")
-    implementation("com.google.android.play:app-update-ktx:2.1.0")
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.biometric:biometric:1.1.0")
-    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jsoup:jsoup:1.18.1")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

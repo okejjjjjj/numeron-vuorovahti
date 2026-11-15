@@ -1,8 +1,0 @@
-<resources>
-    <string name="app_name">Numeron Vuorovahti</string>
-    <string name="shortcut_stamp_short">Pikaleimaus</string>
-    <string name="shortcut_stamp_long">Avaa Numeron-leimausnäkymä</string>
-    <string name="shortcut_sync_short">Synkronoi vuorot</string>
-    <string name="shortcut_sync_long">Lue ja vie työvuorot kalenteriin</string>
-    <string name="disclaimer_text">Numeron Vuorovahti on itsenäinen ja epävirallinen aputyökalu. Kehittäjä ei vastaa mahdollisista virheistä työvuorojen synkronoinnissa tai leimauksissa. Tarkista viralliset työaikatiedot aina suoraan työnantajan järjestelmästä.</string>
-</resources>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#0F1722">
+
+    <TextView
+        android:id="@+id/bannerDemoMode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#D97706"
+        android:text="DEMOTILA AKTIIVINEN – Kokeile leimausta, vuoroja ja ilmoituksia"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:paddingVertical="4dp"
+        android:visibility="gone" />
+
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        android:orientation="horizontal"
+        android:padding="6dp"
+        android:background="#0B111A"
+        android:gravity="center_vertical">
+
+        <Button
+            android:id="@+id/btnNavStamp"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1.3"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/nav_btn_active"
+            android:text="Leimaus"
+            android:textAllCaps="false"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnNavRequests"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1.2"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/nav_btn_inactive"
+            android:text="Toiveet"
+            android:textAllCaps="false"
+            android:textColor="#E0E6ED"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnNavShifts"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1.2"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/nav_btn_inactive"
+            android:text="Vuorot"
+            android:textAllCaps="false"
+            android:textColor="#E0E6ED"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/btnNavSettings"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.8"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/nav_btn_inactive"
+            android:text="⚙"
+            android:textColor="#E0E6ED"
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/btnNavClose"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.8"
+            android:background="@drawable/nav_btn_close"
+            android:text="✕"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+    </LinearLayout>
+</LinearLayout>

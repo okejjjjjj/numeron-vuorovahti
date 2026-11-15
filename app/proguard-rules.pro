@@ -1,4 +1,0 @@
--dontwarn javax.annotation.**
--dontwarn javax.annotation.concurrent.**
--keep class fi.oma.numeron.** { *; }
--keepclassmembers class * { @android.webkit.JavascriptInterface <methods>; }
