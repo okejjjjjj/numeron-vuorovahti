@@ -445,6 +445,7 @@ class MainActivity : AppCompatActivity() {
     private var lastAutoLoginAttempt = 0L
 
     private var pagesRemainingToSync = 0
+    private var missingFieldsCount = 0
     private var consecutiveEmptyPages = 0
     private var totalFoundInBatch = 0
     private var totalAddedInBatch = 0
@@ -2018,9 +2019,10 @@ class MainActivity : AppCompatActivity() {
         if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) {
             sendNewShiftsAddedNotification(totalAddedInBatch)
         }
+        val missingTxt = if (missingFieldsCount > 0) " (Varoitus: $missingFieldsCount merkinnästä puuttui kenttiä)" else ""
         Toast.makeText(
             this,
-            "$toastPrefix $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+            "$toastPrefix $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.$missingTxt",
             Toast.LENGTH_LONG
         ).show()
     }
@@ -2062,7 +2064,7 @@ class MainActivity : AppCompatActivity() {
                     consecutiveEmptyPages = 0
                 }
 
-                if (consecutiveEmptyPages >= 3) {
+                if (consecutiveEmptyPages >= 2) {
                     pagesRemainingToSync = 0
                     finishCalendarSyncBatch(calId, "Haku keskeytetty (3 viikkoa ilman työvuoroja tai lomaa). Tarkistettu $totalFoundInBatch merkintää:")
                 } else if (pagesRemainingToSync > 0) {
@@ -2161,7 +2163,7 @@ class MainActivity : AppCompatActivity() {
             .setSmallIcon(R.drawable.ic_launcher)
             .setSubText("Numeron Vuorovahti")
             .setContentTitle("Uudet työvuorot päivitetty!")
-            .setContentText("Lisätty/muutettu $addedCount$removedTxt. Napauta tarkistaaksesi tai muokataksesi.")
+            .setContentText("Lisätty/muutettu $addedCount$removedTxt." + (if (missingFieldsCount > 0) " Huomio: $missingFieldsCount merkinnästä puuttui kenttiä." else "") + " Napauta tarkistaaksesi.")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
@@ -2599,18 +2601,23 @@ class MainActivity : AppCompatActivity() {
             syncedShiftRangesInBatch.add(Pair(sMs, eMs))
 
             val (loc, desc) = extractLocAndDesc(startStr, raw)
+            val workplace = if (loc.isNotEmpty()) loc else "Outokumpu Onni"
+            val finalLocation = if (desc.isNotEmpty()) "$workplace, $desc" else workplace
+            if (loc.isEmpty() || desc.isEmpty()) {
+                missingFieldsCount++
+            }
             val dayStartMs = sDt.toLocalDate().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val dayEndMs = sDt.toLocalDate().plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val exId = findShiftOnSameDay(calId, sMs, eMs, dayStartMs, dayEndMs)
 
             if (exId == null) {
-                val newId = insertEvent(calId, "Työvuoro", loc, desc, sMs, eMs, false, sDt.hour)
+                val newId = insertEvent(calId, "Työvuoro", finalLocation, desc, sMs, eMs, false, sDt.hour)
                 if (newId != null) {
                     syncChangesList.add(SyncChangeItem(newId, "ADDED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
                 }
                 newId != null
             } else {
-                val updated = updateEvent(calId, exId, loc, desc, sMs, eMs, sDt.hour)
+                val updated = updateEvent(calId, exId, finalLocation, desc, sMs, eMs, sDt.hour)
                 if (updated) {
                     syncChangesList.add(SyncChangeItem(exId, "UPDATED", dateStr, "$startStr - $endStr", desc.ifEmpty { "Työvuoro" }))
                 }
