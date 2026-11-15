@@ -117,18 +117,6 @@ class MainActivity : AppCompatActivity() {
             .start()
     }
 
-    private fun fadeWebViewOut() {
-        webView.animate().cancel()
-        webView.alpha = 0f
-    }
-
-    private fun fadeWebViewIn() {
-        webView.animate()
-            .alpha(1f)
-            .setDuration(180L)
-            .start()
-    }
-
     private fun navigateToTab(tab: Tab) {
         currentTab = tab
         updateDemoBanner()
@@ -939,8 +927,7 @@ class MainActivity : AppCompatActivity() {
             #mobileViewDropdown {
                 margin-top: 8px !important;
             }
-        """.trimIndent().replace("
-", " ")
+        """.trimIndent().replace("\n", " ")
 
         val js = """
             (function() {
@@ -955,7 +942,6 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
         view?.evaluateJavascript(js, null)
     }
-
 
     private fun handleAutoLogin() {
         val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
