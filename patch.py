@@ -1,286 +1,380 @@
-#!/usr/bin/env python3
-"""
-Päivittää MainActivity.kt-tiedoston Visma Numeronin kalenterisynkronoinnin:
-1. Nostaa sivutuserän (resetSyncBatch) 8 -> 12 viikkoon (koko joulukuu + tammikuun alku).
-2. Korjaa luettelonäkymään vaihdon (#go-to-list a / #go-to-list-mobile a).
-3. Lisää Visma Numeronin .nextButton / .vismaicon-arrow-right-circle -nuolinapit.
-4. Päivittää myös hiljaisen päiväsynkronoinnin (triggerSilentDailySyncIfNeeded) seuraava-napin.
-"""
-
-import shutil
+import os
+import re
 import sys
-from pathlib import Path
 
+TARGET_FILE = "MainActivity.kt"
 
-def find_main_activity(custom_path: str | None = None) -> Path:
-    if custom_path:
-        p = Path(custom_path)
-        if p.is_file():
-            return p
-        raise FileNotFoundError(f"Tiedostoa ei löytynyt: {p}")
+def main():
+    if not os.path.exists(TARGET_FILE):
+        print(f"Virhe: Tiedostoa '{TARGET_FILE}' ei löytynyt nykyisestä hakemistosta.")
+        sys.exit(1)
 
-    candidates = [
-        Path("MainActivity.kt"),
-        Path("app/src/main/java/fi/oma/numeron/MainActivity.kt"),
-    ]
-    for c in candidates:
-        if c.is_file():
-            return c
+    with open(TARGET_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
 
-    for found in Path(".").rglob("MainActivity.kt"):
-        return found
+    original_content = content
 
-    raise FileNotFoundError(
-        "MainActivity.kt-tiedostoa ei löytynyt. Anna polku parametrina: python3 patch.py polku/MainActivity.kt"
+    # 1. Lisätään consecutiveEmptyPages-laskuri kenttiin ja resetSyncBatch-metodiin
+    target_vars = """    private var pagesRemainingToSync = 0
+    private var totalFoundInBatch = 0
+    private var totalAddedInBatch = 0
+    private var totalRemovedInBatch = 0"""
+
+    replacement_vars = """    private var pagesRemainingToSync = 0
+    private var consecutiveEmptyPages = 0
+    private var totalFoundInBatch = 0
+    private var totalAddedInBatch = 0
+    private var totalRemovedInBatch = 0"""
+
+    if target_vars not in content:
+        raise RuntimeError("Kohdetta 'pagesRemainingToSync' ei löytynyt.")
+    content = content.replace(target_vars, replacement_vars, 1)
+
+    target_reset = """    private fun resetSyncBatch(pages: Int) {
+        pagesRemainingToSync = pages
+        totalFoundInBatch = 0
+        totalAddedInBatch = 0
+        totalRemovedInBatch = 0
+        syncedDatesInBatch.clear()
+        syncChangesList.clear()
+        syncedShiftRangesInBatch.clear()
+    }"""
+
+    replacement_reset = """    private fun resetSyncBatch(pages: Int) {
+        pagesRemainingToSync = pages
+        consecutiveEmptyPages = 0
+        totalFoundInBatch = 0
+        totalAddedInBatch = 0
+        totalRemovedInBatch = 0
+        syncedDatesInBatch.clear()
+        syncChangesList.clear()
+        syncedShiftRangesInBatch.clear()
+    }"""
+
+    if target_reset not in content:
+        raise RuntimeError("Kohdetta 'resetSyncBatch' ei löytynyt.")
+    content = content.replace(target_reset, replacement_reset, 1)
+
+    # 2. Näytetään peittoikkuna edistymispalkilla myös manuaalisessa synkronoinnissa (piilotetaan sivunvaihto)
+    target_check_perm = """    private fun checkPermissionsAndSync() {
+        val missing = getRequiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
+        } else {
+            resetSyncBatch(if (isDemoActive) 0 else 12)
+            extractShiftsFromPage(forceList = true)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        VuorovahtiHelper.ensureRemindersFromCalendar(this)
+        if (requestCode == 100) {
+            val r = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            val w = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            if (r && w) {
+                resetSyncBatch(if (isDemoActive) 0 else 12)
+                extractShiftsFromPage(forceList = true)
+            }
+        }
+    }"""
+
+    replacement_check_perm = """    private fun startManualForegroundSync() {
+        isBackgroundListSync = true
+        resetSyncBatch(if (isDemoActive) 0 else 12)
+        showStampOverlay("Synkronoidaan kalenteria", "Haetaan työvuoroja ja lomia taustalla...")
+        extractShiftsFromPage(forceList = true)
+    }
+
+    private fun checkPermissionsAndSync() {
+        val missing = getRequiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
+        } else {
+            startManualForegroundSync()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        VuorovahtiHelper.ensureRemindersFromCalendar(this)
+        if (requestCode == 100) {
+            val r = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            val w = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+            if (r && w) {
+                startManualForegroundSync()
+            }
+        }
+    }"""
+
+    if target_check_perm not in content:
+        raise RuntimeError("Kohdetta 'checkPermissionsAndSync' ei löytynyt.")
+    content = content.replace(target_check_perm, replacement_check_perm, 1)
+
+    # 3. Suodatetaan toiveet (.request) ja vapaat vuorot (.opportunity) pois HTML-solujen keräyksessä
+    target_cells_js = """                        var extra = [];
+                        var ch = td.querySelectorAll('[title], [data-original-title]');
+                        for (var c = 0; c < ch.length; c++) {
+                            var ti = ch[c].getAttribute('title') || ch[c].getAttribute('data-original-title');
+                            if (ti) extra.push(ti);
+                        }
+                        cells.push({ text: (td.innerText || "").trim(), isOther: isOther, extra: extra.join(" | ") });"""
+
+    replacement_cells_js = """                        var dayNumEl = td.querySelector('.dayNum');
+                        var dayNum = dayNumEl ? (dayNumEl.innerText || "").trim() : "";
+                        var validItems = td.querySelectorAll('.month-item.work, .month-item.absence, .schedule-item-work, .schedule-item-absence');
+                        var cellText = "";
+                        if (dayNum && (validItems.length > 0 || td.querySelector('.month-day-content'))) {
+                            var lines = [dayNum];
+                            for (var v = 0; v < validItems.length; v++) {
+                                var it = validItems[v];
+                                if (it.classList.contains('hidden-items-box')) continue;
+                                var tStr = (it.innerText || "").trim().replace(/\\s+/g, ' ');
+                                if (tStr) lines.push(tStr);
+                            }
+                            cellText = lines.join("\\n");
+                        } else {
+                            var clone = td.cloneNode(true);
+                            var ignored = clone.querySelectorAll('.request, .opportunity, .schedule-item-request, .schedule-item-opportunity, .hidden-items-box');
+                            for (var ig = 0; ig < ignored.length; ig++) ignored[ig].remove();
+                            cellText = (clone.innerText || "").trim();
+                        }
+                        var extra = [];
+                        var ch = td.querySelectorAll('.work [title], .absence [title], .work [data-original-title], .absence [data-original-title]');
+                        for (var c = 0; c < ch.length; c++) {
+                            var ti = ch[c].getAttribute('title') || ch[c].getAttribute('data-original-title');
+                            if (ti) extra.push(ti);
+                        }
+                        cells.push({ text: cellText, isOther: isOther, extra: extra.join(" | ") });"""
+
+    if target_cells_js not in content:
+        raise RuntimeError("Kohdetta 'cells.push' JS-lohkosta ei löytynyt.")
+    content = content.replace(target_cells_js, replacement_cells_js, 1)
+
+    # 4. Päivitetään processCalendarData: keskeytys 3 tyhjän viikon/jakson jälkeen + edistymisteksti
+    target_process_cb = """                val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+                totalFoundInBatch += found
+                totalAddedInBatch += added
+
+                if (pagesRemainingToSync > 0) {
+                    pagesRemainingToSync--
+                    if (isBackgroundListSync) {
+                        showStampOverlay("Haetaan uutta työvuorolistaa", "Tarkistetaan tulevia viikkoja... (muutoksia $totalAddedInBatch)")
+                    }
+                    clickNextCalendarPeriod(calId)
+                } else {
+                    finishCalendarSyncBatch(calId, "Tarkistettu $totalFoundInBatch merkintää:")
+                }"""
+
+    replacement_process_cb = """                val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+                totalFoundInBatch += found
+                totalAddedInBatch += added
+
+                if (found == 0) {
+                    consecutiveEmptyPages++
+                } else {
+                    consecutiveEmptyPages = 0
+                }
+
+                if (consecutiveEmptyPages >= 3) {
+                    pagesRemainingToSync = 0
+                    finishCalendarSyncBatch(calId, "Haku keskeytetty (3 tyhjää jaksoa). Tarkistettu $totalFoundInBatch merkintää:")
+                } else if (pagesRemainingToSync > 0) {
+                    pagesRemainingToSync--
+                    if (isBackgroundListSync || stampOverlay.visibility == View.VISIBLE) {
+                        val checkedCount = 12 - pagesRemainingToSync
+                        showStampOverlay(
+                            "Synkronoidaan kalenteria",
+                            "Tarkistetaan jaksoa $checkedCount / 12...\\nLöydetty $totalFoundInBatch merkintää (muutoksia $totalAddedInBatch)"
+                        )
+                    }
+                    clickNextCalendarPeriod(calId)
+                } else {
+                    finishCalendarSyncBatch(calId, "Tarkistettu $totalFoundInBatch merkintää:")
+                }"""
+
+    if target_process_cb not in content:
+        raise RuntimeError("Kohdetta 'processCalendarData' ei löytynyt.")
+    content = content.replace(target_process_cb, replacement_process_cb, 1)
+
+    # 5. Suodatetaan luettelonäkymästä vapaapäivät ja toiveet pois
+    target_list_block = """    private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
+        if (block.lowercase().let { it.contains("vuosiloma") || it.contains("loma") || Regex(\"\"\"\\bvl\\b\"\"\").containsMatchIn(it) }) {
+            try {
+                vacationDays.add(LocalDate.of(y, m, d))
+            } catch (_: Exception) {}
+            return Pair(1, 0)
+        }"""
+
+    replacement_list_block = """    private fun isIgnoredEntry(text: String): Boolean {
+        val low = text.lowercase()
+        return low.contains("toive") ||
+            low.contains("vapaa") ||
+            Regex(\"\"\"\\bvp\\b\"\"\").containsMatchIn(low) ||
+            low.contains("ei käytettävissä") ||
+            low.contains("vapaa vuoro")
+    }
+
+    private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
+        val cleanLines = block.lines().filter { !isIgnoredEntry(it) }
+        val filteredBlock = cleanLines.joinToString("\\n").trim()
+        if (filteredBlock.isEmpty()) return Pair(0, 0)
+
+        if (filteredBlock.lowercase().let { it.contains("vuosiloma") || it.contains("loma") || Regex(\"\"\"\\bvl\\b\"\"\").containsMatchIn(it) }) {
+            try {
+                vacationDays.add(LocalDate.of(y, m, d))
+            } catch (_: Exception) {}
+            return Pair(1, 0)
+        }"""
+
+    if target_list_block not in content:
+        raise RuntimeError("Kohdetta 'processListBlock' ei löytynyt.")
+    content = content.replace(target_list_block, replacement_list_block, 1)
+
+    # Korvataan block -> filteredBlock processListBlockin loppuosassa
+    content = content.replace(
+        """        val sMatches = Regex(\"\"\"(\\d{1,2}[:.]\\d{2})[\\s\\t]*[-–][\\s\\t]*(\\d{1,2}[:.]\\d{2})\"\"\").findAll(block).toList()
+        if (sMatches.isNotEmpty()) {
+            var added = 0
+            for (idx in sMatches.indices) {
+                val sMatch = sMatches[idx]
+                val s = sMatch.groupValues[1].trim().replace('.', ':')
+                val e = sMatch.groupValues[2].trim().replace('.', ':')
+                val nextStart = if (idx + 1 < sMatches.size) sMatches[idx + 1].range.first else block.length
+                val after = block.substring(sMatch.range.last + 1, nextStart).trim()
+                val details = if (after.isNotEmpty()) after else block.substring(0, sMatch.range.first).trim()""",
+        """        val sMatches = Regex(\"\"\"(\\d{1,2}[:.]\\d{2})[\\s\\t]*[-–][\\s\\t]*(\\d{1,2}[:.]\\d{2})\"\"\").findAll(filteredBlock).toList()
+        if (sMatches.isNotEmpty()) {
+            var added = 0
+            for (idx in sMatches.indices) {
+                val sMatch = sMatches[idx]
+                val s = sMatch.groupValues[1].trim().replace('.', ':')
+                val e = sMatch.groupValues[2].trim().replace('.', ':')
+                val nextStart = if (idx + 1 < sMatches.size) sMatches[idx + 1].range.first else filteredBlock.length
+                val after = filteredBlock.substring(sMatch.range.last + 1, nextStart).trim()
+                val details = if (after.isNotEmpty()) after else filteredBlock.substring(0, sMatch.range.first).trim()""",
+        1
     )
 
+    # 6. Päivitetään extractLocAndDesc: poistetaan epäolennainen alkuosa ja laitetaan sijainti EVENT_LOCATIONiin
+    target_loc_desc = """    private fun extractLocAndDesc(startStr: String, raw: String): Pair<String, String> {
+        val lines = raw.lines().map { it.trim() }.filter {
+            it.length > 2 && !it.equals("Uusi", true) && !it.equals("Lisää uusi", true) &&
+                !it.equals("Valinnat", true) && !it.startsWith("Vk", true) &&
+                !it.startsWith("Viikko", true) && !Regex(\"\"\"^\\d{1,2}$\"\"\").matches(it)
+        }
+        if (lines.size >= 2) {
+            val codeLine = lines.firstOrNull { Regex(\"\"\"^\\d{3,5}\\b\"\"\").containsMatchIn(it) }
+            val roleLine = lines.firstOrNull { it != codeLine }
+            return Pair(codeLine ?: lines[0], roleLine ?: lines[1])
+        } else if (lines.size == 1) {
+            return Pair(lines[0], lines[0])
+        }
+        val h = startStr.substringBefore(":").toIntOrNull() ?: 7
+        return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro")
+    }"""
 
-def replace_exact(content: str, old: str, new: str, label: str) -> tuple[str, bool]:
-    if old in content:
-        return content.replace(old, new, 1), True
-    if new in content:
-        print(f"[OK - jo päivitetty] {label}")
-        return content, False
-    raise RuntimeError(f"[VIRHE] Odotettua koodilohkoa ei löytynyt: {label}")
+    replacement_loc_desc = """    private fun extractLocAndDesc(startStr: String, raw: String): Pair<String, String> {
+        val lines = raw.lines().map { it.trim() }.filter {
+            it.length > 2 &&
+                !it.equals("Uusi", true) &&
+                !it.equals("Lisää uusi", true) &&
+                !it.equals("Valinnat", true) &&
+                !it.startsWith("Vk", true) &&
+                !it.startsWith("Viikko", true) &&
+                !Regex(\"\"\"^\\d{1,2}$\"\"\").matches(it) &&
+                !isIgnoredEntry(it)
+        }
 
+        val h = startStr.substringBefore(":").toIntOrNull() ?: 7
+        val fallbackDesc = if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro"
 
-def main() -> None:
-    target = find_main_activity(sys.argv[1] if len(sys.argv) > 1 else None)
-    backup = target.with_suffix(target.suffix + ".bak")
-    shutil.copy2(target, backup)
+        if (lines.isEmpty()) {
+            return Pair("", fallbackDesc)
+        }
 
-    content = target.read_text(encoding="utf-8")
-    changes = 0
+        // Poistetaan rivin alusta epäolennaiset prosentti-/kustannusnumerot (esim. "90 ", "60 ", "30")
+        val cleaned = lines[0]
+            .replace(Regex(\"\"\"^\\d{1,4}\\s*(?=[A-ZÅÄÖ])\"\"\"), "")
+            .replace(Regex(\"\"\"\\s+\"\"\"), " ")
+            .trim()
 
-    # 1. resetSyncBatch(8) -> resetSyncBatch(12)
-    batch_replacements = [
-        (
-            '        } else if (quickAction == "ACTION_SYNC") {\n'
-            '            intent.removeExtra("quick_action")\n'
-            '            isBackgroundListSync = true\n'
-            '            forceListOnNextCalendarLoad = true\n'
-            '            resetSyncBatch(8)',
-            '        } else if (quickAction == "ACTION_SYNC") {\n'
-            '            intent.removeExtra("quick_action")\n'
-            '            isBackgroundListSync = true\n'
-            '            forceListOnNextCalendarLoad = true\n'
-            '            resetSyncBatch(12)',
-            "ACTION_SYNC batch 8 -> 12",
-        ),
-        (
-            '        if (intent.getBooleanExtra("AUTO_SYNC_NEW_LIST", false)) {\n'
-            '            intent.removeExtra("AUTO_SYNC_NEW_LIST")\n'
-            '            isBackgroundListSync = true\n'
-            '            forceListOnNextCalendarLoad = true\n'
-            '            resetSyncBatch(8)',
-            '        if (intent.getBooleanExtra("AUTO_SYNC_NEW_LIST", false)) {\n'
-            '            intent.removeExtra("AUTO_SYNC_NEW_LIST")\n'
-            '            isBackgroundListSync = true\n'
-            '            forceListOnNextCalendarLoad = true\n'
-            '            resetSyncBatch(12)',
-            "AUTO_SYNC_NEW_LIST batch 8 -> 12",
-        ),
-        (
-            '        } else {\n'
-            '            resetSyncBatch(if (isDemoActive) 0 else 8)\n'
-            '            extractShiftsFromPage(forceList = true)\n'
-            '        }',
-            '        } else {\n'
-            '            resetSyncBatch(if (isDemoActive) 0 else 12)\n'
-            '            extractShiftsFromPage(forceList = true)\n'
-            '        }',
-            "checkPermissionsAndSync batch 8 -> 12",
-        ),
-        (
-            '            if (r && w) {\n'
-            '                resetSyncBatch(if (isDemoActive) 0 else 8)\n'
-            '                extractShiftsFromPage(forceList = true)\n'
-            '            }',
-            '            if (r && w) {\n'
-            '                resetSyncBatch(if (isDemoActive) 0 else 12)\n'
-            '                extractShiftsFromPage(forceList = true)\n'
-            '            }',
-            "onRequestPermissionsResult batch 8 -> 12",
-        ),
-    ]
+        // Erotetaan työn suoritussijainti (esim. "Outokumpu Onni") ja vuoron kuvaus ("ilta hoitaja", "aamu hoitaja")
+        val shiftSplitRegex = Regex(
+            \"\"\"^(.*?)\\s+((?:aamu|ilta|yö|päivä|väli|pitkä|tupla|viikonloppu|ilta\\s+välivuoro|aamu\\s+välivuoro).*)$\"\"\",
+            RegexOption.IGNORE_CASE
+        )
+        val match = shiftSplitRegex.find(cleaned)
+        if (match != null) {
+            val location = match.groupValues[1].trim().trim(',', '-', ':')
+            val roleDesc = match.groupValues[2].trim().replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+            }
+            return Pair(location, roleDesc.ifEmpty { fallbackDesc })
+        }
 
-    for old, new, label in batch_replacements:
-        content, changed = replace_exact(content, old, new, label)
-        if changed:
-            print(f"[PÄIVITETTY] {label}")
-            changes += 1
+        // Jos rivillä ei ole erillistä vuorokuvausta, tulkitaan teksti sijainniksi jos se alkaa isolla kirjaimella
+        if (cleaned.isNotEmpty() && cleaned[0].isUpperCase()) {
+            val secondLineDesc = lines.getOrNull(1)?.takeIf { it.isNotBlank() } ?: fallbackDesc
+            return Pair(cleaned, secondLineDesc)
+        }
 
-    # 2. Luettelonäkymään vaihto extractShiftsFromPage-funktiossa
-    old_switch_list = (
-        '                var bodyText = document.body ? document.body.innerText : "";\n'
-        '                var isGrid = /Vk\\.?\\s+Ma\\s+Ti\\s+Ke/i.test(bodyText);\n'
-        '                if ($forceList && isGrid) {\n'
-        '                    var selects = document.querySelectorAll(\'select\');\n'
-        '                    for (var s = 0; s < selects.length; s++) {\n'
-        '                        for (var o = 0; o < selects[s].options.length; o++) {\n'
-        '                            var optTxt = (selects[s].options[o].text || "").toLowerCase();\n'
-        '                            if (optTxt.indexOf(\'luettelo\') !== -1 || optTxt.indexOf(\'lista\') !== -1 || optTxt.indexOf(\'list\') !== -1) {\n'
-        '                                selects[s].selectedIndex = o;\n'
-        '                                selects[s].dispatchEvent(new Event(\'change\', { bubbles: true }));\n'
-        '                                return "SWITCHED_TO_LIST";\n'
-        '                            }\n'
-        '                        }\n'
-        '                    }\n'
-        '                    var links = document.querySelectorAll(\'a, li, button, span, div\');\n'
-        '                    for (var i = 0; i < links.length; i++) {\n'
-        '                        var t = (links[i].innerText || "").trim().toLowerCase();\n'
-        '                        var href = (links[i].getAttribute && links[i].getAttribute(\'href\')) || "";\n'
-        '                        if (t === \'luettelo\' || t === \'lista\' || href.toLowerCase().indexOf(\'/calendar/list\') !== -1 || href.toLowerCase().indexOf(\'view=list\') !== -1) {\n'
-        '                            links[i].click();\n'
-        '                            return "SWITCHED_TO_LIST";\n'
-        '                        }\n'
-        '                    }\n'
-        '                }'
-    )
+        return Pair("", cleaned.ifEmpty { fallbackDesc })
+    }"""
 
-    new_switch_list = (
-        '                var bodyText = document.body ? document.body.innerText : "";\n'
-        '                var pathLower = (window.location.pathname || "").toLowerCase();\n'
-        '                var isListPage = pathLower.indexOf(\'/calendar/list\') !== -1 || pathLower.indexOf(\'demo_shifts\') !== -1;\n'
-        '                var isGrid = /Vk\\.?\\s+Ma\\s+Ti\\s+Ke/i.test(bodyText) || document.querySelector(\'.month-table\') !== null;\n'
-        '                if ($forceList && !isListPage && isGrid) {\n'
-        '                    var directListLink = document.querySelector(\'#go-to-list a, #go-to-list-mobile a, a[href*="/Calendar/List" i]\');\n'
-        '                    if (directListLink) {\n'
-        '                        if (directListLink.href && directListLink.href.indexOf(\'#\') === -1) {\n'
-        '                            window.location.href = directListLink.href;\n'
-        '                        } else {\n'
-        '                            directListLink.click();\n'
-        '                        }\n'
-        '                        return "SWITCHED_TO_LIST";\n'
-        '                    }\n'
-        '                    var selects = document.querySelectorAll(\'select\');\n'
-        '                    for (var s = 0; s < selects.length; s++) {\n'
-        '                        for (var o = 0; o < selects[s].options.length; o++) {\n'
-        '                            var optTxt = (selects[s].options[o].text || "").toLowerCase();\n'
-        '                            if (optTxt.indexOf(\'luettelo\') !== -1 || optTxt.indexOf(\'lista\') !== -1 || optTxt.indexOf(\'list\') !== -1) {\n'
-        '                                selects[s].selectedIndex = o;\n'
-        '                                selects[s].dispatchEvent(new Event(\'change\', { bubbles: true }));\n'
-        '                                return "SWITCHED_TO_LIST";\n'
-        '                            }\n'
-        '                        }\n'
-        '                    }\n'
-        '                    var links = document.querySelectorAll(\'a, button\');\n'
-        '                    for (var i = 0; i < links.length; i++) {\n'
-        '                        var t = (links[i].innerText || "").trim().toLowerCase();\n'
-        '                        var href = (links[i].getAttribute && links[i].getAttribute(\'href\')) || "";\n'
-        '                        if (t === \'luettelo\' || t === \'lista\' || href.toLowerCase().indexOf(\'/calendar/list\') !== -1 || href.toLowerCase().indexOf(\'view=list\') !== -1) {\n'
-        '                            if (links[i].href && links[i].href.indexOf(\'#\') === -1) {\n'
-        '                                window.location.href = links[i].href;\n'
-        '                            } else {\n'
-        '                                links[i].click();\n'
-        '                            }\n'
-        '                            return "SWITCHED_TO_LIST";\n'
-        '                        }\n'
-        '                    }\n'
-        '                }'
-    )
+    if target_loc_desc not in content:
+        raise RuntimeError("Kohdetta 'extractLocAndDesc' ei löytynyt.")
+    content = content.replace(target_loc_desc, replacement_loc_desc, 1)
 
-    content, changed = replace_exact(
-        content, old_switch_list, new_switch_list, "extractShiftsFromPage luettelonäkymään vaihto"
-    )
-    if changed:
-        print("[PÄIVITETTY] extractShiftsFromPage luettelonäkymään vaihto")
-        changes += 1
+    # 7. Päivitetään updateEvent tyhjentämään vanha epäolennainen sijainti jos uusi sijainti on tyhjä
+    target_update_ev = """        val textChanged = (loc.isNotEmpty() && (curLoc != loc || curDesc != desc))
+        val colorMissing = (curColor != targetColor)
 
-    # 3. Seuraava-painikkeen tunnistus clickNextCalendarPeriod-funktiossa
-    old_next_period = (
-        '    private fun clickNextCalendarPeriod(calId: Long) {\n'
-        '        val js = """\n'
-        '            (function() {\n'
-        '                var nextSelectors = [\'a[title*="Seuraava" i]\', \'button[title*="Seuraava" i]\', \'.fa-chevron-right\', \'.fa-angle-right\', \'.glyphicon-chevron-right\', \'.icon-chevron-right\', \'.fc-next-button\'];\n'
-        '                for (var s = 0; s < nextSelectors.length; s++) {\n'
-        '                    var el = document.querySelector(nextSelectors[s]);\n'
-        '                    if (el) { (el.closest(\'a, button, div, span\') || el).click(); return "NEXT_CLICKED"; }\n'
-        '                }\n'
-        '                var all = document.querySelectorAll(\'button, a, span\');\n'
-        '                for (var i = 0; i < all.length; i++) {\n'
-        '                    var t = (all[i].innerText || "").trim().toLowerCase();\n'
-        '                    if (t === \'>\' || t === \'›\' || t === \'»\') { all[i].click(); return "NEXT_CLICKED"; }\n'
-        '                }\n'
-        '                return "NO_NEXT_BTN";\n'
-        '            })();\n'
-        '        """.trimIndent()'
-    )
+        if (!timeChanged && !textChanged && !colorMissing) return false
 
-    new_next_period = (
-        '    private fun clickNextCalendarPeriod(calId: Long) {\n'
-        '        val js = """\n'
-        '            (function() {\n'
-        '                var nextSelectors = [\'a.nextButton\', \'.nextButton\', \'.vismaicon-arrow-right-circle\', \'a[title*="Seuraava" i]\', \'button[title*="Seuraava" i]\', \'.fa-chevron-right\', \'.fa-angle-right\', \'.glyphicon-chevron-right\', \'.icon-chevron-right\', \'.fc-next-button\'];\n'
-        '                for (var s = 0; s < nextSelectors.length; s++) {\n'
-        '                    var el = document.querySelector(nextSelectors[s]);\n'
-        '                    if (el) {\n'
-        '                        var clickable = el.closest(\'a, button\') || el;\n'
-        '                        if (clickable.href && clickable.href.indexOf(\'#\') === -1 && !clickable.getAttribute(\'onclick\')) {\n'
-        '                            window.location.href = clickable.href;\n'
-        '                        } else {\n'
-        '                            clickable.click();\n'
-        '                        }\n'
-        '                        return "NEXT_CLICKED";\n'
-        '                    }\n'
-        '                }\n'
-        '                var all = document.querySelectorAll(\'button, a, span\');\n'
-        '                for (var i = 0; i < all.length; i++) {\n'
-        '                    var t = (all[i].innerText || "").trim().toLowerCase();\n'
-        '                    if (t === \'>\' || t === \'›\' || t === \'»\') { all[i].click(); return "NEXT_CLICKED"; }\n'
-        '                }\n'
-        '                return "NO_NEXT_BTN";\n'
-        '            })();\n'
-        '        """.trimIndent()'
-    )
+        val v = ContentValues().apply {
+            put(CalendarContract.Events.TITLE, "Työvuoro")
+            put(CalendarContract.Events.DTSTART, sMs)
+            put(CalendarContract.Events.DTEND, eMs)
+            if (loc.isNotEmpty()) put(CalendarContract.Events.EVENT_LOCATION, loc)
+            if (desc.isNotEmpty()) put(CalendarContract.Events.DESCRIPTION, desc)
+            applyColorWithFallback(this, calId, desc.ifEmpty { "Työvuoro" }, startHour)
+        }"""
 
-    content, changed = replace_exact(
-        content, old_next_period, new_next_period, "clickNextCalendarPeriod .nextButton-tunnistus"
-    )
-    if changed:
-        print("[PÄIVITETTY] clickNextCalendarPeriod .nextButton-tunnistus")
-        changes += 1
+    replacement_update_ev = """        val textChanged = (curLoc != loc || (desc.isNotEmpty() && curDesc != desc))
+        val colorMissing = (curColor != targetColor)
 
-    # 4. Hiljaisen päiväsynkronoinnin seuraava-painike
-    old_silent_next = (
-        '                                    (function() {\n'
-        '                                        var el = document.querySelector(\'a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button\');\n'
-        '                                        if (el) { (el.closest(\'a, button, div, span\') || el).click(); return "NEXT"; }\n'
-        '                                        return "NONE";\n'
-        '                                    })();'
-    )
+        if (!timeChanged && !textChanged && !colorMissing) return false
 
-    new_silent_next = (
-        '                                    (function() {\n'
-        '                                        var el = document.querySelector(\'a.nextButton, .nextButton, .vismaicon-arrow-right-circle, a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button\');\n'
-        '                                        if (el) {\n'
-        '                                            var clickable = el.closest(\'a, button\') || el;\n'
-        '                                            if (clickable.href && clickable.href.indexOf(\'#\') === -1 && !clickable.getAttribute(\'onclick\')) {\n'
-        '                                                window.location.href = clickable.href;\n'
-        '                                            } else {\n'
-        '                                                clickable.click();\n'
-        '                                            }\n'
-        '                                            return "NEXT";\n'
-        '                                        }\n'
-        '                                        return "NONE";\n'
-        '                                    })();'
-    )
+        val v = ContentValues().apply {
+            put(CalendarContract.Events.TITLE, "Työvuoro")
+            put(CalendarContract.Events.DTSTART, sMs)
+            put(CalendarContract.Events.DTEND, eMs)
+            put(CalendarContract.Events.EVENT_LOCATION, loc)
+            if (desc.isNotEmpty()) put(CalendarContract.Events.DESCRIPTION, desc)
+            applyColorWithFallback(this, calId, desc.ifEmpty { "Työvuoro" }, startHour)
+        }"""
 
-    content, changed = replace_exact(
-        content, old_silent_next, new_silent_next, "triggerSilentDailySyncIfNeeded .nextButton-tunnistus"
-    )
-    if changed:
-        print("[PÄIVITETTY] triggerSilentDailySyncIfNeeded .nextButton-tunnistus")
-        changes += 1
+    if target_update_ev not in content:
+        raise RuntimeError("Kohdetta 'updateEvent' ei löytynyt.")
+    content = content.replace(target_update_ev, replacement_update_ev, 1)
 
-    if changes > 0:
-        target.write_text(content, encoding="utf-8")
-        print(f"\nValmis! Tehtiin {changes} päivitystä tiedostoon {target}.")
-        print(f"Varmuuskopio tallennettu: {backup}")
-    else:
-        backup.unlink(missing_ok=True)
-        print("\nTiedosto oli jo ajan tasalla, muutoksia ei tarvittu.")
+    if content == original_content:
+        print("Muutoksia ei tehty.")
+        sys.exit(1)
 
+    backup_file = TARGET_FILE + ".bak"
+    with open(backup_file, "w", encoding="utf-8") as f:
+        f.write(original_content)
+
+    with open(TARGET_FILE, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    print(f"Päivitys onnistui! Varmuuskopio tallennettu tiedostoon '{backup_file}'.")
 
 if __name__ == "__main__":
     main()
