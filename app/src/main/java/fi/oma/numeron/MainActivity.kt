@@ -1642,7 +1642,7 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("quick_action")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            resetSyncBatch(8)
+            resetSyncBatch(12)
             showStampOverlay("Synkronoidaan työvuoroja", "Avataan kalenteria...")
             if (::webView.isInitialized) navigateWebView(urlCalendar)
         }
@@ -1663,7 +1663,7 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("AUTO_SYNC_NEW_LIST")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            resetSyncBatch(8)
+            resetSyncBatch(12)
             showStampOverlay("Haetaan uutta työvuorolistaa", "Avataan kalenteria...")
             if (::webView.isInitialized) navigateWebView(urlCalendar)
         }
@@ -1804,7 +1804,7 @@ class MainActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
         } else {
-            resetSyncBatch(if (isDemoActive) 0 else 8)
+            resetSyncBatch(if (isDemoActive) 0 else 12)
             extractShiftsFromPage(forceList = true)
         }
     }
@@ -1816,7 +1816,7 @@ class MainActivity : AppCompatActivity() {
             val r = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
             val w = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
             if (r && w) {
-                resetSyncBatch(if (isDemoActive) 0 else 8)
+                resetSyncBatch(if (isDemoActive) 0 else 12)
                 extractShiftsFromPage(forceList = true)
             }
         }
@@ -1846,8 +1846,19 @@ class MainActivity : AppCompatActivity() {
         val js = """
             (function() {
                 var bodyText = document.body ? document.body.innerText : "";
-                var isGrid = /Vk\.?\s+Ma\s+Ti\s+Ke/i.test(bodyText);
-                if ($forceList && isGrid) {
+                var pathLower = (window.location.pathname || "").toLowerCase();
+                var isListPage = pathLower.indexOf('/calendar/list') !== -1 || pathLower.indexOf('demo_shifts') !== -1;
+                var isGrid = /Vk\.?\s+Ma\s+Ti\s+Ke/i.test(bodyText) || document.querySelector('.month-table') !== null;
+                if ($forceList && !isListPage && isGrid) {
+                    var directListLink = document.querySelector('#go-to-list a, #go-to-list-mobile a, a[href*="/Calendar/List" i]');
+                    if (directListLink) {
+                        if (directListLink.href && directListLink.href.indexOf('#') === -1) {
+                            window.location.href = directListLink.href;
+                        } else {
+                            directListLink.click();
+                        }
+                        return "SWITCHED_TO_LIST";
+                    }
                     var selects = document.querySelectorAll('select');
                     for (var s = 0; s < selects.length; s++) {
                         for (var o = 0; o < selects[s].options.length; o++) {
@@ -1859,12 +1870,16 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
-                    var links = document.querySelectorAll('a, li, button, span, div');
+                    var links = document.querySelectorAll('a, button');
                     for (var i = 0; i < links.length; i++) {
                         var t = (links[i].innerText || "").trim().toLowerCase();
                         var href = (links[i].getAttribute && links[i].getAttribute('href')) || "";
                         if (t === 'luettelo' || t === 'lista' || href.toLowerCase().indexOf('/calendar/list') !== -1 || href.toLowerCase().indexOf('view=list') !== -1) {
-                            links[i].click();
+                            if (links[i].href && links[i].href.indexOf('#') === -1) {
+                                window.location.href = links[i].href;
+                            } else {
+                                links[i].click();
+                            }
                             return "SWITCHED_TO_LIST";
                         }
                     }
@@ -1970,10 +1985,18 @@ class MainActivity : AppCompatActivity() {
     private fun clickNextCalendarPeriod(calId: Long) {
         val js = """
             (function() {
-                var nextSelectors = ['a[title*="Seuraava" i]', 'button[title*="Seuraava" i]', '.fa-chevron-right', '.fa-angle-right', '.glyphicon-chevron-right', '.icon-chevron-right', '.fc-next-button'];
+                var nextSelectors = ['a.nextButton', '.nextButton', '.vismaicon-arrow-right-circle', 'a[title*="Seuraava" i]', 'button[title*="Seuraava" i]', '.fa-chevron-right', '.fa-angle-right', '.glyphicon-chevron-right', '.icon-chevron-right', '.fc-next-button'];
                 for (var s = 0; s < nextSelectors.length; s++) {
                     var el = document.querySelector(nextSelectors[s]);
-                    if (el) { (el.closest('a, button, div, span') || el).click(); return "NEXT_CLICKED"; }
+                    if (el) {
+                        var clickable = el.closest('a, button') || el;
+                        if (clickable.href && clickable.href.indexOf('#') === -1 && !clickable.getAttribute('onclick')) {
+                            window.location.href = clickable.href;
+                        } else {
+                            clickable.click();
+                        }
+                        return "NEXT_CLICKED";
+                    }
                 }
                 var all = document.querySelectorAll('button, a, span');
                 for (var i = 0; i < all.length; i++) {
@@ -2621,8 +2644,16 @@ class MainActivity : AppCompatActivity() {
                                 bgWeb.evaluateJavascript(
                                     """
                                     (function() {
-                                        var el = document.querySelector('a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button');
-                                        if (el) { (el.closest('a, button, div, span') || el).click(); return "NEXT"; }
+                                        var el = document.querySelector('a.nextButton, .nextButton, .vismaicon-arrow-right-circle, a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button');
+                                        if (el) {
+                                            var clickable = el.closest('a, button') || el;
+                                            if (clickable.href && clickable.href.indexOf('#') === -1 && !clickable.getAttribute('onclick')) {
+                                                window.location.href = clickable.href;
+                                            } else {
+                                                clickable.click();
+                                            }
+                                            return "NEXT";
+                                        }
                                         return "NONE";
                                     })();
                                     """.trimIndent()
