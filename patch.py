@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -13,47 +14,35 @@ def main():
 
     # 1. Varmistetaan consecutiveEmptyPages-laskuri
     if "private var consecutiveEmptyPages = 0" not in content:
-        target_vars = """    private var pagesRemainingToSync = 0
-    private var totalFoundInBatch = 0"""
-        replacement_vars = """    private var pagesRemainingToSync = 0
-    private var consecutiveEmptyPages = 0
-    private var totalFoundInBatch = 0"""
-        if target_vars not in content:
+        content, count = re.subn(
+            r"(private var pagesRemainingToSync = 0)",
+            r"\1\n    private var consecutiveEmptyPages = 0",
+            content,
+            count=1
+        )
+        if count == 0:
             raise RuntimeError("Kohdetta 'pagesRemainingToSync' ei löytynyt.")
-        content = content.replace(target_vars, replacement_vars, 1)
 
-    if "consecutiveEmptyPages = 0" not in content:
-        target_reset = """    private fun resetSyncBatch(pages: Int) {
-        pagesRemainingToSync = pages"""
-        replacement_reset = """    private fun resetSyncBatch(pages: Int) {
-        pagesRemainingToSync = pages
-        consecutiveEmptyPages = 0"""
-        if target_reset not in content:
+    if "consecutiveEmptyPages = 0" not in content.split("resetSyncBatch", 1)[-1][:300]:
+        content, count = re.subn(
+            r"(fun resetSyncBatch\(pages: Int\)\s*\{\s*pagesRemainingToSync = pages)",
+            r"\1\n        consecutiveEmptyPages = 0",
+            content,
+            count=1
+        )
+        if count == 0:
             raise RuntimeError("Kohdetta 'resetSyncBatch' ei löytynyt.")
-        content = content.replace(target_reset, replacement_reset, 1)
 
-    # 2. Päivitetään extractShiftsFromPage JS-suodatus: poistetaan toiveet (.request) ja vapaat (.opportunity)
-    # myös luettelonäkymän riveiltä (tr, .list-item, .schedule-item jne.)
-    js_filter_snippet = """                    (function() {
-                        function isIgnoredText(str) {
+    # 2. Suodatetaan toiveet (.request) ja vapaat (.opportunity) suoraan JS-puolella pageTextistä
+    js_replacement = """function isIgnoredText(str) {
                             if (!str) return false;
                             var low = str.toLowerCase();
                             return low.indexOf('toive') !== -1 ||
                                    low.indexOf('vapaa') !== -1 ||
                                    /\\bvp\\b/.test(low) ||
                                    low.indexOf('ei käytettävissä') !== -1;
-                        }"""
-
-    if "function isIgnoredText(str)" not in content:
-        target_js_start = """                webView.evaluateJavascript(\"\"\"
-                    (function() {"""
-        if target_js_start not in content:
-            raise RuntimeError("Kohdetta 'webView.evaluateJavascript' ei löytynyt.")
-        content = content.replace(target_js_start, '                webView.evaluateJavascript("""\n' + js_filter_snippet, 1)
-
-        # Suodatetaan luettelonäkymän rivit pageTextistä
-        target_page_text = """var pageText = document.body.innerText || "";"""
-        replacement_page_text = """var bodyClone = document.body.cloneNode(true);
+                        }
+                        var bodyClone = document.body.cloneNode(true);
                         var badEls = bodyClone.querySelectorAll('.request, .opportunity, .schedule-item-request, .schedule-item-opportunity, .month-item.request, .month-item.opportunity, [class*="request"], [class*="opportunity"], [class*="wish"]');
                         for (var b = 0; b < badEls.length; b++) badEls[b].remove();
                         var rows = bodyClone.querySelectorAll('tr, .list-row, .schedule-row, .day-row');
@@ -61,14 +50,17 @@ def main():
                             if (isIgnoredText(rows[r].innerText)) rows[r].remove();
                         }
                         var pageText = bodyClone.innerText || "";"""
+
+    if "function isIgnoredText(str)" not in content:
+        target_page_text = 'var pageText = document.body.innerText || "";'
         if target_page_text not in content:
-            raise RuntimeError("Kohdetta 'var pageText' ei löytynyt.")
-        content = content.replace(target_page_text, replacement_page_text, 1)
+            raise RuntimeError("Kohdetta 'var pageText = document.body.innerText' ei löytynyt.")
+        content = content.replace(target_page_text, js_replacement, 1)
 
     # 3. Tiukennetaan Kotlin-puolen suodatusta: toiveet eivät koskaan päädy kalenteriin eivätkä nosta found-laskuria
     if "private fun isIgnoredEntry(text: String): Boolean" not in content:
-        target_list_block = """    private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {"""
-        replacement_list_block = """    private fun isIgnoredEntry(text: String): Boolean {
+        target_list_block = "private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {"
+        replacement_list_block = """private fun isIgnoredEntry(text: String): Boolean {
         val low = text.lowercase()
         return low.contains("toive") ||
             low.contains("vapaa") ||
@@ -91,22 +83,22 @@ def main():
         content = content.replace("block.substring(", "filteredBlock.substring(", 2)
 
     # Suodatetaan myös insertOrUpdateEvent-tasolla viimeisenä lukkona, ettei "Toive" voi koskaan tallentua
-    target_insert_guard = """    private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {"""
-    replacement_insert_guard = """    private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {
-        if (isIgnoredEntry(details)) return false"""
     if "if (isIgnoredEntry(details)) return false" not in content:
+        target_insert_guard = "private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {"
+        replacement_insert_guard = """private fun insertOrUpdateEvent(calId: Long, dateStr: String, startStr: String, endStr: String, details: String, fmt: DateTimeFormatter): Boolean {
+        if (isIgnoredEntry(details)) return false"""
         if target_insert_guard not in content:
             raise RuntimeError("Kohdetta 'insertOrUpdateEvent' ei löytynyt.")
         content = content.replace(target_insert_guard, replacement_insert_guard, 1)
 
     # 4. Varmistetaan keskeytys 3 tyhjän jakson jälkeen (ei työvuoroja eikä lomia)
     if "consecutiveEmptyPages >= 3" not in content:
-        target_process_cb = """                val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+        target_process_cb = """val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
                 totalFoundInBatch += found
                 totalAddedInBatch += added
 
                 if (pagesRemainingToSync > 0) {"""
-        replacement_process_cb = """                val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+        replacement_process_cb = """val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
                 totalFoundInBatch += found
                 totalAddedInBatch += added
 
@@ -145,9 +137,8 @@ def main():
         }"""
 
     if "clicked_month" not in content:
-        target_finish = """    private fun finishCalendarSyncBatch(calId: Long, prefixMsg: String) {"""
-        replacement_finish = """    private fun finishCalendarSyncBatch(calId: Long, prefixMsg: String) {
-$switch_to_month_js"""
+        target_finish = "private fun finishCalendarSyncBatch(calId: Long, prefixMsg: String) {"
+        replacement_finish = f"{target_finish}\n{switch_to_month_js}"
         if target_finish not in content:
             raise RuntimeError("Kohdetta 'finishCalendarSyncBatch' ei löytynyt.")
         content = content.replace(target_finish, replacement_finish, 1)
