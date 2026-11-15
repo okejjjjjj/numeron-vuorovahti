@@ -1,17 +1,16 @@
 import os
 import re
 import sys
+from pathlib import Path
 
 TARGET_FILE = Path("app/src/main/java/fi/oma/numeron/MainActivity.kt")
 
 def main():
-    if not os.path.exists(TARGET_FILE):
-        print(f"Virhe: Tiedostoa '{TARGET_FILE}' ei löytynyt nykyisestä hakemistosta.")
+    if not TARGET_FILE.exists():
+        print(f"Virhe: Tiedostoa '{TARGET_FILE}' ei löytynyt.")
         sys.exit(1)
 
-    with open(TARGET_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
-
+    content = TARGET_FILE.read_text(encoding="utf-8")
     original_content = content
 
     # 1. Lisätään consecutiveEmptyPages-laskuri kenttiin ja resetSyncBatch-metodiin
@@ -367,12 +366,9 @@ def main():
         print("Muutoksia ei tehty.")
         sys.exit(1)
 
-    backup_file = TARGET_FILE + ".bak"
-    with open(backup_file, "w", encoding="utf-8") as f:
-        f.write(original_content)
-
-    with open(TARGET_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    backup_file = TARGET_FILE.with_suffix(TARGET_FILE.suffix + ".bak")
+    backup_file.write_text(original_content, encoding="utf-8")
+    TARGET_FILE.write_text(content, encoding="utf-8")
 
     print(f"Päivitys onnistui! Varmuuskopio tallennettu tiedostoon '{backup_file}'.")
 
