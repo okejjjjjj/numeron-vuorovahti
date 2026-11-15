@@ -1,17 +1,19 @@
 package fi.oma.numeron
 
-
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlarmManager
+import android.app.AlertDialog
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -20,29 +22,45 @@ import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.enableEdgeToEdge
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import android.provider.CalendarContract
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.*
-import android.widget.*
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.JsResult
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import org.json.JSONArray
 import org.json.JSONObject
-import android.app.AlertDialog
-import android.content.ContentUris
 import java.text.SimpleDateFormat
-import java.time.*
+import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Date
@@ -50,14 +68,15 @@ import java.util.Locale
 
 object VuorovahtiHelper {
 
-    // 1. Määritä kalenterimerkinnän väri vuoron alkamisajan tai tyypin mukaan
+    private val DEFAULT_SHIFT_KEYWORDS = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+
     fun getShiftEventColor(title: String, startHour: Int): Int {
         val lowerTitle = title.trim().lowercase(Locale.getDefault())
         return when {
-            lowerTitle == "loma" || lowerTitle.contains("vuosiloma") -> Color.parseColor("#00ACC1") // Turkoosi (Loma)
-            startHour in 5..10 -> Color.parseColor("#43A047")  // Vihreä (Aamuvuoro)
-            startHour in 11..17 -> Color.parseColor("#FB8C00") // Oranssi (Iltavuoro)
-            else -> Color.parseColor("#8E24AA")                // Violetti (Yövuoro)
+            lowerTitle == "loma" || lowerTitle.contains("vuosiloma") -> Color.parseColor("#00ACC1")
+            startHour in 5..10 -> Color.parseColor("#43A047")
+            startHour in 11..17 -> Color.parseColor("#FB8C00")
+            else -> Color.parseColor("#8E24AA")
         }
     }
 
@@ -65,7 +84,6 @@ object VuorovahtiHelper {
         values.put(CalendarContract.Events.EVENT_COLOR, getShiftEventColor(title, startHour))
     }
 
-    // 2. Tallenna ja hae "Viimeksi synkronoitu" -aikaleima sekä vuorovaihdosten taustatarkistusaika
     fun saveLastSyncStatus(context: Context, shiftCount: Int) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val statusText = "Synkronoitu: ${timeFormat.format(Date())} ($shiftCount vuoroa)"
@@ -84,7 +102,8 @@ object VuorovahtiHelper {
     fun shouldRunDailySilentSync(context: Context): Boolean {
         if (!SettingsManager.isAutoSyncEnabled(context)) return false
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED
+        ) {
             return false
         }
         val lastMs = context.getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
@@ -92,7 +111,6 @@ object VuorovahtiHelper {
         return (System.currentTimeMillis() - lastMs) > 18L * 60 * 60 * 1000L
     }
 
-    // 3. Tallenna ja hae edellinen toteutunut sekä seuraava tuleva leimausmuistutus
     fun saveLastTriggeredReminder(context: Context, infoText: String) {
         val timeFormat = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val fullText = "${timeFormat.format(Date())} – $infoText"
@@ -111,19 +129,17 @@ object VuorovahtiHelper {
     fun getNextScheduledReminderText(
         context: Context,
         reminderMinutesBefore: Int = 30,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = DEFAULT_SHIFT_KEYWORDS
     ): String {
         if (!SettingsManager.isStampNotificationEnabled(context)) {
             return "Ei käytössä (leimausmuistutukset kytketty pois)"
         }
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
-            != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return "Kalenterilupa puuttuu – muistutuksia ei voida tarkistaa"
         }
 
         val now = System.currentTimeMillis()
         val twoWeeksAhead = now + 14L * 24 * 60 * 60 * 1000L
-
         val projection = arrayOf(
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DESCRIPTION,
@@ -135,7 +151,6 @@ object VuorovahtiHelper {
 
         var earliestTrigger = Long.MAX_VALUE
         var earliestDesc = ""
-
         val dateFmt = SimpleDateFormat("dd.MM. 'klo' HH:mm", Locale.getDefault())
         val hourFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
 
@@ -146,33 +161,27 @@ object VuorovahtiHelper {
             selectionArgs,
             "${CalendarContract.Events.DTSTART} ASC"
         )?.use { cursor ->
-            val titleIdx = cursor.getColumnIndex(CalendarContract.Events.TITLE)
-            val descIdx = cursor.getColumnIndex(CalendarContract.Events.DESCRIPTION)
-            val startIdx = cursor.getColumnIndex(CalendarContract.Events.DTSTART)
-            val endIdx = cursor.getColumnIndex(CalendarContract.Events.DTEND)
-
             while (cursor.moveToNext()) {
-                val title = cursor.getString(titleIdx) ?: continue
-                val desc = if (descIdx != -1) (cursor.getString(descIdx) ?: "") else ""
-                val startTime = cursor.getLong(startIdx)
-                val endTime = if (endIdx != -1) cursor.getLong(endIdx) else 0L
+                val title = cursor.getString(0) ?: continue
+                val desc = cursor.getString(1) ?: ""
+                val startTime = cursor.getLong(2)
+                val endTime = cursor.getLong(3)
 
                 val lowerTitle = title.lowercase(Locale.getDefault())
                 val isWorkShift = shiftKeywords.any { lowerTitle.contains(it) } &&
-                                  !lowerTitle.contains("loma") &&
-                                  !lowerTitle.contains("vapaa")
+                    !lowerTitle.contains("loma") &&
+                    !lowerTitle.contains("vapaa")
 
                 if (isWorkShift) {
                     val shiftName = desc.lines().firstOrNull()?.takeIf { it.isNotBlank() } ?: title
                     val startTrigger = startTime - (reminderMinutesBefore * 60 * 1000L)
-                    if (startTrigger > now && startTrigger < earliestTrigger) {
+                    if (startTrigger in (now + 1) until earliestTrigger) {
                         earliestTrigger = startTrigger
                         earliestDesc = "${dateFmt.format(Date(startTrigger))} (Sisäänleimaus – $shiftName klo ${hourFmt.format(Date(startTime))})"
                     }
-
                     if (endTime > startTime) {
                         val endTrigger = endTime - (reminderMinutesBefore * 60 * 1000L)
-                        if (endTrigger > now && endTrigger < earliestTrigger) {
+                        if (endTrigger in (now + 1) until earliestTrigger) {
                             earliestTrigger = endTrigger
                             earliestDesc = "${dateFmt.format(Date(endTrigger))} (Ulosleimaus – $shiftName klo ${hourFmt.format(Date(endTime))})"
                         }
@@ -188,7 +197,6 @@ object VuorovahtiHelper {
         }
     }
 
-    // 4. Napakka haptinen värinäpalaute
     fun triggerConfirmHaptics(view: View) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -197,13 +205,11 @@ object VuorovahtiHelper {
         }
     }
 
-    // 5. Tarkista onko kyseessä Demo-käyttäjä
     fun isDemoMode(username: String?, password: String?): Boolean {
         return username?.trim().equals("demo", ignoreCase = true) &&
-               password?.trim().equals("demo", ignoreCase = true)
+            password?.trim().equals("demo", ignoreCase = true)
     }
 
-    // 6. Ajastaa 3 viikon listantarkistuksen (toimii myös suoraan puhelimen buutin jälkeen)
     fun scheduleNextThreeWeekListCheck(context: Context) {
         try {
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -221,14 +227,15 @@ object VuorovahtiHelper {
             }
             val triggerMillis = nextPublishDate.atTime(11, 5).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             scheduleAlarmSafe(alarmManager, triggerMillis, pi)
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    // 7. Siivoaa vanhat/perutut hälytykset ja asettaa voimassa olevat hälytykset kalenterista
     fun ensureRemindersFromCalendar(
         context: Context,
         reminderMinutesBefore: Int = 30,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = DEFAULT_SHIFT_KEYWORDS
     ) {
         scheduleNextThreeWeekListCheck(context)
 
@@ -238,11 +245,10 @@ object VuorovahtiHelper {
         val oldCodes = prefs.getStringSet("active_alarm_codes", emptySet()) ?: emptySet()
         for (codeStr in oldCodes) {
             val code = codeStr.toIntOrNull() ?: continue
-            val cancelIntent = Intent(context, ShiftAlarmReceiver::class.java)
             val pi = PendingIntent.getBroadcast(
                 context,
                 code,
-                cancelIntent,
+                Intent(context, ShiftAlarmReceiver::class.java),
                 PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
             )
             if (pi != null) {
@@ -255,8 +261,7 @@ object VuorovahtiHelper {
             prefs.edit().remove("active_alarm_codes").apply()
             return
         }
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
-            != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return
         }
 
@@ -265,13 +270,11 @@ object VuorovahtiHelper {
         val newCodes = mutableSetOf<String>()
 
         val projection = arrayOf(
-            CalendarContract.Events._ID,
             CalendarContract.Events.TITLE,
             CalendarContract.Events.DESCRIPTION,
             CalendarContract.Events.DTSTART,
             CalendarContract.Events.DTEND
         )
-
         val selection = "${CalendarContract.Events.DTEND} > ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
         val selectionArgs = arrayOf(now.toString(), twoWeeksAhead.toString())
         val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
@@ -283,21 +286,16 @@ object VuorovahtiHelper {
             selectionArgs,
             "${CalendarContract.Events.DTSTART} ASC"
         )?.use { cursor ->
-            val titleIdx = cursor.getColumnIndex(CalendarContract.Events.TITLE)
-            val descIdx = cursor.getColumnIndex(CalendarContract.Events.DESCRIPTION)
-            val startIdx = cursor.getColumnIndex(CalendarContract.Events.DTSTART)
-            val endIdx = cursor.getColumnIndex(CalendarContract.Events.DTEND)
-
             while (cursor.moveToNext()) {
-                val title = cursor.getString(titleIdx) ?: continue
-                val desc = if (descIdx != -1) (cursor.getString(descIdx) ?: "") else ""
-                val startTime = cursor.getLong(startIdx)
-                val endTime = if (endIdx != -1) cursor.getLong(endIdx) else 0L
+                val title = cursor.getString(0) ?: continue
+                val desc = cursor.getString(1) ?: ""
+                val startTime = cursor.getLong(2)
+                val endTime = cursor.getLong(3)
 
                 val lowerTitle = title.lowercase(Locale.getDefault())
                 val isWorkShift = shiftKeywords.any { lowerTitle.contains(it) } &&
-                                  !lowerTitle.contains("loma") &&
-                                  !lowerTitle.contains("vapaa")
+                    !lowerTitle.contains("loma") &&
+                    !lowerTitle.contains("vapaa")
 
                 if (isWorkShift) {
                     val displayTitle = desc.ifEmpty { title }
@@ -350,18 +348,16 @@ object VuorovahtiHelper {
             } else {
                 alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
             }
-        } catch (e: SecurityException) {
+        } catch (_: SecurityException) {
             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
         }
     }
 
-    // 8. Tarkistaa kalenterista onko huomenna (ja lähipäivinä) vapaata ja palauttaa toivotuksen
     fun getFreeDayGreetingIfApplicable(
         context: Context,
-        shiftKeywords: List<String> = listOf("työvuoro", "aamuvuoro", "iltavuoro", "yövuoro", "vuoro")
+        shiftKeywords: List<String> = DEFAULT_SHIFT_KEYWORDS
     ): String? {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR)
-            != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return null
         }
 
@@ -370,10 +366,7 @@ object VuorovahtiHelper {
         val tomorrowStart = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
         val lookAheadEnd = today.plusDays(8).atStartOfDay(zone).toInstant().toEpochMilli()
 
-        val projection = arrayOf(
-            CalendarContract.Events.TITLE,
-            CalendarContract.Events.DTSTART
-        )
+        val projection = arrayOf(CalendarContract.Events.TITLE, CalendarContract.Events.DTSTART)
         val selection = "${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
         val selectionArgs = arrayOf(tomorrowStart.toString(), lookAheadEnd.toString())
 
@@ -386,17 +379,13 @@ object VuorovahtiHelper {
             selectionArgs,
             "${CalendarContract.Events.DTSTART} ASC"
         )?.use { cursor ->
-            val titleIdx = cursor.getColumnIndex(CalendarContract.Events.TITLE)
-            val startIdx = cursor.getColumnIndex(CalendarContract.Events.DTSTART)
-
             while (cursor.moveToNext()) {
-                val title = cursor.getString(titleIdx) ?: continue
-                val startMs = cursor.getLong(startIdx)
+                val title = cursor.getString(0) ?: continue
+                val startMs = cursor.getLong(1)
                 val lowerTitle = title.lowercase(Locale.getDefault())
-
                 val isWorkShift = shiftKeywords.any { lowerTitle.contains(it) } &&
-                                  !lowerTitle.contains("loma") &&
-                                  !lowerTitle.contains("vapaa")
+                    !lowerTitle.contains("loma") &&
+                    !lowerTitle.contains("vapaa")
 
                 if (isWorkShift) {
                     nextShiftDate = Instant.ofEpochMilli(startMs).atZone(zone).toLocalDate()
@@ -410,7 +399,6 @@ object VuorovahtiHelper {
         } else {
             ChronoUnit.DAYS.between(today.plusDays(1), nextShiftDate).toInt()
         }
-
         if (freeDaysCount <= 0) return null
 
         val singleDayGreetings = listOf(
@@ -420,7 +408,6 @@ object VuorovahtiHelper {
             "Huominen on pyhitetty vapaalle. Rentouttavaa vapaapäivää!",
             "Ansaittu hengähdystauko edessä – leppoisaa vapaapäivää!"
         )
-
         val multiDayGreetings = listOf(
             "Työputki takana ja vapaat edessä! Nauti tulevista vapaapäivistä!",
             "Useampi vapaapäivä edessä – mukavia ja rentouttavia vapaita!",
@@ -429,11 +416,7 @@ object VuorovahtiHelper {
             "Vuorot on tältä erää taputeltu – oikein leppoisia vapaapäiviä!"
         )
 
-        return if (freeDaysCount == 1) {
-            singleDayGreetings.random()
-        } else {
-            multiDayGreetings.random()
-        }
+        return if (freeDaysCount == 1) singleDayGreetings.random() else multiDayGreetings.random()
     }
 }
 
@@ -469,12 +452,23 @@ class MainActivity : AppCompatActivity() {
     private var forceListOnNextCalendarLoad = false
     private var lastKnownBaseUrl = ""
 
-    private data class SyncChangeItem(val eventId: Long, val type: String, val dateStr: String, val timeStr: String, val title: String)
+    private data class SyncChangeItem(
+        val eventId: Long,
+        val type: String,
+        val dateStr: String,
+        val timeStr: String,
+        val title: String
+    )
+
     private val syncChangesList = mutableListOf<SyncChangeItem>()
     private val syncedDatesInBatch = mutableSetOf<LocalDate>()
     private val syncedShiftRangesInBatch = mutableSetOf<Pair<Long, Long>>()
     private var silentSyncWebView: WebView? = null
     private var isSilentSyncRunning = false
+
+    private val revealSafetyRunnable = Runnable {
+        if (::webView.isInitialized) webView.alpha = 1f
+    }
 
     private val isDemoActive: Boolean
         get() = VuorovahtiHelper.isDemoMode(SettingsManager.getUsername(this), SettingsManager.getPassword(this))
@@ -501,14 +495,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         val executor = ContextCompat.getMainExecutor(this)
-        val biometricPrompt = BiometricPrompt(this, executor,
+        val biometricPrompt = BiometricPrompt(
+            this,
+            executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
                     VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
                     onSuccess()
                 }
-            })
+            }
+        )
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
@@ -523,30 +520,32 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
         }
         lastKnownBaseUrl = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
 
+        val bgDark = Color.parseColor("#0F172A")
         val rootFrame = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(-1, -1)
-            setBackgroundColor(Color.parseColor("#0F172A"))
-            fitsSystemWindows = true
+            setBackgroundColor(bgDark)
         }
 
         mainColumn = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = FrameLayout.LayoutParams(-1, -1)
-            setBackgroundColor(Color.parseColor("#0F172A"))
+            setBackgroundColor(bgDark)
         }
 
         VuorovahtiHelper.ensureRemindersFromCalendar(this)
 
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
-            setBackgroundColor(Color.parseColor("#0F172A"))
+            setBackgroundColor(bgDark)
+            alpha = 0f
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -554,6 +553,12 @@ class MainActivity : AppCompatActivity() {
                 setSupportZoom(true)
                 builtInZoomControls = true
                 displayZoomControls = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    isAlgorithmicDarkeningAllowed = true
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    @Suppress("DEPRECATION")
+                    forceDark = WebSettings.FORCE_DARK_ON
+                }
             }
 
             webChromeClient = object : WebChromeClient() {
@@ -561,7 +566,7 @@ class MainActivity : AppCompatActivity() {
                     val msg = (message ?: "").lowercase()
                     if (msg.contains("istunto") || msg.contains("session") || msg.contains("vanhentu") || msg.contains("kirjaudu")) {
                         result?.confirm()
-                        view?.loadUrl(urlStamping)
+                        navigateWebView(urlStamping)
                         return true
                     }
                     return super.onJsAlert(view, url, message, result)
@@ -571,24 +576,29 @@ class MainActivity : AppCompatActivity() {
                     val msg = (message ?: "").lowercase()
                     if (msg.contains("istunto") || msg.contains("session") || msg.contains("vanhentu") || msg.contains("kirjaudu")) {
                         result?.confirm()
-                        view?.loadUrl(urlStamping)
+                        navigateWebView(urlStamping)
                         return true
                     }
                     return super.onJsConfirm(view, url, message, result)
                 }
             }
 
-                        webViewClient = object : WebViewClient() {
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    preparePageTransition()
+                    injectCleanTheme(view, revealAfter = false)
+                }
+
                 override fun onPageCommitVisible(view: WebView?, url: String?) {
                     super.onPageCommitVisible(view, url)
-                    injectCleanTheme(view, url)
+                    injectCleanTheme(view, revealAfter = true)
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    injectCleanTheme(view, url)
-                    android.webkit.CookieManager.getInstance().flush()
-                    // ... loput nykyisestä onPageFinished-koodistasi ...
+                    injectCleanTheme(view, revealAfter = true)
+                    CookieManager.getInstance().flush()
 
                     val currentUrl = url ?: ""
                     updateNavigationState(currentUrl)
@@ -599,10 +609,10 @@ class MainActivity : AppCompatActivity() {
                     val base = SettingsManager.getBaseUrl(this@MainActivity).trimEnd('/')
                     if (!isDemoActive && !isBackgroundListSync &&
                         (currentUrl.trimEnd('/').equals(base, ignoreCase = true) ||
-                         currentUrl.contains("/Home", ignoreCase = true) ||
-                         currentUrl.contains("/Default", ignoreCase = true))
+                            currentUrl.contains("/Home", ignoreCase = true) ||
+                            currentUrl.contains("/Default", ignoreCase = true))
                     ) {
-                        view?.loadUrl(urlStamping)
+                        navigateWebView(urlStamping)
                         return
                     }
 
@@ -610,15 +620,16 @@ class MainActivity : AppCompatActivity() {
                         injectWishProtection()
                     }
 
-                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true)) {
-                        if (!pendingAutoStamp) {
-                            webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
-                        }
+                    if (currentUrl.contains("/WorktimeStamping", ignoreCase = true) && !pendingAutoStamp) {
+                        webView.postDelayed({ triggerSilentDailySyncIfNeeded() }, 2500L)
                     }
 
                     if (pendingAutoStamp) {
                         scheduleAutoStampCheck(1000)
-                    } else if (forceListOnNextCalendarLoad && (currentUrl.contains("/Calendar/", ignoreCase = true) || currentUrl.contains("demo_shifts", ignoreCase = true)) && !currentUrl.contains("login", ignoreCase = true)) {
+                    } else if (forceListOnNextCalendarLoad &&
+                        (currentUrl.contains("/Calendar/", ignoreCase = true) || currentUrl.contains("demo_shifts", ignoreCase = true)) &&
+                        !currentUrl.contains("login", ignoreCase = true)
+                    ) {
                         forceListOnNextCalendarLoad = false
                         webView.postDelayed({ extractShiftsFromPage(forceList = true) }, 750)
                     } else if (waitingForListViewSync && currentUrl.contains("/Calendar/", ignoreCase = true)) {
@@ -627,12 +638,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            
-            addJavascriptInterface(CalendarBridge(), "AndroidBridge")
-            
-            
 
-        } // <- WebViewin asetusten blokki päättyy tähän
+            addJavascriptInterface(CalendarBridge(), "AndroidBridge")
+        }
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -642,7 +650,7 @@ class MainActivity : AppCompatActivity() {
         val navWrapper = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(20, 12, 20, 20)
-            setBackgroundColor(Color.parseColor("#0F172A"))
+            setBackgroundColor(bgDark)
         }
 
         val buttonBar = LinearLayout(this).apply {
@@ -674,11 +682,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnStamp = createNavButton("Leimaus") { webView.loadUrl(urlStamping) }.apply {
+        btnStamp = createNavButton("Leimaus") { navigateWebView(urlStamping) }.apply {
             setOnLongClickListener { openSettings(); true }
         }
-        btnWishes = createNavButton("Toiveet") { webView.loadUrl(urlWishes) }
-        btnCalendar = createNavButton("Vuorot") { webView.loadUrl(urlCalendar) }
+        btnWishes = createNavButton("Toiveet") { navigateWebView(urlWishes) }
+        btnCalendar = createNavButton("Vuorot") { navigateWebView(urlCalendar) }
         btnSync = createNavButton("Synkronoi") { checkPermissionsAndSync() }.apply {
             visibility = View.GONE
         }
@@ -775,7 +783,6 @@ class MainActivity : AppCompatActivity() {
 
         handleIncomingIntent(intent)
         updateNavigationState(urlStamping)
-        scheduleNextThreeWeekListCheck()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -784,6 +791,7 @@ class MainActivity : AppCompatActivity() {
                     isBackgroundListSync = false
                     hideStampOverlay()
                 } else if (webView.canGoBack()) {
+                    preparePageTransition()
                     webView.goBack()
                 } else {
                     isEnabled = false
@@ -793,13 +801,39 @@ class MainActivity : AppCompatActivity() {
         })
 
         if (SettingsManager.isFirstRun(this) && !pendingAutoStamp && !isBackgroundListSync) {
-            checkAndRequestAllPermissions()
+            val missing = getRequiredPermissions().filter {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, missing.toTypedArray(), 105)
+            }
             openSettings()
         }
 
         if (!isBackgroundListSync) {
-            webView.loadUrl(urlStamping)
+            navigateWebView(urlStamping)
         }
+    }
+
+    private fun preparePageTransition() {
+        if (!::webView.isInitialized) return
+        webView.removeCallbacks(revealSafetyRunnable)
+        webView.alpha = 0f
+        webView.postDelayed(revealSafetyRunnable, 1500L)
+    }
+
+    private fun revealWebView() {
+        if (!::webView.isInitialized) return
+        webView.removeCallbacks(revealSafetyRunnable)
+        if (webView.alpha < 1f) {
+            webView.alpha = 1f
+        }
+    }
+
+    private fun navigateWebView(url: String) {
+        if (!::webView.isInitialized) return
+        preparePageTransition()
+        webView.loadUrl(url)
     }
 
     private fun openSettings() {
@@ -816,23 +850,25 @@ class MainActivity : AppCompatActivity() {
         val currentBase = if (isDemoActive) "demo" else SettingsManager.getBaseUrl(this)
         if (lastKnownBaseUrl.isNotEmpty() && lastKnownBaseUrl != currentBase) {
             lastKnownBaseUrl = currentBase
-            webView.loadUrl(urlStamping)
+            navigateWebView(urlStamping)
         } else if (::webView.isInitialized && !isDemoActive) {
             tryAutoLoginIfNeeded()
         }
-        scheduleNextThreeWeekListCheck()
     }
 
     override fun onDestroy() {
+        if (::webView.isInitialized) {
+            webView.removeCallbacks(revealSafetyRunnable)
+        }
         (silentSyncWebView?.parent as? ViewGroup)?.removeView(silentSyncWebView)
         silentSyncWebView?.destroy()
         silentSyncWebView = null
         super.onDestroy()
     }
 
-    private fun injectCleanTheme(view: WebView?, url: String?) {
+    private fun injectCleanTheme(view: WebView?, revealAfter: Boolean) {
         val css = """
-            /* === PERUSASETUKSET JA YLIMÄÄRÄISTEN PALKKIEN / OTSIKOIDEN PIILOTUS === */
+            :root { color-scheme: dark; }
             html, body {
                 background-color: #0F172A !important;
                 color: #E2E8F0 !important;
@@ -840,48 +876,43 @@ class MainActivity : AppCompatActivity() {
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            /* Piilotetaan Visman ylänavigaatio, alatunnisteet, sivujen turhat pääotsikot ja kirjautumissivun turhakkeet */
-            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"], hr,
-            .container > h1.clear, .container-fluid > h1.clear, h1.clear {
+            a { color: #38BDF8; }
+            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"],
+            .container > h1.clear, .container-fluid > h1.clear, h1.clear,
+            #wfm-modal-div:empty, .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
+            #mobile_AddButton, #mobileViewDropdown, .whitebox hr {
                 display: none !important;
             }
-            .container, .container-fluid {
-                padding: 22px 12px 32px 12px !important;
+            .container, .container-fluid, .content-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 14px 10px 24px 10px !important;
+                margin: 0 !important;
                 background-color: #0F172A !important;
             }
-            .blurbox h1 {
-                color: #38BDF8 !important;
-                font-size: 20px !important;
-                font-weight: bold !important;
-                margin: 4px 0 14px 0 !important;
-            }
-
-            /* === KIRJAUTUMISSIVU JA KORTIT === */
-            .blurbox {
-                background: transparent !important;
-                text-align: center !important;
-            }
-            .whitebox, .panel, .panel.panel-default {
+            .blurbox { background: transparent !important; text-align: center !important; }
+            .blurbox h1 { color: #38BDF8 !important; font-size: 20px !important; font-weight: bold !important; margin: 4px 0 14px 0 !important; }
+            .whitebox, .panel, .panel-default, .well, .list-group-item,
+            .modal-content, .popover, .popover-content, .popover-title, .tooltip-inner {
                 background-color: #1E293B !important;
                 background-image: none !important;
                 border: 1px solid #334155 !important;
                 border-radius: 14px !important;
                 box-shadow: none !important;
                 color: #E2E8F0 !important;
-                margin-bottom: 12px !important;
             }
-            .panel-body {
-                padding: 14px !important;
+            .panel, .panel-default { margin-bottom: 10px !important; }
+            .panel-body { padding: 12px !important; }
+            .modal-header, .modal-footer, .panel-heading, .panel-footer {
+                background-color: #1E293B !important;
+                border-color: #334155 !important;
+                color: #F8FAFC !important;
             }
-
-            /* === LOMAKKEET, NAPIT, PUDOTUSVALIKOT JA POPOVERIT === */
-            label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption {
+            .close { color: #94A3B8 !important; text-shadow: none !important; opacity: 0.9 !important; }
+            .fog-of-war, .drw-fog-of-war { background-color: rgba(15, 23, 42, 0.78) !important; }
+            label, .control-label, .punching-shift-caption, .previous-stamps-caption, .punching-caption, .forgotten-stamp-labels {
                 color: #94A3B8 !important;
                 font-weight: 600 !important;
-            }
-            .punching-shift-name {
-                color: #F8FAFC !important;
-                font-weight: bold !important;
             }
             .form-control, input[type="text"], input[type="password"], input[type="number"], input[type="date"], input[type="time"],
             select, textarea, .k-textbox, .k-input {
@@ -893,19 +924,9 @@ class MainActivity : AppCompatActivity() {
                 border-radius: 10px !important;
                 box-shadow: none !important;
             }
-            .form-control:focus, input:focus, select:focus, textarea:focus {
-                border-color: #38BDF8 !important;
-            }
-            input[type="checkbox"] {
-                accent-color: #0284C7 !important;
-            }
-            .btn, a.btn, button.btn, input[type="button"],
-            .btn-default, a.btn-default, button.btn-default,
-            .dropdown-toggle, button.dropdown-toggle, a.dropdown-toggle,
-            .punch-button, .punch-reason-code-selector .btn,
-            .punch-reason-code-selector2 .btn,
-            .forgotten-stamp-direction-selector .btn,
-            .fixed-menu-bar .btn, .fixed-menu-bar a.btn,
+            .form-control:focus, input:focus, select:focus, textarea:focus { border-color: #38BDF8 !important; outline: none !important; }
+            input[type="checkbox"], input[type="radio"] { accent-color: #0284C7 !important; }
+            .btn, .btn-default, .dropdown-toggle, .punch-button,
             #pcViewButt, #todayButt, #pcAddButt, #dropdownMenu1, #dropdownMenu2, #dropdownMenuStampDirection {
                 background: #0F172A !important;
                 background-color: #0F172A !important;
@@ -916,16 +937,13 @@ class MainActivity : AppCompatActivity() {
                 box-shadow: none !important;
                 text-shadow: none !important;
             }
-            .btn:hover, .btn:focus, .btn:active, .open > .dropdown-toggle.btn-default,
-            a.btn-default:hover, a.btn-default:focus, button.btn-default:hover, button.btn-default:focus {
+            .btn:hover, .btn:focus, .btn:active, .open > .dropdown-toggle.btn-default {
                 background: #1E293B !important;
                 background-color: #1E293B !important;
-                background-image: none !important;
                 color: #38BDF8 !important;
                 border-color: #38BDF8 !important;
-                box-shadow: none !important;
             }
-            .btn-primary, a.btn-primary, button.btn-primary, input[type="submit"], #punchButton, #punchForgottenButton {
+            .btn-primary, input[type="submit"], #punchButton, #punchForgottenButton {
                 background: #0284C7 !important;
                 background-color: #0284C7 !important;
                 background-image: none !important;
@@ -935,47 +953,25 @@ class MainActivity : AppCompatActivity() {
                 font-weight: bold !important;
                 text-shadow: none !important;
             }
-            .btn-primary:hover, .btn-primary:focus, #punchButton:hover, #punchButton:focus {
+            .btn-primary:hover, .btn-primary:focus, #punchButton:hover, #punchForgottenButton:hover {
                 background: #0369A1 !important;
-                background-color: #0369A1 !important;
                 color: #FFFFFF !important;
             }
-            .btn-text, a.btn-text, button.btn-text {
+            .btn-text, .btn-link {
                 color: #38BDF8 !important;
                 background: transparent !important;
-                background-color: transparent !important;
-                background-image: none !important;
                 border: none !important;
                 box-shadow: none !important;
             }
-            .dropdown-menu, ul.dropdown-menu {
-                background: #1E293B !important;
+            .dropdown-menu {
                 background-color: #1E293B !important;
-                background-image: none !important;
                 border: 1px solid #334155 !important;
                 border-radius: 10px !important;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
             }
-            .dropdown-menu > li > a, .dropdown-menu li a {
-                color: #E2E8F0 !important;
-                background: transparent !important;
-                padding: 10px 14px !important;
-            }
-            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus, .dropdown-menu li a:hover {
-                background: #334155 !important;
-                background-color: #334155 !important;
-                color: #38BDF8 !important;
-            }
-            .dropdown-header {
-                color: #94A3B8 !important;
-            }
-            .popover, .popover-content, .popover-title, .tooltip-inner {
-                background-color: #1E293B !important;
-                color: #E2E8F0 !important;
-                border-color: #334155 !important;
-            }
-
-            /* === KENDO UI WIDGETIT (VALIKOT, KALENTERIVALITSIMET, SUODATTIMET) === */
+            .dropdown-menu > li > a, .dropdown-menu li a { color: #E2E8F0 !important; background: transparent !important; padding: 10px 14px !important; }
+            .dropdown-menu > li > a:hover, .dropdown-menu > li > a:focus { background-color: #334155 !important; color: #38BDF8 !important; }
+            .dropdown-header { color: #94A3B8 !important; }
             .k-widget, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-multiselect-wrap,
             .k-state-default, .k-state-hover, .k-state-focused, .k-button, .k-select {
                 background: #0F172A !important;
@@ -985,165 +981,21 @@ class MainActivity : AppCompatActivity() {
                 border-color: #334155 !important;
                 box-shadow: none !important;
             }
-            .k-dropdown-wrap .k-input, .k-picker-wrap .k-input, input.k-input {
-                background: #0F172A !important;
-                background-color: #0F172A !important;
-                color: #FFFFFF !important;
-            }
-            .k-popup, .k-list-container, .k-list, .k-calendar, .k-calendar-container,
-            .k-animation-container .k-popup, .k-column-menu, .k-filter-menu {
+            .k-animation-container, .k-popup, .k-list-container, .k-list-scroller, ul.k-list,
+            .k-calendar, .k-calendar-container, .k-column-menu, .k-filter-menu, .k-list-filter {
                 background: #1E293B !important;
                 background-color: #1E293B !important;
                 background-image: none !important;
                 color: #E2E8F0 !important;
-                border: 1px solid #334155 !important;
+                border-color: #334155 !important;
             }
-            .k-list .k-item, .k-column-menu .k-item {
-                background: transparent !important;
-                color: #E2E8F0 !important;
-            }
-            .k-list .k-item:hover, .k-list .k-state-hover, .k-list .k-state-focused {
-                background: #334155 !important;
-                color: #38BDF8 !important;
-            }
-            .k-icon {
-                filter: invert(0.85) brightness(1.2) !important;
-            }
-
-            /* === TYÖAIKALEIMAUS (/WorktimeStamping) === */
-            .content-container {
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            /* Saldot piiloon ja ylin laatikko tiiviiksi */
-            .punching-balance-overview-container,
-            .punching-balance-container,
-            .punching-weekbalance-container {
-                display: none !important;
-            }
-            #panel-body-main {
-                padding: 12px 14px !important;
-                height: auto !important;
-                min-height: 0 !important;
-            }
-            .punching-overview-container {
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: flex-start !important;
-                justify-content: center !important;
-                height: auto !important;
-                min-height: 0 !important;
-                padding: 0 !important;
-                margin: 0 !important;
-            }
-            .punching-shift-container {
-                width: 100% !important;
-                max-width: 100% !important;
-                height: auto !important;
-                min-height: 0 !important;
-                border: none !important;
-                border-right: none !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 4px !important;
-            }
-            .punching-shift-caption {
-                font-size: 11px !important;
-                letter-spacing: 0.05em !important;
-                text-transform: uppercase !important;
-                margin: 0 !important;
-            }
-            .punching-shift-name {
-                font-size: 15px !important;
-                line-height: 1.3 !important;
-                margin: 0 !important;
-            }
-            .nav-tabs-wts {
-                border-bottom: 1px solid #334155 !important;
-            }
-            .nav-tabs-wts > li.active > a {
-                background-color: transparent !important;
-                color: #38BDF8 !important;
-                border-bottom: 2px solid #38BDF8 !important;
-            }
-            table.table, #table-latest-stamps, #table-latest-stamps tbody,
-            #table-latest-stamps tr, #table-latest-stamps tr.table-active,
-            .table-active, .table-active > td, .table-active > th,
-            .table > tbody > tr > td, .table > tbody > tr > th {
-                background: transparent !important;
-                background-color: transparent !important;
-                background-image: none !important;
-                color: #E2E8F0 !important;
-            }
-            #table-latest-stamps tr {
-                border-bottom: 1px solid #334155 !important;
-            }
-            #table-latest-stamps tr:hover, #table-latest-stamps tr:hover td,
-            #table-latest-stamps tr:active, #table-latest-stamps tr:active td {
-                background-color: #334155 !important;
+            .k-list .k-item, .k-column-menu .k-item, select option { background-color: #1E293B !important; color: #E2E8F0 !important; }
+            .k-list .k-item:hover, .k-list .k-state-hover, .k-list .k-state-focused,
+            .k-list .k-state-selected, .k-state-selected, .k-grid tr.k-state-selected td {
+                background-color: #0284C7 !important;
                 color: #FFFFFF !important;
             }
-            #table-latest-stamps td {
-                border: none !important;
-                padding: 10px 6px !important;
-            }
-            /* Puuttuvan leimauksen liukupaneeli */
-            #forgotStampPanel, #stamp-edit-modal {
-                background-color: #1E293B !important;
-                color: #E2E8F0 !important;
-            }
-            .modal-header, .modal-footer {
-                border-color: #334155 !important;
-                background-color: #1E293B !important;
-            }
-            .modal-content {
-                background-color: #1E293B !important;
-                border: 1px solid #334155 !important;
-                color: #E2E8F0 !important;
-            }
-
-            /* === TOIVEET - KENDO GRID (/PersonRequests/List) === */
-            .fixed-menu-bar {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                gap: 8px !important;
-                margin: 0 0 10px 0 !important;
-            }
-            .fixed-menu-bar .col-sm-8 {
-                width: 100% !important;
-                padding: 0 !important;
-                display: flex !important;
-                flex-wrap: wrap !important;
-                gap: 8px !important;
-            }
-            .fixed-menu-bar .col-sm-8 .btn,
-            .fixed-menu-bar .col-sm-8 .btn-group {
-                flex: 1 1 auto !important;
-                margin: 0 !important;
-            }
-            .fixed-menu-bar .col-sm-8 .btn-group .btn {
-                width: 100% !important;
-            }
-            .fixed-menu-bar .form-inline.pull-right {
-                width: 100% !important;
-                float: none !important;
-                margin: 4px 0 0 0 !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                gap: 8px !important;
-            }
-            .fixed-menu-bar .form-inline .form-group {
-                flex: 1 !important;
-                margin: 0 !important;
-            }
-            .fixed-menu-bar #filterOptions {
-                width: 100% !important;
-            }
+            .k-icon { filter: invert(0.85) brightness(1.2) !important; }
             .k-grid, .k-grid-content, .k-grid-header, .k-grid-header-wrap, .k-pager-wrap {
                 background-color: #1E293B !important;
                 color: #E2E8F0 !important;
@@ -1154,28 +1006,48 @@ class MainActivity : AppCompatActivity() {
                 color: #94A3B8 !important;
                 border-color: #334155 !important;
             }
-            .k-grid tr {
-                background-color: #1E293B !important;
-                color: #E2E8F0 !important;
-            }
-            .k-grid tr.k-alt {
-                background-color: #172033 !important;
-            }
-            .k-grid td {
-                border-color: #334155 !important;
-                color: #E2E8F0 !important;
-            }
-            .k-grid tr:hover td {
+            .k-grid tr { background-color: #1E293B !important; color: #E2E8F0 !important; }
+            .k-grid tr.k-alt { background-color: #172033 !important; }
+            .k-grid td { border-color: #334155 !important; color: #E2E8F0 !important; }
+            .k-grid tr:hover td { background-color: #334155 !important; color: #FFFFFF !important; }
+            .punching-balance-overview-container, .punching-balance-container, .punching-weekbalance-container { display: none !important; }
+            #panel-body-main { padding: 10px 12px !important; height: auto !important; min-height: 0 !important; }
+            .punching-overview-container { display: block !important; height: auto !important; min-height: 0 !important; padding: 0 !important; margin: 0 !important; }
+            .punching-shift-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
                 background-color: #334155 !important;
-                color: #FFFFFF !important;
+                border: 1px solid #475569 !important;
+                border-radius: 12px !important;
+                padding: 12px 14px !important;
+                margin: 0 !important;
+                display: flex !important;
+                flex-direction: column !important;
+                gap: 4px !important;
             }
-            .k-state-selected, .k-grid tr.k-state-selected td {
-                background-color: #0284C7 !important;
-                color: #FFFFFF !important;
+            .punching-shift-caption { color: #BAE6FD !important; font-size: 11px !important; letter-spacing: 0.05em !important; text-transform: uppercase !important; margin: 0 !important; }
+            .punching-shift-name { color: #F8FAFC !important; font-size: 15px !important; font-weight: bold !important; line-height: 1.3 !important; margin: 0 !important; }
+            .nav-tabs-wts { border-bottom: 1px solid #334155 !important; }
+            .nav-tabs-wts > li.active > a { background-color: transparent !important; color: #38BDF8 !important; border-bottom: 2px solid #38BDF8 !important; }
+            .table, .table > tbody > tr > td, .table > tbody > tr > th, .table-active, .table-active > td {
+                background: transparent !important;
+                background-color: transparent !important;
+                color: #E2E8F0 !important;
             }
-
-            /* === KALENTERI (/Calendar/Month) === */
-            .calendar-body {
+            #table-latest-stamps tr { border-bottom: 1px solid #334155 !important; }
+            #table-latest-stamps tr:hover td, #table-latest-stamps tr:active td { background-color: #334155 !important; color: #FFFFFF !important; }
+            #table-latest-stamps td { border: none !important; padding: 10px 6px !important; }
+            #forgotStampPanel { background-color: #1E293B !important; color: #E2E8F0 !important; }
+            .fixed-menu-bar { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin: 0 0 10px 0 !important; }
+            .fixed-menu-bar .col-sm-8 { width: 100% !important; padding: 0 !important; display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
+            .fixed-menu-bar .col-sm-8 .btn, .fixed-menu-bar .col-sm-8 .btn-group { flex: 1 1 auto !important; margin: 0 !important; }
+            .fixed-menu-bar .col-sm-8 .btn-group .btn { width: 100% !important; }
+            .fixed-menu-bar .form-inline.pull-right { width: 100% !important; float: none !important; margin: 4px 0 0 0 !important; display: flex !important; align-items: center !important; gap: 8px !important; }
+            .fixed-menu-bar .form-inline .form-group { flex: 1 !important; margin: 0 !important; }
+            .fixed-menu-bar #filterOptions { width: 100% !important; }
+            .calendar-body, .calendar-heading {
                 background-color: #1E293B !important;
                 box-shadow: none !important;
                 border: 1px solid #334155 !important;
@@ -1183,22 +1055,8 @@ class MainActivity : AppCompatActivity() {
                 padding: 8px !important;
                 margin-bottom: 10px !important;
             }
-            .calendar-heading {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                gap: 8px !important;
-                background-color: #1E293B !important;
-                box-shadow: none !important;
-                border: 1px solid #334155 !important;
-                border-radius: 14px !important;
-                padding: 10px 12px !important;
-                margin-bottom: 10px !important;
-            }
-            .calendar-heading .monthSelector {
-                display: contents !important;
-            }
+            .calendar-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 10px !important; }
+            .calendar-heading .monthSelector { display: contents !important; }
             .calendar-heading .monthSelector .panel-body {
                 order: 1 !important;
                 width: 100% !important;
@@ -1209,387 +1067,95 @@ class MainActivity : AppCompatActivity() {
                 margin: 0 !important;
                 float: none !important;
             }
-            #monthText {
-                color: #F8FAFC !important;
-                font-size: 18px !important;
-                font-weight: bold !important;
-                white-space: nowrap !important;
-                margin: 0 !important;
-                padding: 0 8px !important;
-            }
-            #pcTodayButton {
-                order: 2 !important;
-                flex: 1 1 48% !important;
-                display: block !important;
-                margin: 0 !important;
-                float: none !important;
-            }
-            #todayButt {
+            #monthText { color: #F8FAFC !important; font-size: 18px !important; font-weight: bold !important; margin: 0 !important; }
+            #pc_AddButton { order: 2 !important; width: 100% !important; display: flex !important; gap: 8px !important; margin: 0 !important; float: none !important; }
+            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown { flex: 1 !important; margin: 0 !important; display: block !important; }
+            #pcAddButt, #pc_AddButton .filterButton {
                 width: 100% !important;
-                max-width: none !important;
-                min-width: 0 !important;
                 height: 36px !important;
-                padding: 6px 12px !important;
-                font-size: 13px !important;
-            }
-            #pcViewDropdown {
-                order: 3 !important;
-                flex: 1 1 48% !important;
-                display: block !important;
-                margin: 0 !important;
-                float: none !important;
-            }
-            #pcViewButt {
-                width: 100% !important;
-                max-width: none !important;
-                min-width: 0 !important;
-                height: 36px !important;
-                padding: 6px 12px !important;
-                font-size: 13px !important;
-            }
-            #pcViewDropdown .dropdown-menu {
-                right: 0 !important;
-                left: auto !important;
-                min-width: 140px !important;
-            }
-            #mobileViewDropdown {
-                display: none !important;
-            }
-            .month-table {
-                width: 100% !important;
-                background-color: #1E293B !important;
-                border-collapse: collapse !important;
-            }
-            .month-week-days td {
-                background-color: #0F172A !important;
-                color: #94A3B8 !important;
-                border: 1px solid #334155 !important;
-                padding: 6px 2px !important;
-                font-weight: bold !important;
-            }
-            .month-week-number {
-                background-color: #0F172A !important;
-                color: #64748B !important;
-                border: 1px solid #334155 !important;
-                text-align: center !important;
-                font-size: 11px !important;
-            }
-            td.month-day {
-                background-color: #1E293B !important;
-                border: 1px solid #334155 !important;
-                vertical-align: top !important;
-            }
-            td.month-day.day-different-month {
-                background-color: #131C2E !important;
-                opacity: 0.75 !important;
-            }
-            td.month-day.todayTd {
-                background-color: #1E3A5F !important;
-                border: 1px solid #38BDF8 !important;
-            }
-            .dayNum {
-                color: #CBD5E1 !important;
-                font-weight: bold !important;
-            }
-            .today .dayNum {
-                color: #38BDF8 !important;
-            }
-            /* Työvuoropalkit kalenterissa */
-            .month-item.work {
-                background-color: #0284C7 !important;
-                color: #FFFFFF !important;
-                border-radius: 6px !important;
-                padding: 3px 4px !important;
-                margin-top: 2px !important;
-                border: none !important;
-            }
-            .month-item.work .itemTimes, .month-item.work .itemName {
-                color: #FFFFFF !important;
-            }
-            .month-item.request {
-                background-color: #7C3AED !important;
-                color: #FFFFFF !important;
-                border-radius: 6px !important;
-            }
-            .month-item.absence {
-                background-color: #D97706 !important;
-                color: #FFFFFF !important;
-                border-radius: 6px !important;
-            }
-            /* 1. Leimaussivun tyhjät ylälaatikot piiloon */
-            .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
-            .mobileHeader:empty, .punchHeader:empty, .mobileInfoDiv:empty {
-                display: none !important;
-            }
-
-            /* 2. Toiveet-sivun Kendo / Select2 -pudotusvalikot tummiksi */
-            .k-animation-container, .k-popup, .k-list-container, .k-list-scroller, ul.k-list,
-            .select2-dropdown, .select2-results, .chosen-drop, .chosen-results, .ui-menu, .ui-selectmenu-menu {
-                background-color: #1E293B !important;
-                background-image: none !important;
-                color: #F1F5F9 !important;
-                border-color: #334155 !important;
-            }
-            .k-list-filter {
-                background-color: #1E293B !important;
-                padding: 6px !important;
-            }
-            .k-list-filter > input, .k-list-filter .k-textbox, .select2-search__field, .chosen-search input {
-                background-color: #0F172A !important;
-                color: #F1F5F9 !important;
-                border: 1px solid #38BDF8 !important;
-            }
-            ul.k-list > li.k-item, .k-item, .select2-results__option, .chosen-results li, .ui-menu-item, select option {
-                background-color: #1E293B !important;
-                color: #F1F5F9 !important;
-            }
-            ul.k-list > li.k-item.k-state-hover, ul.k-list > li.k-item.k-state-focused, ul.k-list > li.k-item.k-state-selected,
-            .k-state-selected, .k-state-focused, .select2-results__option--highlighted, .chosen-results li.highlighted {
-                background-color: #0284C7 !important;
-                color: #FFFFFF !important;
-            }
-
-            /* 3. Kalenterinäkymän Tänään- ja Näkymä-napit näkyviin ruudukon yläpuolelle */
-            .mobileAddDiv, .calendarHeaderButtons, .weekNavButtons {
-                display: flex !important;
-                flex-direction: row !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                gap: 10px !important;
-                width: 100% !important;
-                box-sizing: border-box !important;
-                background-color: transparent !important;
-                background-image: none !important;
-                margin: 8px 0 12px 0 !important;
-                padding: 4px 0 !important;
-                height: auto !important;
-                min-height: 44px !important;
-                max-height: none !important;
-                position: relative !important;
-                top: 0 !important;
-                bottom: auto !important;
-                transform: none !important;
-                overflow: visible !important;
-                z-index: 50 !important;
-            }
-            .mobileAddDiv + div, .mobileAddDiv + table, .mobileAddDiv + section,
-            .calendarHeaderButtons + div, .weekNavButtons + div {
-                position: relative !important;
-                top: 0 !important;
-                margin-top: 8px !important;
-                transform: none !important;
-                z-index: 10 !important;
-            }
-            .mobileAddButton, .filterButton, .todayButton, .viewButton {
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
-                color: #38BDF8 !important;
-                background-color: #1E293B !important;
-                border: 1px solid #334155 !important;
-                border-radius: 8px !important;
-                height: 40px !important;
-                min-height: 40px !important;
-                padding: 0 14px !important;
-                margin: 0 !important;
-                line-height: 1.2 !important;
-                position: relative !important;
-                top: 0 !important;
-                transform: none !important;
-                overflow: visible !important;
-                z-index: 51 !important;
+                padding: 6px 10px !important;
+                font-size: 13px !important;
             }
-
-            /* 4. Listanäkymän valkoiset vuorokortit ja valkoiset häivytyspalkit */
-            .eventItem, .shiftItem, .shiftCard, .calendarEvent, .mobileEvent, .workShiftCard, .fc-event,
-            div[style*="background-color: rgb(255, 255, 255)"], div[style*="background-color:#fff"], div[style*="background-color: #fff"],
-            div[style*="background: rgb(255, 255, 255)"], div[style*="background:#fff"], div[style*="background: #fff"] {
+            #pcTodayButton, #pcViewDropdown { order: 3 !important; flex: 1 1 46% !important; display: block !important; margin: 0 !important; float: none !important; }
+            #todayButt, #pcViewButt { width: 100% !important; max-width: none !important; min-width: 0 !important; height: 36px !important; padding: 6px 10px !important; font-size: 13px !important; }
+            #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }
+            .month-table { width: 100% !important; table-layout: fixed !important; background-color: #1E293B !important; border-collapse: collapse !important; }
+            .month-week-days td { background-color: #0F172A !important; color: #94A3B8 !important; border: 1px solid #334155 !important; padding: 5px 1px !important; font-weight: bold !important; font-size: 11px !important; }
+            .month-week-number { width: 22px !important; background-color: #0F172A !important; color: #64748B !important; border: 1px solid #334155 !important; text-align: center !important; font-size: 10px !important; }
+            td.month-day { background-color: #1E293B !important; border: 1px solid #334155 !important; vertical-align: top !important; padding: 2px !important; overflow: hidden !important; }
+            td.month-day.day-different-month { background-color: #131C2E !important; opacity: 0.72 !important; }
+            td.month-day.todayTd { background-color: #1E3A5F !important; border: 1px solid #38BDF8 !important; }
+            .dayNum { color: #CBD5E1 !important; font-weight: bold !important; font-size: 11px !important; padding-left: 2px !important; }
+            .today .dayNum { color: #38BDF8 !important; }
+            .month-item { border-radius: 5px !important; padding: 2px 3px !important; margin-top: 2px !important; font-size: 10px !important; line-height: 1.2 !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+            .month-item.work { background-color: #0284C7 !important; color: #FFFFFF !important; border: none !important; }
+            .month-item.work .itemTimes, .month-item.work .itemName { color: #FFFFFF !important; display: block !important; }
+            .month-item.request { background-color: #7C3AED !important; color: #FFFFFF !important; }
+            .month-item.absence { background-color: #D97706 !important; color: #FFFFFF !important; }
+            .month-item.opportunity { background-color: #059669 !important; color: #FFFFFF !important; }
+            .month-item.hidden-items-box { background-color: #334155 !important; color: #38BDF8 !important; text-align: center !important; font-weight: bold !important; }
+            [style*="background-color: #fff"], [style*="background-color:#fff"], [style*="background-color: rgb(255, 255, 255)"],
+            [style*="background: #fff"], [style*="background:#fff"], [style*="background: rgb(255, 255, 255)"] {
                 background-color: #1E293B !important;
                 background-image: none !important;
                 color: #F1F5F9 !important;
                 border-color: #334155 !important;
-            }
-            .eventItem *, .shiftItem *, .shiftCard *, .calendarEvent *, .mobileEvent *, .workShiftCard * {
-                color: #F1F5F9 !important;
             }
         """.trimIndent().replace("\n", " ")
 
         val hasCreds = SettingsManager.getUsername(this).isNotEmpty() && SettingsManager.getPassword(this).isNotEmpty()
 
-        view?.setBackgroundColor(android.graphics.Color.parseColor("#0F172A"))
         val js = """
             (function() {
                 var cssText = `$css`;
-
-                function ensureThemeStyle() {
+                function attachTheme() {
                     var root = document.head || document.documentElement;
                     if (!root) return false;
                     var style = document.getElementById('custom-numeron-theme');
                     if (!style) {
                         style = document.createElement('style');
                         style.id = 'custom-numeron-theme';
-                        style.type = 'text/css';
-                        root.appendChild(style);
-                    }
-                    if (style.textContent !== cssText) {
                         style.textContent = cssText;
+                        root.appendChild(style);
                     }
                     return true;
                 }
-
-                // Kiinnitä tyylit välittömästi ennen kuin <body> ehtii piirtyä (estää vaalean välähdyksen)
-                if (!ensureThemeStyle()) {
-                    var earlyObs = new MutationObserver(function() {
-                        if (ensureThemeStyle()) {
-                            earlyObs.disconnect();
-                        }
+                if (!attachTheme()) {
+                    var obs = new MutationObserver(function() {
+                        if (attachTheme()) obs.disconnect();
                     });
-                    earlyObs.observe(document, { childList: true, subtree: true });
+                    obs.observe(document, { childList: true, subtree: true });
                 }
-
-                // Piilotetaan lomake vain visuaalisesti (ei display:none, jotta automaattikirjautuminen ja lomakkeen lähetys toimivat)
-                if ($hasCreds && document.getElementById('LoginForm')) {
+                if ($hasCreds) {
                     var form = document.getElementById('LoginForm');
                     if (form && !form.dataset.hiddenByTheme) {
                         form.dataset.hiddenByTheme = 'true';
-                        form.style.opacity = '0';
-                        form.style.height = '0';
-                        form.style.overflow = 'hidden';
-                        form.style.pointerEvents = 'none';
-
+                        form.style.cssText = 'opacity:0;height:0;overflow:hidden;pointer-events:none;';
                         var msg = document.createElement('div');
                         msg.id = 'custom-login-msg';
-                        msg.style.cssText = 'text-align:center; padding: 32px 12px; color: #38BDF8; font-size: 16px; font-weight: bold;';
+                        msg.style.cssText = 'text-align:center;padding:32px 12px;color:#38BDF8;font-size:16px;font-weight:bold;';
                         msg.innerText = 'Kirjaudutaan sisään...';
                         form.parentNode.insertBefore(msg, form);
-
                         setTimeout(function() {
                             var f = document.getElementById('LoginForm');
                             var m = document.getElementById('custom-login-msg');
                             if (f) {
-                                f.style.opacity = '';
-                                f.style.height = '';
-                                f.style.overflow = '';
-                                f.style.pointerEvents = '';
+                                f.style.cssText = '';
                                 delete f.dataset.hiddenByTheme;
                             }
                             if (m) m.remove();
                         }, 5000);
                     }
                 }
-
-                function fixDynamicLayoutAndTheme() {
-                    ensureThemeStyle();
-                    if (!document.body) return;
-
-                    var nodes = document.querySelectorAll('div, ul, section, header');
-                    for (var i = 0; i < nodes.length; i++) {
-                        var el = nodes[i];
-                        var cs = window.getComputedStyle(el);
-
-                        // Poista valkoiset liukuväripalkit (kalenterilistan yläreunan häivytys)
-                        if (cs.backgroundImage && cs.backgroundImage.indexOf('gradient') !== -1 &&
-                            (cs.backgroundImage.indexOf('255, 255, 255') !== -1 || cs.backgroundImage.indexOf('#fff') !== -1)) {
-                            el.style.setProperty('background-image', 'none', 'important');
-                            el.style.setProperty('background-color', 'transparent', 'important');
-                        }
-
-                        // Muuta dynaamisesti luodut valkoiset kortit ja pudotuslistat tummiksi
-                        if (cs.backgroundColor === 'rgb(255, 255, 255)') {
-                            el.style.setProperty('background-color', '#1E293B', 'important');
-                            el.style.setProperty('color', '#F1F5F9', 'important');
-                            el.style.setProperty('border-color', '#334155', 'important');
-                        }
-
-                        // Piilota tyhjät yläreunan pillerilaatikot (vaikka sisällä olisi tyhjä span/div)
-                        var rawText = (el.innerText || el.textContent || '').trim();
-                        if (rawText === '' &&
-                            el.offsetHeight > 0 && el.offsetHeight <= 60 && el.offsetWidth > 120 &&
-                            !el.querySelector('input, select, textarea, button, img, svg, canvas')) {
-                            el.style.setProperty('display', 'none', 'important');
-                        }
-                    }
-
-                    // Korosta leimaussivun "Tänään"-osio siistiksi vaaleammaksi laatikoksi
-                    var all = document.querySelectorAll('div, span, p, label, h1, h2, h3, h4');
-                    for (var j = 0; j < all.length; j++) {
-                        var lbl = (all[j].innerText || all[j].textContent || '').trim().toLowerCase();
-                        if (lbl === 'tänään' && all[j].children.length === 0 && all[j].parentElement) {
-                            var box = all[j].parentElement;
-                            // Jos parent sisältää vain pelkän otsikon, noustaan yhtä tasoa ylemmäs jotta myös sisältörivi mahtuu laatikkoon
-                            var boxText = (box.innerText || box.textContent || '').trim().toLowerCase();
-                            if (boxText === 'tänään' && box.parentElement) {
-                                box = box.parentElement;
-                            }
-                            if (box && box.tagName !== 'BODY' && !box.dataset.styledToday) {
-                                box.dataset.styledToday = 'true';
-                                box.style.setProperty('display', 'block', 'important');
-                                box.style.setProperty('background-color', '#334155', 'important');
-                                box.style.setProperty('border', '1px solid #64748B', 'important');
-                                box.style.setProperty('border-radius', '12px', 'important');
-                                box.style.setProperty('padding', '12px 14px', 'important');
-                                box.style.setProperty('margin', '0 0 14px 0', 'important');
-                                box.style.setProperty('color', '#F8FAFC', 'important');
-                                all[j].style.setProperty('color', '#BAE6FD', 'important');
-                                all[j].style.setProperty('font-weight', '700', 'important');
-                            }
-                        }
-                    }
-
-                    // Estä kalenteriruudukkoa/listaa peittämästä Tänään- ja Näkymä-nappeja
-                    var btnRow = document.querySelector('.mobileAddDiv, .calendarHeaderButtons, .weekNavButtons');
-                    if (!btnRow) {
-                        var btns = document.querySelectorAll('button, a, div, span');
-                        for (var k = 0; k < btns.length; k++) {
-                            var bt = (btns[k].innerText || btns[k].textContent || '').trim();
-                            if ((bt === 'Näkymä' || bt === 'Tänään') && btns[k].children.length === 0 && btns[k].parentElement) {
-                                var cand = btns[k].parentElement;
-                                if (cand && cand.offsetHeight > 0 && cand.offsetHeight < 90 && cand.parentElement) {
-                                    btnRow = cand.parentElement.offsetHeight < 90 ? cand.parentElement : cand;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if (btnRow) {
-                        btnRow.style.setProperty('display', 'flex', 'important');
-                        btnRow.style.setProperty('flex-direction', 'row', 'important');
-                        btnRow.style.setProperty('align-items', 'center', 'important');
-                        btnRow.style.setProperty('justify-content', 'space-between', 'important');
-                        btnRow.style.setProperty('position', 'relative', 'important');
-                        btnRow.style.setProperty('top', '0px', 'important');
-                        btnRow.style.setProperty('margin', '8px 0 12px 0', 'important');
-                        btnRow.style.setProperty('height', 'auto', 'important');
-                        btnRow.style.setProperty('min-height', '44px', 'important');
-                        btnRow.style.setProperty('overflow', 'visible', 'important');
-                        btnRow.style.setProperty('z-index', '50', 'important');
-
-                        var next = btnRow.nextElementSibling;
-                        if (next) {
-                            next.style.setProperty('position', 'relative', 'important');
-                            next.style.setProperty('top', '0px', 'important');
-                            next.style.setProperty('margin-top', '8px', 'important');
-                            next.style.setProperty('transform', 'none', 'important');
-                            next.style.setProperty('z-index', '10', 'important');
-                        }
-                    }
-                }
-
-                fixDynamicLayoutAndTheme();
-                if (!window._numeronThemeObserver) {
-                    window._numeronThemeObserver = new MutationObserver(function() {
-                        fixDynamicLayoutAndTheme();
-                    });
-                    var target = document.body || document.documentElement;
-                    if (target) {
-                        window._numeronThemeObserver.observe(target, { childList: true, subtree: true });
-                    }
-                }
             })();
         """.trimIndent()
 
-
-        view?.evaluateJavascript(js, null)
+        view?.evaluateJavascript(js) {
+            if (revealAfter) revealWebView()
+        }
     }
 
     private fun injectWishProtection() {
@@ -1734,7 +1300,7 @@ class MainActivity : AppCompatActivity() {
             val r = res ?: ""
             val now = System.currentTimeMillis()
             when {
-                r.contains("SESSION_EXPIRED_RELOAD") -> webView.loadUrl(if (isBackgroundListSync) urlCalendar else urlStamping)
+                r.contains("SESSION_EXPIRED_RELOAD") -> navigateWebView(if (isBackgroundListSync) urlCalendar else urlStamping)
                 r.contains("SESSION_EXPIRED_CLICKED") || r.contains("USER_STEP_SUBMITTED") -> {
                     if (pendingAutoStamp || isBackgroundListSync) showStampOverlay(overlayTitle.text.toString(), "Kirjaudutaan sisään...")
                     webView.postDelayed({ tryAutoLoginIfNeeded() }, 1400)
@@ -1756,30 +1322,46 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingIntent(intent)
-        if (pendingAutoStamp && ::webView.isInitialized) webView.loadUrl(urlStamping)
+        if (pendingAutoStamp && ::webView.isInitialized) {
+            navigateWebView(urlStamping)
+        } else if (pendingSummaryDialog && ::webView.isInitialized) {
+            pendingSummaryDialog = false
+            showSyncSummaryDialog()
+        }
+    }
+
+    private fun resetSyncBatch(pages: Int) {
+        pagesRemainingToSync = pages
+        totalFoundInBatch = 0
+        totalAddedInBatch = 0
+        totalRemovedInBatch = 0
+        syncedDatesInBatch.clear()
+        syncChangesList.clear()
+        syncedShiftRangesInBatch.clear()
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        val quickAction = intent?.getStringExtra("quick_action")?.trim()
+        if (intent == null) return
+
+        if (intent.getBooleanExtra("OPEN_SYNC_SUMMARY", false)) {
+            intent.removeExtra("OPEN_SYNC_SUMMARY")
+            pendingSummaryDialog = true
+        }
+
+        val quickAction = intent.getStringExtra("quick_action")?.trim()
         if (quickAction == "ACTION_STAMP") {
             intent.removeExtra("quick_action")
-            if (::webView.isInitialized) webView.loadUrl(urlStamping)
+            if (::webView.isInitialized) navigateWebView(urlStamping)
         } else if (quickAction == "ACTION_SYNC") {
             intent.removeExtra("quick_action")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            pagesRemainingToSync = 8
-            totalFoundInBatch = 0
-            totalAddedInBatch = 0
-            totalRemovedInBatch = 0
-            syncedDatesInBatch.clear()
-            syncChangesList.clear()
-            syncedShiftRangesInBatch.clear()
+            resetSyncBatch(8)
             showStampOverlay("Synkronoidaan työvuoroja", "Avataan kalenteria...")
-            if (::webView.isInitialized) webView.loadUrl(urlCalendar)
+            if (::webView.isInitialized) navigateWebView(urlCalendar)
         }
 
-        if (intent?.getBooleanExtra("AUTO_STAMP", false) == true) {
+        if (intent.getBooleanExtra("AUTO_STAMP", false)) {
             pendingAutoStamp = true
             pendingStampIsEnding = intent.getBooleanExtra("IS_ENDING", false)
             autoStampClickDone = false
@@ -1790,19 +1372,14 @@ class MainActivity : AppCompatActivity() {
             val title = if (pendingStampIsEnding) "Ulosleimaus käynnissä" else "Sisäänleimaus käynnissä"
             showStampOverlay(title, "Valmistellaan leimausta...")
         }
-        if (intent?.getBooleanExtra("AUTO_SYNC_NEW_LIST", false) == true) {
+
+        if (intent.getBooleanExtra("AUTO_SYNC_NEW_LIST", false)) {
             intent.removeExtra("AUTO_SYNC_NEW_LIST")
             isBackgroundListSync = true
             forceListOnNextCalendarLoad = true
-            pagesRemainingToSync = 8
-            totalFoundInBatch = 0
-            totalAddedInBatch = 0
-            totalRemovedInBatch = 0
-            syncedDatesInBatch.clear()
-            syncChangesList.clear()
-            syncedShiftRangesInBatch.clear()
+            resetSyncBatch(8)
             showStampOverlay("Haetaan uutta työvuorolistaa", "Avataan kalenteria...")
-            if (::webView.isInitialized) webView.loadUrl(urlCalendar)
+            if (::webView.isInitialized) navigateWebView(urlCalendar)
         }
     }
 
@@ -1864,7 +1441,7 @@ class MainActivity : AppCompatActivity() {
                 r.contains("ALREADY_IN_TARGET_STATE") -> completeAutoStampSuccess("Leimaus on jo voimassa!")
                 else -> {
                     if (!currentUrl.contains("/WorktimeStamping", ignoreCase = true) && !currentUrl.contains("login", ignoreCase = true) && autoStampRetryCount % 3 == 0) {
-                        webView.loadUrl(urlStamping)
+                        navigateWebView(urlStamping)
                     }
                     scheduleAutoStampCheck(1400)
                 }
@@ -1915,10 +1492,7 @@ class MainActivity : AppCompatActivity() {
         autoStampClickDone = false
         VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
 
-        val freeDayGreeting = if (wasEnding) {
-            VuorovahtiHelper.getFreeDayGreetingIfApplicable(this)
-        } else null
-
+        val freeDayGreeting = if (wasEnding) VuorovahtiHelper.getFreeDayGreetingIfApplicable(this) else null
         val statusText = if (freeDayGreeting != null) {
             "$freeDayGreeting\n\nSuljetaan sovellus..."
         } else {
@@ -1929,20 +1503,22 @@ class MainActivity : AppCompatActivity() {
         webView.postDelayed({ finishAndRemoveTask() }, if (freeDayGreeting != null) 2600L else 1400L)
     }
 
+    private fun getRequiredPermissions(): List<String> {
+        val list = mutableListOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            list.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        return list
+    }
+
     private fun checkPermissionsAndSync() {
-        val needed = mutableListOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) needed.add(Manifest.permission.POST_NOTIFICATIONS)
-        val missing = needed.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        val missing = getRequiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
         } else {
-            pagesRemainingToSync = if (isDemoActive) 0 else 8
-            totalFoundInBatch = 0
-            totalAddedInBatch = 0
-            totalRemovedInBatch = 0
-            syncedDatesInBatch.clear()
-            syncChangesList.clear()
-            syncedShiftRangesInBatch.clear()
+            resetSyncBatch(if (isDemoActive) 0 else 8)
             extractShiftsFromPage(forceList = true)
         }
     }
@@ -1954,13 +1530,7 @@ class MainActivity : AppCompatActivity() {
             val r = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
             val w = ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
             if (r && w) {
-                pagesRemainingToSync = if (isDemoActive) 0 else 8
-                totalFoundInBatch = 0
-                totalAddedInBatch = 0
-                totalRemovedInBatch = 0
-                syncedDatesInBatch.clear()
-                syncChangesList.clear()
-                syncedShiftRangesInBatch.clear()
+                resetSyncBatch(if (isDemoActive) 0 else 8)
                 extractShiftsFromPage(forceList = true)
             }
         }
@@ -2049,17 +1619,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun finishCalendarSyncBatch(calId: Long, toastPrefix: String) {
+        totalRemovedInBatch += reconcileRemovedShifts(calId)
+        hideStampOverlay()
+        isBackgroundListSync = false
+        VuorovahtiHelper.saveLastSyncStatus(this, totalFoundInBatch)
+        VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
+        VuorovahtiHelper.ensureRemindersFromCalendar(this)
+        saveSyncChangesHistory()
+        if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) {
+            sendNewShiftsAddedNotification(totalAddedInBatch)
+        }
+        Toast.makeText(
+            this,
+            "$toastPrefix $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
     inner class CalendarBridge {
         @JavascriptInterface
         fun confirmWishAction(actionTitle: String) {
             runOnUiThread {
                 requireBiometricAuth(actionTitle) {
-                    webView.evaluateJavascript("""
+                    webView.evaluateJavascript(
+                        """
                         if (window._pendingWishEl) {
                             window._wishAuthApproved = true;
                             window._pendingWishEl.click();
                         }
-                    """.trimIndent(), null)
+                        """.trimIndent(),
+                        null
+                    )
                 }
             }
         }
@@ -2084,19 +1675,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     clickNextCalendarPeriod(calId)
                 } else {
-                    totalRemovedInBatch += reconcileRemovedShifts(calId)
-                    hideStampOverlay()
-                    isBackgroundListSync = false
-                    VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
-                    VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-                    VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
-                    saveSyncChangesHistory()
-                    if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Tarkistettu $totalFoundInBatch merkintää: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    finishCalendarSyncBatch(calId, "Tarkistettu $totalFoundInBatch merkintää:")
                 }
             }
         }
@@ -2130,19 +1709,7 @@ class MainActivity : AppCompatActivity() {
                 }, 1400)
             } else {
                 pagesRemainingToSync = 0
-                totalRemovedInBatch += reconcileRemovedShifts(calId)
-                hideStampOverlay()
-                isBackgroundListSync = false
-                VuorovahtiHelper.saveLastSyncStatus(this, totalFoundInBatch)
-                VuorovahtiHelper.ensureRemindersFromCalendar(this)
-                VuorovahtiHelper.triggerConfirmHaptics(window.decorView)
-                saveSyncChangesHistory()
-                if (totalAddedInBatch > 0 || totalRemovedInBatch > 0) sendNewShiftsAddedNotification(totalAddedInBatch)
-                Toast.makeText(
-                    this,
-                    "Valmis: $totalAddedInBatch lisätty/päivitetty, $totalRemovedInBatch poistettu.",
-                    Toast.LENGTH_LONG
-                ).show()
+                finishCalendarSyncBatch(calId, "Valmis:")
             }
         }
     }
@@ -2150,14 +1717,15 @@ class MainActivity : AppCompatActivity() {
     private fun saveSyncChangesHistory() {
         val arr = JSONArray()
         for (item in syncChangesList) {
-            val obj = JSONObject().apply {
-                put("eventId", item.eventId)
-                put("type", item.type)
-                put("dateStr", item.dateStr)
-                put("timeStr", item.timeStr)
-                put("title", item.title)
-            }
-            arr.put(obj)
+            arr.put(
+                JSONObject().apply {
+                    put("eventId", item.eventId)
+                    put("type", item.type)
+                    put("dateStr", item.dateStr)
+                    put("timeStr", item.timeStr)
+                    put("title", item.title)
+                }
+            )
         }
         getSharedPreferences("vuorovahti_prefs", Context.MODE_PRIVATE)
             .edit()
@@ -2166,7 +1734,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendNewShiftsAddedNotification(addedCount: Int) {
-        saveSyncChangesHistory()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_list_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -2266,8 +1833,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 val infoText = TextView(this).apply {
-                    val nl = System.lineSeparator()
-                    text = "[$badgeText]  $dateStr  klo $timeStr" + nl + title
+                    text = "[$badgeText]  $dateStr  klo $timeStr${System.lineSeparator()}$title"
                     textSize = 13.5f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(Color.parseColor(badgeColor))
@@ -2290,16 +1856,16 @@ class MainActivity : AppCompatActivity() {
                             cornerRadius = dp(8).toFloat()
                             setColor(Color.parseColor("#0284C7"))
                         }
-                        minHeight = 0; minimumHeight = 0
+                        minHeight = 0
+                        minimumHeight = 0
                         setPadding(dp(12), dp(6), dp(12), dp(6))
                         layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) }
                         setOnClickListener {
+                            val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, evId)
                             try {
-                                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, evId)
                                 startActivity(Intent(Intent.ACTION_EDIT).apply { data = uri })
                             } catch (_: Exception) {
                                 try {
-                                    val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, evId)
                                     startActivity(Intent(Intent.ACTION_VIEW).apply { data = uri })
                                 } catch (_: Exception) {}
                             }
@@ -2315,7 +1881,8 @@ class MainActivity : AppCompatActivity() {
                             cornerRadius = dp(8).toFloat()
                             setColor(Color.parseColor("#991B1B"))
                         }
-                        minHeight = 0; minimumHeight = 0
+                        minHeight = 0
+                        minimumHeight = 0
                         setPadding(dp(12), dp(6), dp(12), dp(6))
                         setOnClickListener {
                             contentResolver.delete(
@@ -2343,10 +1910,7 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(listCol)
         root.addView(scroll)
 
-        val dlg = AlertDialog.Builder(this)
-            .setView(root)
-            .create()
-
+        val dlg = AlertDialog.Builder(this).setView(root).create()
         val btnCloseDlg = Button(this).apply {
             text = "Sulje"
             isAllCaps = false
@@ -2365,7 +1929,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun resolveMonthAndYear(pageText: String, currentUrl: String): Pair<Int, Int> {
         val now = LocalDate.now()
-        val months = mapOf("tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4, "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8, "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12)
+        val months = mapOf(
+            "tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4,
+            "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8,
+            "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12
+        )
         val mMatch = Regex("""(tammikuu|helmikuu|maaliskuu|huhtikuu|toukokuu|kesäkuu|heinäkuu|elokuu|syyskuu|lokakuu|marraskuu|joulukuu)\s+(\d{4})""", RegexOption.IGNORE_CASE).find(pageText)
         if (mMatch != null) {
             val m = months[mMatch.groupValues[1].lowercase()]
@@ -2386,7 +1954,7 @@ class MainActivity : AppCompatActivity() {
             val approxMonth = if (wk >= 48) 12 else if (wk <= 4) 1 else now.monthValue
             return Pair(approxMonth, inferredYear)
         }
-        val uri = try { Uri.parse(currentUrl) } catch (e: Exception) { null }
+        val uri = try { Uri.parse(currentUrl) } catch (_: Exception) { null }
         return Pair(uri?.getQueryParameter("month")?.toIntOrNull() ?: now.monthValue, uri?.getQueryParameter("year")?.toIntOrNull() ?: now.year)
     }
 
@@ -2405,7 +1973,10 @@ class MainActivity : AppCompatActivity() {
                 val end = LocalDate.of(y2, m2, d2)
                 if (!end.isBefore(cur) && ChronoUnit.DAYS.between(cur, end) <= 45) {
                     foundRanges++
-                    while (!cur.isAfter(end)) { vacationDays.add(cur); cur = cur.plusDays(1) }
+                    while (!cur.isAfter(end)) {
+                        vacationDays.add(cur)
+                        cur = cur.plusDays(1)
+                    }
                 }
             } catch (_: Exception) {}
         }
@@ -2418,14 +1989,16 @@ class MainActivity : AppCompatActivity() {
         val listRes = parseListView(pageText, targetMonth, targetYear, calId, fmt)
         if (listRes.first > 0) return listRes
 
-        var found = 0; var added = 0
+        var found = 0
+        var added = 0
         val vacationDays = mutableListOf<LocalDate>()
         found += extractDirectVacationRanges(pageText, targetYear, vacationDays)
 
         try {
             val arr = JSONArray(cellsJson)
             if (arr.length() > 15) {
-                var inMonth = false; var lastDay = 0
+                var inMonth = false
+                var lastDay = 0
                 for (i in 0 until arr.length()) {
                     val obj = arr.getJSONObject(i)
                     val txt = obj.optString("text", "").trim()
@@ -2434,24 +2007,31 @@ class MainActivity : AppCompatActivity() {
                     val day = Regex("""^(\d{1,2})\b""").find(txt)?.groupValues?.get(1)?.toIntOrNull() ?: continue
                     if (day !in 1..31) continue
                     if (!inMonth) {
-                        if (day == 1) { inMonth = true; lastDay = 1 } else continue
+                        if (day == 1) {
+                            inMonth = true
+                            lastDay = 1
+                        } else continue
                     } else {
                         if (day < lastDay && lastDay >= 20) break
                         if (day == lastDay + 1 || day == lastDay) lastDay = day else continue
                     }
                     if (isOther) continue
                     val res = processDayContent(calId, day, targetMonth, targetYear, txt, extra, fmt, vacationDays)
-                    found += res.first; added += res.second
+                    found += res.first
+                    added += res.second
                 }
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         added += saveGroupedVacations(calId, vacationDays)
         return Pair(found, added)
     }
 
     private fun parseListView(pageText: String, targetMonth: Int, targetYear: Int, calId: Long, fmt: DateTimeFormatter): Pair<Int, Int> {
-        var found = 0; var added = 0
+        var found = 0
+        var added = 0
         val vacationDays = mutableListOf<LocalDate>()
         found += extractDirectVacationRanges(pageText, targetYear, vacationDays)
         val dateRe = Regex("""(?:(?:ma|ti|ke|to|pe|la|su|maanantai|tiistai|keskiviikko|torstai|perjantai|lauantai|sunnuntai)[\s.,]+(\d{1,2})\.(\d{1,2})(?:\.(\d{4})?)?|(?<![:\d.])(\d{1,2})\.(\d{1,2})\.(\d{4})?)(?!\d)""", RegexOption.IGNORE_CASE)
@@ -2468,16 +2048,18 @@ class MainActivity : AppCompatActivity() {
                 val eIdx = if (i + 1 < matches.size) matches[i + 1].range.first else minOf(sIdx + 500, pageText.length)
                 if (sIdx >= eIdx) continue
                 val res = processListBlock(calId, d, mo, yr, pageText.substring(sIdx, eIdx).trim(), fmt, vacationDays)
-                found += res.first; added += res.second
+                found += res.first
+                added += res.second
             }
             if (matches.size >= 5 || found > 0) {
-                for (i in matches.indices) {
-                    val m = matches[i]
+                for (m in matches) {
                     val d = (m.groupValues[1].ifEmpty { m.groupValues[4] }).toIntOrNull() ?: continue
                     val mo = (m.groupValues[2].ifEmpty { m.groupValues[5] }).toIntOrNull() ?: continue
                     val rawYr = (m.groupValues[3].ifEmpty { m.groupValues[6] }).toIntOrNull()
                     val yr = rawYr ?: if (mo < LocalDate.now().monthValue - 1 && LocalDate.now().monthValue >= 10) LocalDate.now().year + 1 else if (targetMonth == 12 && mo == 1) targetYear + 1 else if (targetMonth == 1 && mo == 12) targetYear - 1 else targetYear
-                    try { syncedDatesInBatch.add(LocalDate.of(yr, mo, d)) } catch (_: Exception) {}
+                    try {
+                        syncedDatesInBatch.add(LocalDate.of(yr, mo, d))
+                    } catch (_: Exception) {}
                 }
             }
             added += saveGroupedVacations(calId, vacationDays)
@@ -2488,7 +2070,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun processListBlock(calId: Long, d: Int, m: Int, y: Int, block: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
         if (block.lowercase().let { it.contains("vuosiloma") || it.contains("loma") || Regex("""\bvl\b""").containsMatchIn(it) }) {
-            try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
+            try {
+                vacationDays.add(LocalDate.of(y, m, d))
+            } catch (_: Exception) {}
             return Pair(1, 0)
         }
         val sMatches = Regex("""(\d{1,2}[:.]\d{2})[\s\t]*[-–][\s\t]*(\d{1,2}[:.]\d{2})""").findAll(block).toList()
@@ -2511,7 +2095,9 @@ class MainActivity : AppCompatActivity() {
     private fun processDayContent(calId: Long, d: Int, m: Int, y: Int, txt: String, extra: String, fmt: DateTimeFormatter, vacationDays: MutableList<LocalDate>): Pair<Int, Int> {
         val rest = "${txt.replaceFirst(Regex("""^\d{1,2}\s*"""), "")} $extra".lowercase()
         if (rest.contains("vuosiloma") || rest.contains("loma") || Regex("""\bvl\b""").containsMatchIn(rest)) {
-            try { vacationDays.add(LocalDate.of(y, m, d)) } catch (_: Exception) {}
+            try {
+                vacationDays.add(LocalDate.of(y, m, d))
+            } catch (_: Exception) {}
             return Pair(1, 0)
         }
         val shifts = Regex("""(\d{1,2}[:.]\d{2})[\s\t\r\n]*[-–][\s\t\r\n]*(\d{1,2}[:.]\d{2})""").findAll(txt).toList()
@@ -2532,40 +2118,18 @@ class MainActivity : AppCompatActivity() {
     private fun extractLocAndDesc(startStr: String, raw: String): Pair<String, String> {
         val lines = raw.lines().map { it.trim() }.filter {
             it.length > 2 && !it.equals("Uusi", true) && !it.equals("Lisää uusi", true) &&
-            !it.equals("Valinnat", true) && !it.startsWith("Vk", true) &&
-            !it.startsWith("Viikko", true) && !Regex("""^\d{1,2}$""").matches(it)
+                !it.equals("Valinnat", true) && !it.startsWith("Vk", true) &&
+                !it.startsWith("Viikko", true) && !Regex("""^\d{1,2}$""").matches(it)
         }
         if (lines.size >= 2) {
             val codeLine = lines.firstOrNull { Regex("""^\d{3,5}\b""").containsMatchIn(it) }
             val roleLine = lines.firstOrNull { it != codeLine }
             return Pair(codeLine ?: lines[0], roleLine ?: lines[1])
-        } else if (lines.size == 1) return Pair(lines[0], lines[0])
+        } else if (lines.size == 1) {
+            return Pair(lines[0], lines[0])
+        }
         val h = startStr.substringBefore(":").toIntOrNull() ?: 7
         return Pair("", if (h < 11) "Aamuvuoro" else if (h < 18) "Iltavuoro" else "Yövuoro")
-    }
-
-    private fun scheduleShiftAlarms(startMillis: Long, endMillis: Long, startStr: String, endStr: String, title: String) {
-        if (!SettingsManager.isStampNotificationEnabled(this)) return
-        try {
-            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
-            val now = System.currentTimeMillis()
-            val startAlarmTime = startMillis - (30 * 60 * 1000L)
-            if (startAlarmTime > now) {
-                val startIntent = Intent(this, ShiftAlarmReceiver::class.java).apply {
-                    putExtra("SHIFT_TITLE", title); putExtra("SHIFT_TIME", startStr); putExtra("IS_ENDING", false)
-                }
-                val startPi = PendingIntent.getBroadcast(this, (startAlarmTime / 60000L).toInt(), startIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                VuorovahtiHelper.scheduleAlarmSafe(alarmManager, startAlarmTime, startPi)
-            }
-            val endAlarmTime = endMillis - (30 * 60 * 1000L)
-            if (endAlarmTime > now) {
-                val endIntent = Intent(this, ShiftAlarmReceiver::class.java).apply {
-                    putExtra("SHIFT_TITLE", title); putExtra("SHIFT_TIME", endStr); putExtra("IS_ENDING", true)
-                }
-                val endPi = PendingIntent.getBroadcast(this, (endAlarmTime / 60000L).toInt() + 1, endIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-                VuorovahtiHelper.scheduleAlarmSafe(alarmManager, endAlarmTime, endPi)
-            }
-        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun saveWorkShift(calId: Long, dateStr: String, startStr: String, endStr: String, raw: String, fmt: DateTimeFormatter): Boolean {
@@ -2597,16 +2161,30 @@ class MainActivity : AppCompatActivity() {
                 }
                 updated
             }
-        } catch (e: Exception) { false }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun findShiftOnSameDay(calId: Long, sMs: Long, eMs: Long, dayStartMs: Long, dayEndMs: Long): Long? {
         val exactSel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ? AND ${CalendarContract.Events.DELETED} = 0"
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID), exactSel, arrayOf(calId.toString(), sMs.toString(), eMs.toString()), null)?.use {
+        contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events._ID),
+            exactSel,
+            arrayOf(calId.toString(), sMs.toString(), eMs.toString()),
+            null
+        )?.use {
             if (it.moveToFirst()) return it.getLong(0)
         }
         val daySel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} >= ? AND ${CalendarContract.Events.DTSTART} < ? AND ${CalendarContract.Events.DELETED} = 0"
-        contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND), daySel, arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString()), null)?.use {
+        contentResolver.query(
+            CalendarContract.Events.CONTENT_URI,
+            arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+            daySel,
+            arrayOf(calId.toString(), "Työvuoro", dayStartMs.toString(), dayEndMs.toString()),
+            null
+        )?.use {
             while (it.moveToNext()) {
                 val id = it.getLong(0)
                 val oldStart = it.getLong(1)
@@ -2671,7 +2249,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun reconcileRemovedShifts(calId: Long): Int {
         if (syncedDatesInBatch.size < 5 || totalFoundInBatch == 0) return 0
-        if (syncedDatesInBatch.isEmpty()) return 0
         val zone = ZoneId.systemDefault()
         val now = System.currentTimeMillis()
         var removedCount = 0
@@ -2721,7 +2298,7 @@ class MainActivity : AppCompatActivity() {
         if (!VuorovahtiHelper.shouldRunDailySilentSync(this)) return
 
         isSilentSyncRunning = true
-        var silentPagesLeft = 0
+        var silentPagesLeft = 2
 
         val bgWeb = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(1, 1)
@@ -2741,56 +2318,59 @@ class MainActivity : AppCompatActivity() {
             silentSyncWebView = null
         }
 
-        syncedDatesInBatch.clear()
-        syncChangesList.clear()
-        syncedShiftRangesInBatch.clear()
-        totalFoundInBatch = 0
-        totalAddedInBatch = 0
-        totalRemovedInBatch = 0
+        resetSyncBatch(0)
 
-        bgWeb.addJavascriptInterface(object {
-            @JavascriptInterface
-            fun onSilentData(cellsJson: String, pageText: String, currentUrl: String) {
-                runOnUiThread {
-                    val calId = getTargetOrPrimaryCalendarId()
-                    if (calId != null) {
-                        val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
-                        totalFoundInBatch += found
-                        totalAddedInBatch += added
-                        if (silentPagesLeft > 0) {
-                            silentPagesLeft--
-                            bgWeb.evaluateJavascript("""
-                                (function() {
-                                    var el = document.querySelector('a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button');
-                                    if (el) { (el.closest('a, button, div, span') || el).click(); return "NEXT"; }
-                                    return "NONE";
-                                })();
-                            """.trimIndent()) { res ->
-                                if (res?.contains("NEXT") == true) {
-                                    bgWeb.postDelayed({
-                                        bgWeb.evaluateJavascript("""
-                                            var cells=[]; var tds=document.querySelectorAll("td"); for(var j=0;j<tds.length;j++){var td=tds[j]; var cls=(td.className||"").toLowerCase(); if(/week|vk|wk/.test(cls)) continue; cells.push({text:(td.innerText||"").trim(), isOther:/other|old|new|disabled|off|outside|gray|grey/.test(cls), extra:""});} AndroidSilentBridge.onSilentData(JSON.stringify(cells), document.body ? document.body.innerText : "", window.location.href);
-                                        """.trimIndent(), null)
-                                    }, 1500L)
-                                } else {
-                                    reconcileRemovedShifts(calId)
-                                    VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
-                                    VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
-                                    cleanupSilentSync()
+        bgWeb.addJavascriptInterface(
+            object {
+                @JavascriptInterface
+                fun onSilentData(cellsJson: String, pageText: String, currentUrl: String) {
+                    runOnUiThread {
+                        val calId = getTargetOrPrimaryCalendarId()
+                        if (calId != null) {
+                            val (found, added) = parseAndInsertCalendar(cellsJson, pageText, currentUrl, calId)
+                            totalFoundInBatch += found
+                            totalAddedInBatch += added
+                            if (silentPagesLeft > 0) {
+                                silentPagesLeft--
+                                bgWeb.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var el = document.querySelector('a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button');
+                                        if (el) { (el.closest('a, button, div, span') || el).click(); return "NEXT"; }
+                                        return "NONE";
+                                    })();
+                                    """.trimIndent()
+                                ) { res ->
+                                    if (res?.contains("NEXT") == true) {
+                                        bgWeb.postDelayed({
+                                            bgWeb.evaluateJavascript(
+                                                """
+                                                var cells=[]; var tds=document.querySelectorAll("td"); for(var j=0;j<tds.length;j++){var td=tds[j]; var cls=(td.className||"").toLowerCase(); if(/week|vk|wk/.test(cls)) continue; cells.push({text:(td.innerText||"").trim(), isOther:/other|old|new|disabled|off|outside|gray|grey/.test(cls), extra:""});} AndroidSilentBridge.onSilentData(JSON.stringify(cells), document.body ? document.body.innerText : "", window.location.href);
+                                                """.trimIndent(),
+                                                null
+                                            )
+                                        }, 1500L)
+                                    } else {
+                                        reconcileRemovedShifts(calId)
+                                        VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
+                                        VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
+                                        cleanupSilentSync()
+                                    }
                                 }
+                            } else {
+                                reconcileRemovedShifts(calId)
+                                VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
+                                VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
+                                cleanupSilentSync()
                             }
                         } else {
-                            reconcileRemovedShifts(calId)
-                            VuorovahtiHelper.saveLastSyncStatus(this@MainActivity, totalFoundInBatch)
-                            VuorovahtiHelper.ensureRemindersFromCalendar(this@MainActivity)
                             cleanupSilentSync()
                         }
-                    } else {
-                        cleanupSilentSync()
                     }
                 }
-            }
-        }, "AndroidSilentBridge")
+            },
+            "AndroidSilentBridge"
+        )
 
         bgWeb.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -2801,7 +2381,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (u.contains("/Calendar/", ignoreCase = true)) {
                     view?.postDelayed({
-                        view.evaluateJavascript("""
+                        view.evaluateJavascript(
+                            """
                             (function() {
                                 var cells = [];
                                 var tds = document.querySelectorAll('td');
@@ -2813,7 +2394,9 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 AndroidSilentBridge.onSilentData(JSON.stringify(cells), document.body ? document.body.innerText : "", window.location.href);
                             })();
-                        """.trimIndent(), null)
+                            """.trimIndent(),
+                            null
+                        )
                     }, 1000L)
                 }
             }
@@ -2826,15 +2409,20 @@ class MainActivity : AppCompatActivity() {
         val days = rawDays.distinct().sorted()
         if (days.isEmpty()) return 0
         var addedCount = 0
-        var startDate = days[0]; var endDate = days[0]
+        var startDate = days[0]
+        var endDate = days[0]
         for (i in 1 until days.size) {
             val current = days[i]
             val gapDays = ChronoUnit.DAYS.between(endDate, current)
-            val isWeekendBridge = gapDays in 2..3 && (endDate.dayOfWeek == DayOfWeek.FRIDAY || endDate.dayOfWeek == DayOfWeek.SATURDAY) && current.dayOfWeek == DayOfWeek.MONDAY
-            if (gapDays == 1L || isWeekendBridge) endDate = current
-            else {
+            val isWeekendBridge = gapDays in 2..3 &&
+                (endDate.dayOfWeek == DayOfWeek.FRIDAY || endDate.dayOfWeek == DayOfWeek.SATURDAY) &&
+                current.dayOfWeek == DayOfWeek.MONDAY
+            if (gapDays == 1L || isWeekendBridge) {
+                endDate = current
+            } else {
                 if (saveCleanVacationPeriod(calId, startDate, endDate)) addedCount++
-                startDate = current; endDate = current
+                startDate = current
+                endDate = current
             }
         }
         if (saveCleanVacationPeriod(calId, startDate, endDate)) addedCount++
@@ -2849,7 +2437,13 @@ class MainActivity : AppCompatActivity() {
             val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} <= ? AND ${CalendarContract.Events.DTEND} >= ? AND ${CalendarContract.Events.DELETED} = 0"
             val args = arrayOf(calId.toString(), "Loma", (maxEndMs + oneDayMs).toString(), (minStartMs - oneDayMs).toString())
             val existingIds = mutableListOf<Long>()
-            contentResolver.query(CalendarContract.Events.CONTENT_URI, arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND), sel, args, null)?.use { c ->
+            contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                arrayOf(CalendarContract.Events._ID, CalendarContract.Events.DTSTART, CalendarContract.Events.DTEND),
+                sel,
+                args,
+                null
+            )?.use { c ->
                 while (c.moveToNext()) {
                     existingIds.add(c.getLong(0))
                     minStartMs = minOf(minStartMs, c.getLong(1))
@@ -2858,17 +2452,23 @@ class MainActivity : AppCompatActivity() {
             }
             if (existingIds.size == 1) {
                 val v = ContentValues().apply {
-                    put(CalendarContract.Events.DTSTART, minStartMs); put(CalendarContract.Events.DTEND, maxEndMs)
-                    put(CalendarContract.Events.ALL_DAY, 1); put(CalendarContract.Events.EVENT_TIMEZONE, "UTC")
+                    put(CalendarContract.Events.DTSTART, minStartMs)
+                    put(CalendarContract.Events.DTEND, maxEndMs)
+                    put(CalendarContract.Events.ALL_DAY, 1)
+                    put(CalendarContract.Events.EVENT_TIMEZONE, "UTC")
                 }
                 contentResolver.update(CalendarContract.Events.CONTENT_URI, v, "${CalendarContract.Events._ID} = ?", arrayOf(existingIds[0].toString()))
                 return true
             } else if (existingIds.size > 1) {
-                for (id in existingIds) contentResolver.delete(CalendarContract.Events.CONTENT_URI, "${CalendarContract.Events._ID} = ?", arrayOf(id.toString()))
+                for (id in existingIds) {
+                    contentResolver.delete(CalendarContract.Events.CONTENT_URI, "${CalendarContract.Events._ID} = ?", arrayOf(id.toString()))
+                }
             }
             insertEvent(calId, "Loma", "", "Vuosiloma", minStartMs, maxEndMs, true, 0)
             true
-        } catch (e: Exception) { false }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun getTargetOrPrimaryCalendarId(): Long? {
@@ -2879,8 +2479,12 @@ class MainActivity : AppCompatActivity() {
                 if (it.moveToFirst()) return it.getLong(0)
             }
         }
-        contentResolver.query(CalendarContract.Calendars.CONTENT_URI, proj, "${CalendarContract.Calendars.IS_PRIMARY} = 1", null, null)?.use { if (it.moveToFirst()) return it.getLong(0) }
-        contentResolver.query(CalendarContract.Calendars.CONTENT_URI, proj, "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}", null, null)?.use { if (it.moveToFirst()) return it.getLong(0) }
+        contentResolver.query(CalendarContract.Calendars.CONTENT_URI, proj, "${CalendarContract.Calendars.IS_PRIMARY} = 1", null, null)?.use {
+            if (it.moveToFirst()) return it.getLong(0)
+        }
+        contentResolver.query(CalendarContract.Calendars.CONTENT_URI, proj, "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ${CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR}", null, null)?.use {
+            if (it.moveToFirst()) return it.getLong(0)
+        }
         return null
     }
 
@@ -2905,7 +2509,9 @@ class MainActivity : AppCompatActivity() {
             if (accountName.isNotEmpty() && accountType.isNotEmpty()) {
                 var bestKey: String? = null
                 var bestDist = Int.MAX_VALUE
-                val r1 = Color.red(targetColor); val g1 = Color.green(targetColor); val b1 = Color.blue(targetColor)
+                val r1 = Color.red(targetColor)
+                val g1 = Color.green(targetColor)
+                val b1 = Color.blue(targetColor)
                 contentResolver.query(
                     CalendarContract.Colors.CONTENT_URI,
                     arrayOf(CalendarContract.Colors.COLOR_KEY, CalendarContract.Colors.COLOR),
@@ -2917,8 +2523,8 @@ class MainActivity : AppCompatActivity() {
                         val key = cc.getString(0) ?: continue
                         val col = cc.getInt(1)
                         val dist = (r1 - Color.red(col)) * (r1 - Color.red(col)) +
-                                   (g1 - Color.green(col)) * (g1 - Color.green(col)) +
-                                   (b1 - Color.blue(col)) * (b1 - Color.blue(col))
+                            (g1 - Color.green(col)) * (g1 - Color.green(col)) +
+                            (b1 - Color.blue(col)) * (b1 - Color.blue(col))
                         if (dist < bestDist) {
                             bestDist = dist
                             bestKey = key
@@ -2935,10 +2541,12 @@ class MainActivity : AppCompatActivity() {
     private fun insertEvent(calId: Long, title: String, loc: String, desc: String, sMs: Long, eMs: Long, allDay: Boolean, startHour: Int = 8): Long? {
         val colorLabel = if (allDay) "Loma" else desc.ifEmpty { title }
         val v = ContentValues().apply {
-            put(CalendarContract.Events.TITLE, "Työvuoro")
-            put(CalendarContract.Events.DTSTART, sMs); put(CalendarContract.Events.DTEND, eMs)
-            put(CalendarContract.Events.TITLE, title); put(CalendarContract.Events.EVENT_LOCATION, loc)
-            put(CalendarContract.Events.DESCRIPTION, desc); put(CalendarContract.Events.CALENDAR_ID, calId)
+            put(CalendarContract.Events.TITLE, title)
+            put(CalendarContract.Events.DTSTART, sMs)
+            put(CalendarContract.Events.DTEND, eMs)
+            put(CalendarContract.Events.EVENT_LOCATION, loc)
+            put(CalendarContract.Events.DESCRIPTION, desc)
+            put(CalendarContract.Events.CALENDAR_ID, calId)
             put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
             put(CalendarContract.Events.EVENT_TIMEZONE, if (allDay) "UTC" else ZoneId.systemDefault().id)
             applyColorWithFallback(this, calId, colorLabel, startHour)
@@ -2954,26 +2562,5 @@ class MainActivity : AppCompatActivity() {
                 contentResolver.insert(CalendarContract.Events.CONTENT_URI, v)?.lastPathSegment?.toLongOrNull()
             }
         }
-    }
-
-    private fun checkAndRequestAllPermissions() {
-        val neededPermissions = mutableListOf(
-            Manifest.permission.READ_CALENDAR,
-            Manifest.permission.WRITE_CALENDAR
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            neededPermissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        val missing = neededPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missing.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 105)
-        }
-    }
-        private fun scheduleNextThreeWeekListCheck() {
-        VuorovahtiHelper.scheduleNextThreeWeekListCheck(this)
     }
 }
