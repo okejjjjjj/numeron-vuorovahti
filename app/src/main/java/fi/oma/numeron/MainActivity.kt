@@ -1029,16 +1029,43 @@ class MainActivity : AppCompatActivity() {
             }
             .punching-shift-caption { color: #BAE6FD !important; font-size: 11px !important; letter-spacing: 0.05em !important; text-transform: uppercase !important; margin: 0 !important; }
             .punching-shift-name { color: #F8FAFC !important; font-size: 15px !important; font-weight: bold !important; line-height: 1.3 !important; margin: 0 !important; }
-            .nav-tabs-wts { border-bottom: 1px solid #334155 !important; }
-            .nav-tabs-wts > li.active > a { background-color: transparent !important; color: #38BDF8 !important; border-bottom: 2px solid #38BDF8 !important; }
-            .table, .table > tbody > tr > td, .table > tbody > tr > th, .table-active, .table-active > td {
+            #panel-body-tabs, .punching-events-container-header, .punching-events-caption,
+            .tab-content-wts, .tab-pane-wts, #latestStampsContainer, .punching-bottom-container,
+            .punching-previous-stamps, .punching-previous-stamps-container-header, .punching-show-more-button {
                 background: transparent !important;
                 background-color: transparent !important;
                 color: #E2E8F0 !important;
             }
+            .nav-tabs-wts { border-bottom: 1px solid #334155 !important; background: transparent !important; }
+            .nav-tabs-wts > li > a, .wts-tab-item > a {
+                background: transparent !important;
+                background-color: transparent !important;
+                color: #94A3B8 !important;
+                border: none !important;
+            }
+            .nav-tabs-wts > li.active > a, .nav-tabs-wts > li.active > a:focus, .nav-tabs-wts > li.active > a:hover {
+                background: transparent !important;
+                background-color: transparent !important;
+                color: #38BDF8 !important;
+                border: none !important;
+                border-bottom: 2px solid #38BDF8 !important;
+            }
+            .table, .table > tbody, .table > tbody > tr, .table > tbody > tr > td, .table > tbody > tr > th,
+            .table-active, .table-active > tbody > tr, .table-active > tbody > tr > td, .table-active > td,
+            #table-latest-stamps, #table-latest-stamps tbody, #table-latest-stamps tr, #table-latest-stamps td {
+                background: transparent !important;
+                background-color: transparent !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+            }
             #table-latest-stamps tr { border-bottom: 1px solid #334155 !important; }
-            #table-latest-stamps tr:hover td, #table-latest-stamps tr:active td { background-color: #334155 !important; color: #FFFFFF !important; }
+            #table-latest-stamps tr:hover, #table-latest-stamps tr:hover td,
+            #table-latest-stamps tr:active, #table-latest-stamps tr:active td {
+                background-color: #334155 !important;
+                color: #FFFFFF !important;
+            }
             #table-latest-stamps td { border: none !important; padding: 10px 6px !important; }
+            .visma-icon-arrow-next-icon { filter: invert(0.85) brightness(1.2) !important; }
             #forgotStampPanel { background-color: #1E293B !important; color: #E2E8F0 !important; }
             .fixed-menu-bar { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin: 0 0 10px 0 !important; }
             .fixed-menu-bar .col-sm-8 { width: 100% !important; padding: 0 !important; display: flex !important; flex-wrap: wrap !important; gap: 8px !important; }
@@ -1112,13 +1139,15 @@ class MainActivity : AppCompatActivity() {
             (function() {
                 var cssText = `$css`;
                 function attachTheme() {
-                    var root = document.head || document.documentElement;
+                    var root = document.documentElement || document.head;
                     if (!root) return false;
                     var style = document.getElementById('custom-numeron-theme');
                     if (!style) {
                         style = document.createElement('style');
                         style.id = 'custom-numeron-theme';
                         style.textContent = cssText;
+                    }
+                    if (style.parentNode !== root || root.lastElementChild !== style) {
                         root.appendChild(style);
                     }
                     return true;
