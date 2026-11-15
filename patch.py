@@ -1,368 +1,295 @@
-import os
-import re
-import sys
+from pathlib import Path
 
-def find_file(preferred_paths, filename):
-    for p in preferred_paths:
-        if os.path.isfile(p):
-            return p
-    for root, _, files in os.walk("."):
-        if ".git" in root or "build" in root.split(os.sep):
-            continue
-        if filename in files:
-            return os.path.join(root, filename)
-    return None
+TARGET = Path("app/src/main/java/fi/oma/numeron/MainActivity.kt")
 
-def patch_main_activity(path):
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
 
-    old_calendar_css = """            .calendar-body, .calendar-heading {
-                background-color: #1E293B !important;
-                box-shadow: none !important;
-                border: 1px solid #334155 !important;
-                border-radius: 14px !important;
-                padding: 8px !important;
-                margin-bottom: 10px !important;
-            }
-            .calendar-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 10px !important; }
-            .calendar-heading .monthSelector { display: contents !important; }
-            .calendar-heading .monthSelector .panel-body {
-                order: 1 !important;
-                width: 100% !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                padding: 0 4px 4px 4px !important;
-                margin: 0 !important;
-                float: none !important;
-            }
-            #monthText { color: #F8FAFC !important; font-size: 18px !important; font-weight: bold !important; margin: 0 !important; }
-            #pc_AddButton { order: 2 !important; width: 100% !important; display: flex !important; gap: 8px !important; margin: 0 !important; float: none !important; }
-            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown { flex: 1 !important; margin: 0 !important; display: block !important; }
-            #pcAddButt, #pc_AddButton .filterButton {
-                width: 100% !important;
-                height: 36px !important;
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                padding: 6px 10px !important;
-                font-size: 13px !important;
-            }
-            #pcTodayButton, #pcViewDropdown { order: 3 !important; flex: 1 1 46% !important; display: block !important; margin: 0 !important; float: none !important; }
-            #todayButt, #pcViewButt { width: 100% !important; max-width: none !important; min-width: 0 !important; height: 36px !important; padding: 6px 10px !important; font-size: 13px !important; }
-            #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }"""
+def replace_exact(content: str, old: str, new: str, label: str) -> str:
+    count = content.count(old)
+    assert count == 1, f"Odotettiin täsmälleen 1 osumaa kohdalle '{label}', löytyi {count}"
+    return content.replace(old, new, 1)
 
-    new_calendar_css = """            .calendar-body, .calendar-heading {
-                background-color: #1E293B !important;
-                box-shadow: none !important;
-                border: 1px solid #334155 !important;
-                border-radius: 14px !important;
-                padding: 8px !important;
-                margin-bottom: 10px !important;
-                height: auto !important;
-                min-height: 0 !important;
-                max-height: none !important;
-                overflow: visible !important;
+
+def main() -> None:
+    if not TARGET.exists():
+        # Fallback jos ajetaan suoraan samasta hakemistosta
+        alt = Path("MainActivity.kt")
+        if alt.exists():
+            target_path = alt
+        else:
+            raise FileNotFoundError(f"Tiedostoa {TARGET} ei löytynyt.")
+    else:
+        target_path = TARGET
+
+    code = target_path.read_text(encoding="utf-8")
+
+    # 1. Poista taustakuva, piilota evästebanneri ja siisti kirjautumiskortti sekä lomakekentät
+    old_css_block = """            :root { color-scheme: dark; }
+            html, body {
+                background-color: #0F172A !important;
+                color: #E2E8F0 !important;
+                font-family: sans-serif !important;
+                margin: 0 !important;
+                padding: 0 !important;
             }
-            .calendar-heading {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                gap: 8px !important;
-                padding: 10px !important;
-                position: static !important;
+            a { color: #38BDF8; }
+            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"],
+            .container > h1.clear, .container-fluid > h1.clear, h1.clear,
+            #wfm-modal-div:empty, .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
+            #mobile_AddButton, #mobileViewDropdown, .whitebox hr {
+                display: none !important;
             }
-            .calendar-heading .monthSelector, .calendar-heading .weekSelector { display: contents !important; }
-            .calendar-heading .monthSelector .panel-body, .calendar-heading .weekSelector .panel-body {
-                order: 1 !important;
+            .container, .container-fluid, .content-container {
                 width: 100% !important;
-                height: auto !important;
-                min-height: 0 !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-                padding: 0 4px 4px 4px !important;
+                max-width: 100% !important;
+                padding: 14px 10px 24px 10px !important;
                 margin: 0 !important;
-                float: none !important;
-                position: static !important;
+                background-color: #0F172A !important;
             }
-            #monthText, #weekText, .calendar-heading .view-label {
-                color: #F8FAFC !important;
-                font-size: 18px !important;
-                font-weight: bold !important;
-                margin: 0 !important;
-                line-height: 1.2 !important;
-            }
-            #pc_AddButton {
-                order: 2 !important;
-                width: 100% !important;
-                height: auto !important;
-                min-height: 0 !important;
-                display: flex !important;
-                gap: 8px !important;
-                margin: 0 !important;
-                float: none !important;
-                position: static !important;
-            }
-            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown {
-                flex: 1 !important;
-                margin: 0 !important;
-                display: block !important;
-                position: relative !important;
-            }
-            #pcAddButt, #pc_AddButton .filterButton {
-                width: 100% !important;
-                height: 36px !important;
-                min-height: 36px !important;
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                padding: 6px 10px !important;
-                margin: 0 !important;
-                font-size: 13px !important;
-                line-height: 1.2 !important;
-                position: static !important;
-                top: auto !important;
-            }
-            #pcTodayButton, #pcViewDropdown {
-                order: 3 !important;
-                flex: 1 1 46% !important;
-                height: auto !important;
-                min-height: 0 !important;
-                display: block !important;
-                margin: 0 !important;
-                float: none !important;
-                position: relative !important;
-                top: auto !important;
-            }
-            #todayButt, #pcViewButt {
-                width: 100% !important;
-                max-width: none !important;
-                min-width: 0 !important;
-                height: 36px !important;
-                min-height: 36px !important;
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                padding: 6px 10px !important;
-                margin: 0 !important;
-                font-size: 13px !important;
-                line-height: 1.2 !important;
-                position: static !important;
-                top: auto !important;
-            }
-            #pcViewDropdown .dropdown-menu, #pc_AddButton .dropdown-menu {
-                z-index: 1060 !important;
-                top: 100% !important;
-                margin-top: 4px !important;
-            }
-            #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }
-            #calendar-content {
-                height: auto !important;
-                min-height: 0 !important;
-                max-height: none !important;
-                overflow: visible !important;
-                clear: both !important;
-                position: static !important;
-            }
-            #calendar-content hr { border-color: #334155 !important; margin: 8px 0 !important; }
-            #calendar-content .list-week-header, #calendar-content .week-header, #calendar-content h3, #calendar-content h4 {
-                color: #38BDF8 !important;
-                border-color: #334155 !important;
-                background: transparent !important;
-            }
-            #calendar-content .list-day-header, #calendar-content .day-header, #calendar-content .list-date-header {
-                color: #F8FAFC !important;
-                background: transparent !important;
-            }
-            #calendar-content .list-item, #calendar-content .list-item-work, #calendar-content .list-item-content,
-            #calendar-content .calendar-list-item, #calendar-content .schedule-item, #calendar-content .schedule-item-work,
-            #calendar-content .list-day-item, #calendar-content .shift-item {
+            .blurbox { background: transparent !important; text-align: center !important; }
+            .blurbox h1 { color: #38BDF8 !important; font-size: 20px !important; font-weight: bold !important; margin: 4px 0 14px 0 !important; }
+            .whitebox, .panel, .panel-default, .well, .list-group-item,
+            .modal-content, .popover, .popover-content, .popover-title, .tooltip-inner {
                 background-color: #1E293B !important;
                 background-image: none !important;
-                color: #F1F5F9 !important;
-                border-color: #334155 !important;
-            }
-            #calendar-content .list-item, #calendar-content .calendar-list-item, #calendar-content .schedule-item {
                 border: 1px solid #334155 !important;
-                border-left: 4px solid #0284C7 !important;
-                border-radius: 12px !important;
-                padding: 8px 10px !important;
-                margin: 6px 0 !important;
-            }
-            #calendar-content .list-item *, #calendar-content .calendar-list-item *, #calendar-content .schedule-item * {
-                color: #F1F5F9 !important;
-                border-color: #334155 !important;
+                border-radius: 14px !important;
+                box-shadow: none !important;
+                color: #E2E8F0 !important;
             }"""
 
-    old_js_block = """                function attachTheme() {
-                    var root = document.documentElement || document.head;
-                    if (!root) return false;
-                    var style = document.getElementById('custom-numeron-theme');
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = 'custom-numeron-theme';
-                        style.textContent = cssText;
-                    }
-                    if (style.parentNode !== root || root.lastElementChild !== style) {
-                        root.appendChild(style);
-                    }
-                    return true;
-                }
-                if (!attachTheme()) {
-                    var obs = new MutationObserver(function() {
-                        if (attachTheme()) obs.disconnect();
-                    });
-                    obs.observe(document, { childList: true, subtree: true });
-                }"""
+    new_css_block = """            :root { color-scheme: dark; }
+            html, body {
+                background: #0F172A !important;
+                background-color: #0F172A !important;
+                background-image: none !important;
+                color: #E2E8F0 !important;
+                font-family: sans-serif !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            a { color: #38BDF8; }
+            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"],
+            .container > h1.clear, .container-fluid > h1.clear, h1.clear,
+            #wfm-modal-div:empty, .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
+            #mobile_AddButton, #mobileViewDropdown, .whitebox hr,
+            #cookieConsent, .cookie-consent, .cookie-banner, #cookie-banner, .cc-window, .cc-banner {
+                display: none !important;
+            }
+            .container, .container-fluid, .content-container {
+                width: 100% !important;
+                max-width: 100% !important;
+                padding: 14px 10px 24px 10px !important;
+                margin: 0 !important;
+                background-color: #0F172A !important;
+            }
+            .content {
+                float: none !important;
+                width: 100% !important;
+                max-width: 440px !important;
+                margin: 0 auto !important;
+                padding: 24px 14px !important;
+                position: static !important;
+                top: auto !important;
+                left: auto !important;
+                transform: none !important;
+            }
+            .blurbox {
+                background: transparent !important;
+                background-color: transparent !important;
+                background-image: none !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                border: none !important;
+                box-shadow: none !important;
+                padding: 12px 0 8px 0 !important;
+                margin: 0 !important;
+                text-align: center !important;
+            }
+            .blurbox h1 {
+                color: #38BDF8 !important;
+                font-size: 24px !important;
+                font-weight: bold !important;
+                margin: 0 0 14px 0 !important;
+                text-shadow: none !important;
+            }
+            .whitebox, .panel, .panel-default, .well, .list-group-item,
+            .modal-content, .popover, .popover-content, .popover-title, .tooltip-inner {
+                background-color: #1E293B !important;
+                background-image: none !important;
+                border: 1px solid #334155 !important;
+                border-radius: 14px !important;
+                box-shadow: none !important;
+                color: #E2E8F0 !important;
+            }
+            .whitebox {
+                padding: 20px 18px !important;
+                margin: 0 !important;
+                min-height: 0 !important;
+                height: auto !important;
+            }
+            #LoginForm .form-group { margin: 0 0 14px 0 !important; }
+            #LoginForm .control-label {
+                display: block !important;
+                width: 100% !important;
+                float: none !important;
+                text-align: left !important;
+                padding: 0 0 6px 2px !important;
+                margin: 0 !important;
+                font-size: 13px !important;
+            }
+            #LoginForm .col-sm-7, #LoginForm .col-sm-offset-4 {
+                width: 100% !important;
+                float: none !important;
+                margin-left: 0 !important;
+                padding: 0 !important;
+            }
+            #LoginForm .form-control {
+                height: 44px !important;
+                font-size: 16px !important;
+                padding: 10px 12px !important;
+            }
+            #LoginForm .pull-left, #LoginForm .pull-right {
+                float: none !important;
+                display: block !important;
+                text-align: center !important;
+                margin: 6px 0 !important;
+                font-size: 13px !important;
+            }
+            #LoginForm input[type="submit"] {
+                height: 46px !important;
+                font-size: 15px !important;
+                margin-top: 12px !important;
+            }
+            .validation-summary-errors, .field-validation-error {
+                background-color: #450A0A !important;
+                border: 1px solid #EF4444 !important;
+                border-radius: 10px !important;
+                color: #FCA5A5 !important;
+                padding: 10px 12px !important;
+                margin-bottom: 12px !important;
+                font-size: 13px !important;
+                display: block !important;
+            }
+            .validation-summary-errors ul { margin: 0 !important; padding-left: 18px !important; }"""
 
-    new_js_block = """                function fixCalendarListTheme() {
-                    var rootEl = document.getElementById('calendar-content') || document.querySelector('.calendar-body');
-                    if (!rootEl) return;
-                    var nodes = rootEl.querySelectorAll('div, table, tbody, tr, td, section, article, ul, li');
-                    for (var i = 0; i < nodes.length; i++) {
-                        var el = nodes[i];
-                        if (el.classList && (el.classList.contains('month-item') || el.classList.contains('month-day'))) continue;
-                        var cs = window.getComputedStyle(el);
-                        var bg = cs.backgroundColor;
-                        var m = bg && bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/);
-                        if (m) {
-                            var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
-                            if (a > 0.1 && parseInt(m[1], 10) > 205 && parseInt(m[2], 10) > 205 && parseInt(m[3], 10) > 205) {
-                                el.style.setProperty('background-color', '#1E293B', 'important');
-                                el.style.setProperty('background-image', 'none', 'important');
-                                el.style.setProperty('border-color', '#334155', 'important');
-                                if (el.offsetHeight >= 44 && el.offsetHeight <= 260 && el.offsetWidth > 180) {
-                                    el.style.setProperty('border', '1px solid #334155', 'important');
-                                    el.style.setProperty('border-left', '4px solid #0284C7', 'important');
-                                    el.style.setProperty('border-radius', '12px', 'important');
-                                }
-                            }
-                        }
-                        var col = cs.color;
-                        var cm = col && col.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
-                        if (cm) {
-                            var r = parseInt(cm[1], 10), g = parseInt(cm[2], 10), b = parseInt(cm[3], 10);
-                            if (r < 130 && g < 130 && b < 130) {
-                                el.style.setProperty('color', '#E2E8F0', 'important');
-                            }
-                        }
-                    }
-                }
-                function attachTheme() {
-                    var root = document.documentElement || document.head;
-                    if (!root) return false;
-                    var style = document.getElementById('custom-numeron-theme');
-                    if (!style) {
-                        style = document.createElement('style');
-                        style.id = 'custom-numeron-theme';
-                        style.textContent = cssText;
-                    }
-                    if (style.parentNode !== root || root.lastElementChild !== style) {
-                        root.appendChild(style);
-                    }
-                    fixCalendarListTheme();
-                    return true;
-                }
-                attachTheme();
+    code = replace_exact(code, old_css_block, new_css_block, "injectCleanTheme CSS")
+
+    # 2. Evästebannerin automaattinen kuittaus + LoginFormin piilotus vain kun virhettä ei ole
+    old_theme_js = """                attachTheme();
                 if (!window._numeronThemeObserver) {
                     window._numeronThemeObserver = new MutationObserver(function() {
                         attachTheme();
                     });
                     window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
+                }
+                if ($hasCreds) {
+                    var form = document.getElementById('LoginForm');
+                    if (form && !form.dataset.hiddenByTheme) {
+                        form.dataset.hiddenByTheme = 'true';
+                        form.style.cssText = 'opacity:0;height:0;overflow:hidden;pointer-events:none;';
+                        var msg = document.createElement('div');
+                        msg.id = 'custom-login-msg';
+                        msg.style.cssText = 'text-align:center;padding:32px 12px;color:#38BDF8;font-size:16px;font-weight:bold;';
+                        msg.innerText = 'Kirjaudutaan sisään...';
+                        form.parentNode.insertBefore(msg, form);
+                        setTimeout(function() {
+                            var f = document.getElementById('LoginForm');
+                            var m = document.getElementById('custom-login-msg');
+                            if (f) {
+                                f.style.cssText = '';
+                                delete f.dataset.hiddenByTheme;
+                            }
+                            if (m) m.remove();
+                        }, 5000);
+                    }
                 }"""
 
-    updated = False
+    new_theme_js = """                function dismissCookieBanner() {
+                    var btns = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
+                    for (var i = 0; i < btns.length; i++) {
+                        var b = btns[i];
+                        var t = (b.innerText || b.value || '').trim().toLowerCase();
+                        if (t === 'hyväksy' || t === 'hyväksy evästeet' || t === 'accept') {
+                            var box = b.closest('div, section, aside, footer, header, nav');
+                            var boxTxt = box ? (box.innerText || '').toLowerCase() : '';
+                            if (boxTxt.indexOf('eväste') !== -1 || boxTxt.indexOf('cookie') !== -1) {
+                                if (!b.dataset.cookieClicked) {
+                                    b.dataset.cookieClicked = '1';
+                                    b.click();
+                                }
+                                if (box && box !== document.body && !box.querySelector('#LoginForm')) {
+                                    box.style.setProperty('display', 'none', 'important');
+                                }
+                            }
+                        }
+                    }
+                }
+                attachTheme();
+                dismissCookieBanner();
+                if (!window._numeronThemeObserver) {
+                    window._numeronThemeObserver = new MutationObserver(function() {
+                        attachTheme();
+                        dismissCookieBanner();
+                    });
+                    window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
+                }
+                if ($hasCreds) {
+                    var errEl = document.querySelector('.validation-summary-errors, .field-validation-error, .alert-danger');
+                    var hasLoginError = errEl && (errEl.innerText || '').trim().length > 0;
+                    var form = document.getElementById('LoginForm');
+                    if (form && !hasLoginError && !form.dataset.hiddenByTheme) {
+                        form.dataset.hiddenByTheme = 'true';
+                        form.style.cssText = 'opacity:0;height:0;overflow:hidden;pointer-events:none;';
+                        var msg = document.createElement('div');
+                        msg.id = 'custom-login-msg';
+                        msg.style.cssText = 'text-align:center;padding:24px 12px;';
+                        msg.innerHTML = '<div style="color:#38BDF8;font-size:16px;font-weight:bold;margin-bottom:6px;">Kirjaudutaan sisään...</div><div style="color:#94A3B8;font-size:13px;">Yhdistetään OmaNumeron-palveluun</div>';
+                        form.parentNode.insertBefore(msg, form);
+                        setTimeout(function() {
+                            var f = document.getElementById('LoginForm');
+                            var m = document.getElementById('custom-login-msg');
+                            if (f) {
+                                f.style.cssText = '';
+                                delete f.dataset.hiddenByTheme;
+                            }
+                            if (m) m.remove();
+                        }, 5000);
+                    }
+                }"""
 
-    if old_calendar_css in content:
-        content = content.replace(old_calendar_css, new_calendar_css, 1)
-        updated = True
-        print(f"[OK] Kalenteri- ja listanäkymän CSS päivitetty: {path}")
-    elif "#calendar-content .schedule-item" in content:
-        print(f"[INFO] Kalenteri- ja listanäkymän CSS oli jo ajan tasalla: {path}")
-    else:
-        print(f"[VIRHE] Kalenterin CSS-lohkoa ei löytynyt tiedostosta {path}")
-        return False
+    code = replace_exact(code, old_theme_js, new_theme_js, "injectCleanTheme JS")
 
-    if old_js_block in content:
-        content = content.replace(old_js_block, new_js_block, 1)
-        updated = True
-        print(f"[OK] fixCalendarListTheme() ja MutationObserver päivitetty: {path}")
-    elif "fixCalendarListTheme()" in content:
-        print(f"[INFO] JS-teemapäivitys oli jo ajan tasalla: {path}")
-    else:
-        print(f"[VIRHE] attachTheme()-lohkoa ei löytynyt tiedostosta {path}")
-        return False
+    # 3. Estä automaattikirjautumisen silmukka virheellisillä tunnuksilla ja tuplalähetys
+    old_autologin_tail = """                if (!passEl) return "NO_LOGIN_FORM";
+                if (userEl) setNativeValue(userEl, '$safeU');
+                setNativeValue(passEl, '$safeP');
+                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
+                if (submitBtn && submitBtn.offsetParent !== null) { submitBtn.click(); return "SUBMITTED"; }
+                if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
+                return "FILLED";"""
 
-    if updated:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+    new_autologin_tail = """                if (!passEl) return "NO_LOGIN_FORM";
+                var errEl = document.querySelector('.validation-summary-errors, .field-validation-error, .alert-danger');
+                if (errEl && (errEl.innerText || '').trim().length > 0) return "LOGIN_ERROR";
+                var nowTs = Date.now();
+                if (window._numeronAutoLoginTs && (nowTs - window._numeronAutoLoginTs) < 4000) return "SUBMIT_COOLDOWN";
+                window._numeronAutoLoginTs = nowTs;
+                if (userEl) setNativeValue(userEl, '$safeU');
+                setNativeValue(passEl, '$safeP');
+                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
+                if (submitBtn && submitBtn.offsetParent !== null) {
+                    submitBtn.disabled = false;
+                    submitBtn.click();
+                    return "SUBMITTED";
+                }
+                if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
+                return "FILLED";"""
 
-    return True
+    code = replace_exact(code, old_autologin_tail, new_autologin_tail, "tryAutoLoginIfNeeded")
 
-def bump_gradle_version(path):
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+    target_path.write_text(code, encoding="utf-8")
+    print(f"OK: {target_path} päivitetty onnistuneesti.")
 
-    vc_pattern = re.compile(r'(\bversionCode\s*=?\s*)(\d+)')
-    vc_match = vc_pattern.search(content)
-    if not vc_match:
-        print(f"[VAROITUS] versionCode-kenttää ei löytynyt tiedostosta {path}")
-        return False
-
-    old_vc = int(vc_match.group(2))
-    new_vc = old_vc + 1
-    content = vc_pattern.sub(rf'\g<1>{new_vc}', content, count=1)
-
-    vn_pattern = re.compile(r'(\bversionName\s*=?\s*["\'])([^"\']+)(["\'])')
-    vn_match = vn_pattern.search(content)
-    vn_info = ""
-    if vn_match:
-        old_vn = vn_match.group(2)
-        num_parts = re.search(r'(\d+)([^\d]*)$', old_vn)
-        if num_parts:
-            bumped_num = int(num_parts.group(1)) + 1
-            new_vn = old_vn[:num_parts.start(1)] + str(bumped_num) + num_parts.group(2)
-            content = vn_pattern.sub(rf'\g<1>{new_vn}\g<3>', content, count=1)
-            vn_info = f", versionName: {old_vn} -> {new_vn}"
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    print(f"[OK] Versionumero päivitetty ({path}): versionCode {old_vc} -> {new_vc}{vn_info}")
-    return True
-
-def main():
-    main_kt = find_file(
-        [
-            "app/src/main/java/fi/oma/numeron/MainActivity.kt",
-            "MainActivity.kt",
-        ],
-        "MainActivity.kt",
-    )
-    if not main_kt:
-        print("[VIRHE] MainActivity.kt-tiedostoa ei löytynyt.")
-        sys.exit(1)
-
-    if not patch_main_activity(main_kt):
-        sys.exit(1)
-
-    gradle_file = find_file(
-        [
-            "app/build.gradle.kts",
-            "app/build.gradle",
-            "build.gradle.kts",
-            "build.gradle",
-        ],
-        "build.gradle.kts",
-    ) or find_file(["app/build.gradle", "build.gradle"], "build.gradle")
-
-    if gradle_file:
-        bump_gradle_version(gradle_file)
-    else:
-        print("[VAROITUS] app/build.gradle(.kts) ei löytynyt – versionCode jäi päivittämättä.")
 
 if __name__ == "__main__":
     main()
