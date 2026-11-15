@@ -1,294 +1,285 @@
+#!/usr/bin/env python3
+"""
+Päivittää MainActivity.kt-tiedoston Visma Numeronin kalenterisynkronoinnin:
+1. Nostaa sivutuserän (resetSyncBatch) 8 -> 12 viikkoon (koko joulukuu + tammikuun alku).
+2. Korjaa luettelonäkymään vaihdon (#go-to-list a / #go-to-list-mobile a).
+3. Lisää Visma Numeronin .nextButton / .vismaicon-arrow-right-circle -nuolinapit.
+4. Päivittää myös hiljaisen päiväsynkronoinnin (triggerSilentDailySyncIfNeeded) seuraava-napin.
+"""
+
+import shutil
+import sys
 from pathlib import Path
 
-TARGET = Path("app/src/main/java/fi/oma/numeron/MainActivity.kt")
+
+def find_main_activity(custom_path: str | None = None) -> Path:
+    if custom_path:
+        p = Path(custom_path)
+        if p.is_file():
+            return p
+        raise FileNotFoundError(f"Tiedostoa ei löytynyt: {p}")
+
+    candidates = [
+        Path("MainActivity.kt"),
+        Path("app/src/main/java/fi/oma/numeron/MainActivity.kt"),
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+
+    for found in Path(".").rglob("MainActivity.kt"):
+        return found
+
+    raise FileNotFoundError(
+        "MainActivity.kt-tiedostoa ei löytynyt. Anna polku parametrina: python3 patch.py polku/MainActivity.kt"
+    )
 
 
-def replace_exact(content: str, old: str, new: str, label: str) -> str:
-    count = content.count(old)
-    assert count == 1, f"Odotettiin täsmälleen 1 osumaa kohdalle '{label}', löytyi {count}"
-    return content.replace(old, new, 1)
+def replace_exact(content: str, old: str, new: str, label: str) -> tuple[str, bool]:
+    if old in content:
+        return content.replace(old, new, 1), True
+    if new in content:
+        print(f"[OK - jo päivitetty] {label}")
+        return content, False
+    raise RuntimeError(f"[VIRHE] Odotettua koodilohkoa ei löytynyt: {label}")
 
 
 def main() -> None:
-    if not TARGET.exists():
-        # Fallback jos ajetaan suoraan samasta hakemistosta
-        alt = Path("MainActivity.kt")
-        if alt.exists():
-            target_path = alt
-        else:
-            raise FileNotFoundError(f"Tiedostoa {TARGET} ei löytynyt.")
+    target = find_main_activity(sys.argv[1] if len(sys.argv) > 1 else None)
+    backup = target.with_suffix(target.suffix + ".bak")
+    shutil.copy2(target, backup)
+
+    content = target.read_text(encoding="utf-8")
+    changes = 0
+
+    # 1. resetSyncBatch(8) -> resetSyncBatch(12)
+    batch_replacements = [
+        (
+            '        } else if (quickAction == "ACTION_SYNC") {\n'
+            '            intent.removeExtra("quick_action")\n'
+            '            isBackgroundListSync = true\n'
+            '            forceListOnNextCalendarLoad = true\n'
+            '            resetSyncBatch(8)',
+            '        } else if (quickAction == "ACTION_SYNC") {\n'
+            '            intent.removeExtra("quick_action")\n'
+            '            isBackgroundListSync = true\n'
+            '            forceListOnNextCalendarLoad = true\n'
+            '            resetSyncBatch(12)',
+            "ACTION_SYNC batch 8 -> 12",
+        ),
+        (
+            '        if (intent.getBooleanExtra("AUTO_SYNC_NEW_LIST", false)) {\n'
+            '            intent.removeExtra("AUTO_SYNC_NEW_LIST")\n'
+            '            isBackgroundListSync = true\n'
+            '            forceListOnNextCalendarLoad = true\n'
+            '            resetSyncBatch(8)',
+            '        if (intent.getBooleanExtra("AUTO_SYNC_NEW_LIST", false)) {\n'
+            '            intent.removeExtra("AUTO_SYNC_NEW_LIST")\n'
+            '            isBackgroundListSync = true\n'
+            '            forceListOnNextCalendarLoad = true\n'
+            '            resetSyncBatch(12)',
+            "AUTO_SYNC_NEW_LIST batch 8 -> 12",
+        ),
+        (
+            '        } else {\n'
+            '            resetSyncBatch(if (isDemoActive) 0 else 8)\n'
+            '            extractShiftsFromPage(forceList = true)\n'
+            '        }',
+            '        } else {\n'
+            '            resetSyncBatch(if (isDemoActive) 0 else 12)\n'
+            '            extractShiftsFromPage(forceList = true)\n'
+            '        }',
+            "checkPermissionsAndSync batch 8 -> 12",
+        ),
+        (
+            '            if (r && w) {\n'
+            '                resetSyncBatch(if (isDemoActive) 0 else 8)\n'
+            '                extractShiftsFromPage(forceList = true)\n'
+            '            }',
+            '            if (r && w) {\n'
+            '                resetSyncBatch(if (isDemoActive) 0 else 12)\n'
+            '                extractShiftsFromPage(forceList = true)\n'
+            '            }',
+            "onRequestPermissionsResult batch 8 -> 12",
+        ),
+    ]
+
+    for old, new, label in batch_replacements:
+        content, changed = replace_exact(content, old, new, label)
+        if changed:
+            print(f"[PÄIVITETTY] {label}")
+            changes += 1
+
+    # 2. Luettelonäkymään vaihto extractShiftsFromPage-funktiossa
+    old_switch_list = (
+        '                var bodyText = document.body ? document.body.innerText : "";\n'
+        '                var isGrid = /Vk\\.?\\s+Ma\\s+Ti\\s+Ke/i.test(bodyText);\n'
+        '                if ($forceList && isGrid) {\n'
+        '                    var selects = document.querySelectorAll(\'select\');\n'
+        '                    for (var s = 0; s < selects.length; s++) {\n'
+        '                        for (var o = 0; o < selects[s].options.length; o++) {\n'
+        '                            var optTxt = (selects[s].options[o].text || "").toLowerCase();\n'
+        '                            if (optTxt.indexOf(\'luettelo\') !== -1 || optTxt.indexOf(\'lista\') !== -1 || optTxt.indexOf(\'list\') !== -1) {\n'
+        '                                selects[s].selectedIndex = o;\n'
+        '                                selects[s].dispatchEvent(new Event(\'change\', { bubbles: true }));\n'
+        '                                return "SWITCHED_TO_LIST";\n'
+        '                            }\n'
+        '                        }\n'
+        '                    }\n'
+        '                    var links = document.querySelectorAll(\'a, li, button, span, div\');\n'
+        '                    for (var i = 0; i < links.length; i++) {\n'
+        '                        var t = (links[i].innerText || "").trim().toLowerCase();\n'
+        '                        var href = (links[i].getAttribute && links[i].getAttribute(\'href\')) || "";\n'
+        '                        if (t === \'luettelo\' || t === \'lista\' || href.toLowerCase().indexOf(\'/calendar/list\') !== -1 || href.toLowerCase().indexOf(\'view=list\') !== -1) {\n'
+        '                            links[i].click();\n'
+        '                            return "SWITCHED_TO_LIST";\n'
+        '                        }\n'
+        '                    }\n'
+        '                }'
+    )
+
+    new_switch_list = (
+        '                var bodyText = document.body ? document.body.innerText : "";\n'
+        '                var pathLower = (window.location.pathname || "").toLowerCase();\n'
+        '                var isListPage = pathLower.indexOf(\'/calendar/list\') !== -1 || pathLower.indexOf(\'demo_shifts\') !== -1;\n'
+        '                var isGrid = /Vk\\.?\\s+Ma\\s+Ti\\s+Ke/i.test(bodyText) || document.querySelector(\'.month-table\') !== null;\n'
+        '                if ($forceList && !isListPage && isGrid) {\n'
+        '                    var directListLink = document.querySelector(\'#go-to-list a, #go-to-list-mobile a, a[href*="/Calendar/List" i]\');\n'
+        '                    if (directListLink) {\n'
+        '                        if (directListLink.href && directListLink.href.indexOf(\'#\') === -1) {\n'
+        '                            window.location.href = directListLink.href;\n'
+        '                        } else {\n'
+        '                            directListLink.click();\n'
+        '                        }\n'
+        '                        return "SWITCHED_TO_LIST";\n'
+        '                    }\n'
+        '                    var selects = document.querySelectorAll(\'select\');\n'
+        '                    for (var s = 0; s < selects.length; s++) {\n'
+        '                        for (var o = 0; o < selects[s].options.length; o++) {\n'
+        '                            var optTxt = (selects[s].options[o].text || "").toLowerCase();\n'
+        '                            if (optTxt.indexOf(\'luettelo\') !== -1 || optTxt.indexOf(\'lista\') !== -1 || optTxt.indexOf(\'list\') !== -1) {\n'
+        '                                selects[s].selectedIndex = o;\n'
+        '                                selects[s].dispatchEvent(new Event(\'change\', { bubbles: true }));\n'
+        '                                return "SWITCHED_TO_LIST";\n'
+        '                            }\n'
+        '                        }\n'
+        '                    }\n'
+        '                    var links = document.querySelectorAll(\'a, button\');\n'
+        '                    for (var i = 0; i < links.length; i++) {\n'
+        '                        var t = (links[i].innerText || "").trim().toLowerCase();\n'
+        '                        var href = (links[i].getAttribute && links[i].getAttribute(\'href\')) || "";\n'
+        '                        if (t === \'luettelo\' || t === \'lista\' || href.toLowerCase().indexOf(\'/calendar/list\') !== -1 || href.toLowerCase().indexOf(\'view=list\') !== -1) {\n'
+        '                            if (links[i].href && links[i].href.indexOf(\'#\') === -1) {\n'
+        '                                window.location.href = links[i].href;\n'
+        '                            } else {\n'
+        '                                links[i].click();\n'
+        '                            }\n'
+        '                            return "SWITCHED_TO_LIST";\n'
+        '                        }\n'
+        '                    }\n'
+        '                }'
+    )
+
+    content, changed = replace_exact(
+        content, old_switch_list, new_switch_list, "extractShiftsFromPage luettelonäkymään vaihto"
+    )
+    if changed:
+        print("[PÄIVITETTY] extractShiftsFromPage luettelonäkymään vaihto")
+        changes += 1
+
+    # 3. Seuraava-painikkeen tunnistus clickNextCalendarPeriod-funktiossa
+    old_next_period = (
+        '    private fun clickNextCalendarPeriod(calId: Long) {\n'
+        '        val js = """\n'
+        '            (function() {\n'
+        '                var nextSelectors = [\'a[title*="Seuraava" i]\', \'button[title*="Seuraava" i]\', \'.fa-chevron-right\', \'.fa-angle-right\', \'.glyphicon-chevron-right\', \'.icon-chevron-right\', \'.fc-next-button\'];\n'
+        '                for (var s = 0; s < nextSelectors.length; s++) {\n'
+        '                    var el = document.querySelector(nextSelectors[s]);\n'
+        '                    if (el) { (el.closest(\'a, button, div, span\') || el).click(); return "NEXT_CLICKED"; }\n'
+        '                }\n'
+        '                var all = document.querySelectorAll(\'button, a, span\');\n'
+        '                for (var i = 0; i < all.length; i++) {\n'
+        '                    var t = (all[i].innerText || "").trim().toLowerCase();\n'
+        '                    if (t === \'>\' || t === \'›\' || t === \'»\') { all[i].click(); return "NEXT_CLICKED"; }\n'
+        '                }\n'
+        '                return "NO_NEXT_BTN";\n'
+        '            })();\n'
+        '        """.trimIndent()'
+    )
+
+    new_next_period = (
+        '    private fun clickNextCalendarPeriod(calId: Long) {\n'
+        '        val js = """\n'
+        '            (function() {\n'
+        '                var nextSelectors = [\'a.nextButton\', \'.nextButton\', \'.vismaicon-arrow-right-circle\', \'a[title*="Seuraava" i]\', \'button[title*="Seuraava" i]\', \'.fa-chevron-right\', \'.fa-angle-right\', \'.glyphicon-chevron-right\', \'.icon-chevron-right\', \'.fc-next-button\'];\n'
+        '                for (var s = 0; s < nextSelectors.length; s++) {\n'
+        '                    var el = document.querySelector(nextSelectors[s]);\n'
+        '                    if (el) {\n'
+        '                        var clickable = el.closest(\'a, button\') || el;\n'
+        '                        if (clickable.href && clickable.href.indexOf(\'#\') === -1 && !clickable.getAttribute(\'onclick\')) {\n'
+        '                            window.location.href = clickable.href;\n'
+        '                        } else {\n'
+        '                            clickable.click();\n'
+        '                        }\n'
+        '                        return "NEXT_CLICKED";\n'
+        '                    }\n'
+        '                }\n'
+        '                var all = document.querySelectorAll(\'button, a, span\');\n'
+        '                for (var i = 0; i < all.length; i++) {\n'
+        '                    var t = (all[i].innerText || "").trim().toLowerCase();\n'
+        '                    if (t === \'>\' || t === \'›\' || t === \'»\') { all[i].click(); return "NEXT_CLICKED"; }\n'
+        '                }\n'
+        '                return "NO_NEXT_BTN";\n'
+        '            })();\n'
+        '        """.trimIndent()'
+    )
+
+    content, changed = replace_exact(
+        content, old_next_period, new_next_period, "clickNextCalendarPeriod .nextButton-tunnistus"
+    )
+    if changed:
+        print("[PÄIVITETTY] clickNextCalendarPeriod .nextButton-tunnistus")
+        changes += 1
+
+    # 4. Hiljaisen päiväsynkronoinnin seuraava-painike
+    old_silent_next = (
+        '                                    (function() {\n'
+        '                                        var el = document.querySelector(\'a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button\');\n'
+        '                                        if (el) { (el.closest(\'a, button, div, span\') || el).click(); return "NEXT"; }\n'
+        '                                        return "NONE";\n'
+        '                                    })();'
+    )
+
+    new_silent_next = (
+        '                                    (function() {\n'
+        '                                        var el = document.querySelector(\'a.nextButton, .nextButton, .vismaicon-arrow-right-circle, a[title*="Seuraava" i], button[title*="Seuraava" i], .fa-chevron-right, .fc-next-button\');\n'
+        '                                        if (el) {\n'
+        '                                            var clickable = el.closest(\'a, button\') || el;\n'
+        '                                            if (clickable.href && clickable.href.indexOf(\'#\') === -1 && !clickable.getAttribute(\'onclick\')) {\n'
+        '                                                window.location.href = clickable.href;\n'
+        '                                            } else {\n'
+        '                                                clickable.click();\n'
+        '                                            }\n'
+        '                                            return "NEXT";\n'
+        '                                        }\n'
+        '                                        return "NONE";\n'
+        '                                    })();'
+    )
+
+    content, changed = replace_exact(
+        content, old_silent_next, new_silent_next, "triggerSilentDailySyncIfNeeded .nextButton-tunnistus"
+    )
+    if changed:
+        print("[PÄIVITETTY] triggerSilentDailySyncIfNeeded .nextButton-tunnistus")
+        changes += 1
+
+    if changes > 0:
+        target.write_text(content, encoding="utf-8")
+        print(f"\nValmis! Tehtiin {changes} päivitystä tiedostoon {target}.")
+        print(f"Varmuuskopio tallennettu: {backup}")
     else:
-        target_path = TARGET
-
-    code = target_path.read_text(encoding="utf-8")
-
-    # 1. Poista taustakuva, piilota evästebanneri ja siisti kirjautumiskortti sekä lomakekentät
-    old_css_block = """            :root { color-scheme: dark; }
-            html, body {
-                background-color: #0F172A !important;
-                color: #E2E8F0 !important;
-                font-family: sans-serif !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            a { color: #38BDF8; }
-            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"],
-            .container > h1.clear, .container-fluid > h1.clear, h1.clear,
-            #wfm-modal-div:empty, .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
-            #mobile_AddButton, #mobileViewDropdown, .whitebox hr {
-                display: none !important;
-            }
-            .container, .container-fluid, .content-container {
-                width: 100% !important;
-                max-width: 100% !important;
-                padding: 14px 10px 24px 10px !important;
-                margin: 0 !important;
-                background-color: #0F172A !important;
-            }
-            .blurbox { background: transparent !important; text-align: center !important; }
-            .blurbox h1 { color: #38BDF8 !important; font-size: 20px !important; font-weight: bold !important; margin: 4px 0 14px 0 !important; }
-            .whitebox, .panel, .panel-default, .well, .list-group-item,
-            .modal-content, .popover, .popover-content, .popover-title, .tooltip-inner {
-                background-color: #1E293B !important;
-                background-image: none !important;
-                border: 1px solid #334155 !important;
-                border-radius: 14px !important;
-                box-shadow: none !important;
-                color: #E2E8F0 !important;
-            }"""
-
-    new_css_block = """            :root { color-scheme: dark; }
-            html, body {
-                background: #0F172A !important;
-                background-color: #0F172A !important;
-                background-image: none !important;
-                color: #E2E8F0 !important;
-                font-family: sans-serif !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            a { color: #38BDF8; }
-            nav.navbar, nav.loginnav, .loginnav, footer, img[src*="visma"],
-            .container > h1.clear, .container-fluid > h1.clear, h1.clear,
-            #wfm-modal-div:empty, .alert:empty, .messageBox:empty, .infoBox:empty, .statusBox:empty,
-            #mobile_AddButton, #mobileViewDropdown, .whitebox hr,
-            #cookieConsent, .cookie-consent, .cookie-banner, #cookie-banner, .cc-window, .cc-banner {
-                display: none !important;
-            }
-            .container, .container-fluid, .content-container {
-                width: 100% !important;
-                max-width: 100% !important;
-                padding: 14px 10px 24px 10px !important;
-                margin: 0 !important;
-                background-color: #0F172A !important;
-            }
-            .content {
-                float: none !important;
-                width: 100% !important;
-                max-width: 440px !important;
-                margin: 0 auto !important;
-                padding: 24px 14px !important;
-                position: static !important;
-                top: auto !important;
-                left: auto !important;
-                transform: none !important;
-            }
-            .blurbox {
-                background: transparent !important;
-                background-color: transparent !important;
-                background-image: none !important;
-                backdrop-filter: none !important;
-                -webkit-backdrop-filter: none !important;
-                border: none !important;
-                box-shadow: none !important;
-                padding: 12px 0 8px 0 !important;
-                margin: 0 !important;
-                text-align: center !important;
-            }
-            .blurbox h1 {
-                color: #38BDF8 !important;
-                font-size: 24px !important;
-                font-weight: bold !important;
-                margin: 0 0 14px 0 !important;
-                text-shadow: none !important;
-            }
-            .whitebox, .panel, .panel-default, .well, .list-group-item,
-            .modal-content, .popover, .popover-content, .popover-title, .tooltip-inner {
-                background-color: #1E293B !important;
-                background-image: none !important;
-                border: 1px solid #334155 !important;
-                border-radius: 14px !important;
-                box-shadow: none !important;
-                color: #E2E8F0 !important;
-            }
-            .whitebox {
-                padding: 20px 18px !important;
-                margin: 0 !important;
-                min-height: 0 !important;
-                height: auto !important;
-            }
-            #LoginForm .form-group { margin: 0 0 14px 0 !important; }
-            #LoginForm .control-label {
-                display: block !important;
-                width: 100% !important;
-                float: none !important;
-                text-align: left !important;
-                padding: 0 0 6px 2px !important;
-                margin: 0 !important;
-                font-size: 13px !important;
-            }
-            #LoginForm .col-sm-7, #LoginForm .col-sm-offset-4 {
-                width: 100% !important;
-                float: none !important;
-                margin-left: 0 !important;
-                padding: 0 !important;
-            }
-            #LoginForm .form-control {
-                height: 44px !important;
-                font-size: 16px !important;
-                padding: 10px 12px !important;
-            }
-            #LoginForm .pull-left, #LoginForm .pull-right {
-                float: none !important;
-                display: block !important;
-                text-align: center !important;
-                margin: 6px 0 !important;
-                font-size: 13px !important;
-            }
-            #LoginForm input[type="submit"] {
-                height: 46px !important;
-                font-size: 15px !important;
-                margin-top: 12px !important;
-            }
-            .validation-summary-errors, .field-validation-error {
-                background-color: #450A0A !important;
-                border: 1px solid #EF4444 !important;
-                border-radius: 10px !important;
-                color: #FCA5A5 !important;
-                padding: 10px 12px !important;
-                margin-bottom: 12px !important;
-                font-size: 13px !important;
-                display: block !important;
-            }
-            .validation-summary-errors ul { margin: 0 !important; padding-left: 18px !important; }"""
-
-    code = replace_exact(code, old_css_block, new_css_block, "injectCleanTheme CSS")
-
-    # 2. Evästebannerin automaattinen kuittaus + LoginFormin piilotus vain kun virhettä ei ole
-    old_theme_js = """                attachTheme();
-                if (!window._numeronThemeObserver) {
-                    window._numeronThemeObserver = new MutationObserver(function() {
-                        attachTheme();
-                    });
-                    window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
-                }
-                if ($hasCreds) {
-                    var form = document.getElementById('LoginForm');
-                    if (form && !form.dataset.hiddenByTheme) {
-                        form.dataset.hiddenByTheme = 'true';
-                        form.style.cssText = 'opacity:0;height:0;overflow:hidden;pointer-events:none;';
-                        var msg = document.createElement('div');
-                        msg.id = 'custom-login-msg';
-                        msg.style.cssText = 'text-align:center;padding:32px 12px;color:#38BDF8;font-size:16px;font-weight:bold;';
-                        msg.innerText = 'Kirjaudutaan sisään...';
-                        form.parentNode.insertBefore(msg, form);
-                        setTimeout(function() {
-                            var f = document.getElementById('LoginForm');
-                            var m = document.getElementById('custom-login-msg');
-                            if (f) {
-                                f.style.cssText = '';
-                                delete f.dataset.hiddenByTheme;
-                            }
-                            if (m) m.remove();
-                        }, 5000);
-                    }
-                }"""
-
-    new_theme_js = """                function dismissCookieBanner() {
-                    var btns = document.querySelectorAll('button, a, input[type="button"], input[type="submit"]');
-                    for (var i = 0; i < btns.length; i++) {
-                        var b = btns[i];
-                        var t = (b.innerText || b.value || '').trim().toLowerCase();
-                        if (t === 'hyväksy' || t === 'hyväksy evästeet' || t === 'accept') {
-                            var box = b.closest('div, section, aside, footer, header, nav');
-                            var boxTxt = box ? (box.innerText || '').toLowerCase() : '';
-                            if (boxTxt.indexOf('eväste') !== -1 || boxTxt.indexOf('cookie') !== -1) {
-                                if (!b.dataset.cookieClicked) {
-                                    b.dataset.cookieClicked = '1';
-                                    b.click();
-                                }
-                                if (box && box !== document.body && !box.querySelector('#LoginForm')) {
-                                    box.style.setProperty('display', 'none', 'important');
-                                }
-                            }
-                        }
-                    }
-                }
-                attachTheme();
-                dismissCookieBanner();
-                if (!window._numeronThemeObserver) {
-                    window._numeronThemeObserver = new MutationObserver(function() {
-                        attachTheme();
-                        dismissCookieBanner();
-                    });
-                    window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
-                }
-                if ($hasCreds) {
-                    var errEl = document.querySelector('.validation-summary-errors, .field-validation-error, .alert-danger');
-                    var hasLoginError = errEl && (errEl.innerText || '').trim().length > 0;
-                    var form = document.getElementById('LoginForm');
-                    if (form && !hasLoginError && !form.dataset.hiddenByTheme) {
-                        form.dataset.hiddenByTheme = 'true';
-                        form.style.cssText = 'opacity:0;height:0;overflow:hidden;pointer-events:none;';
-                        var msg = document.createElement('div');
-                        msg.id = 'custom-login-msg';
-                        msg.style.cssText = 'text-align:center;padding:24px 12px;';
-                        msg.innerHTML = '<div style="color:#38BDF8;font-size:16px;font-weight:bold;margin-bottom:6px;">Kirjaudutaan sisään...</div><div style="color:#94A3B8;font-size:13px;">Yhdistetään OmaNumeron-palveluun</div>';
-                        form.parentNode.insertBefore(msg, form);
-                        setTimeout(function() {
-                            var f = document.getElementById('LoginForm');
-                            var m = document.getElementById('custom-login-msg');
-                            if (f) {
-                                f.style.cssText = '';
-                                delete f.dataset.hiddenByTheme;
-                            }
-                            if (m) m.remove();
-                        }, 5000);
-                    }
-                }"""
-
-    code = replace_exact(code, old_theme_js, new_theme_js, "injectCleanTheme JS")
-
-    # 3. Estä automaattikirjautumisen silmukka virheellisillä tunnuksilla ja tuplalähetys
-    old_autologin_tail = """                if (!passEl) return "NO_LOGIN_FORM";
-                if (userEl) setNativeValue(userEl, '$safeU');
-                setNativeValue(passEl, '$safeP');
-                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
-                if (submitBtn && submitBtn.offsetParent !== null) { submitBtn.click(); return "SUBMITTED"; }
-                if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
-                return "FILLED";"""
-
-    new_autologin_tail = """                if (!passEl) return "NO_LOGIN_FORM";
-                var errEl = document.querySelector('.validation-summary-errors, .field-validation-error, .alert-danger');
-                if (errEl && (errEl.innerText || '').trim().length > 0) return "LOGIN_ERROR";
-                var nowTs = Date.now();
-                if (window._numeronAutoLoginTs && (nowTs - window._numeronAutoLoginTs) < 4000) return "SUBMIT_COOLDOWN";
-                window._numeronAutoLoginTs = nowTs;
-                if (userEl) setNativeValue(userEl, '$safeU');
-                setNativeValue(passEl, '$safeP');
-                var submitBtn = document.querySelector('input[type="submit"], button[type="submit"], button[id*="login" i], button[name*="login" i], input[id*="SignIn" i]');
-                if (submitBtn && submitBtn.offsetParent !== null) {
-                    submitBtn.disabled = false;
-                    submitBtn.click();
-                    return "SUBMITTED";
-                }
-                if (passEl.form) { passEl.form.submit(); return "SUBMITTED"; }
-                return "FILLED";"""
-
-    code = replace_exact(code, old_autologin_tail, new_autologin_tail, "tryAutoLoginIfNeeded")
-
-    target_path.write_text(code, encoding="utf-8")
-    print(f"OK: {target_path} päivitetty onnistuneesti.")
+        backup.unlink(missing_ok=True)
+        print("\nTiedosto oli jo ajan tasalla, muutoksia ei tarvittu.")
 
 
 if __name__ == "__main__":
