@@ -2,7 +2,7 @@ import os
 import re
 import sys
 
-TARGET_FILE = "MainActivity.kt"
+TARGET_FILE = Path("app/src/main/java/fi/oma/numeron/MainActivity.kt")
 
 def main():
     if not os.path.exists(TARGET_FILE):
