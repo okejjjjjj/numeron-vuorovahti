@@ -1081,34 +1081,142 @@ class MainActivity : AppCompatActivity() {
                 border-radius: 14px !important;
                 padding: 8px !important;
                 margin-bottom: 10px !important;
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
             }
-            .calendar-heading { display: flex !important; flex-wrap: wrap !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; padding: 10px !important; }
-            .calendar-heading .monthSelector { display: contents !important; }
-            .calendar-heading .monthSelector .panel-body {
+            .calendar-heading {
+                display: flex !important;
+                flex-wrap: wrap !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+                gap: 8px !important;
+                padding: 10px !important;
+                position: static !important;
+            }
+            .calendar-heading .monthSelector, .calendar-heading .weekSelector { display: contents !important; }
+            .calendar-heading .monthSelector .panel-body, .calendar-heading .weekSelector .panel-body {
                 order: 1 !important;
                 width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
                 display: flex !important;
                 align-items: center !important;
                 justify-content: space-between !important;
                 padding: 0 4px 4px 4px !important;
                 margin: 0 !important;
                 float: none !important;
+                position: static !important;
             }
-            #monthText { color: #F8FAFC !important; font-size: 18px !important; font-weight: bold !important; margin: 0 !important; }
-            #pc_AddButton { order: 2 !important; width: 100% !important; display: flex !important; gap: 8px !important; margin: 0 !important; float: none !important; }
-            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown { flex: 1 !important; margin: 0 !important; display: block !important; }
+            #monthText, #weekText, .calendar-heading .view-label {
+                color: #F8FAFC !important;
+                font-size: 18px !important;
+                font-weight: bold !important;
+                margin: 0 !important;
+                line-height: 1.2 !important;
+            }
+            #pc_AddButton {
+                order: 2 !important;
+                width: 100% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: flex !important;
+                gap: 8px !important;
+                margin: 0 !important;
+                float: none !important;
+                position: static !important;
+            }
+            #pc_AddButton > .btn-group, #pc_AddButton > .dropdown {
+                flex: 1 !important;
+                margin: 0 !important;
+                display: block !important;
+                position: relative !important;
+            }
             #pcAddButt, #pc_AddButton .filterButton {
                 width: 100% !important;
                 height: 36px !important;
+                min-height: 36px !important;
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
                 padding: 6px 10px !important;
+                margin: 0 !important;
                 font-size: 13px !important;
+                line-height: 1.2 !important;
+                position: static !important;
+                top: auto !important;
             }
-            #pcTodayButton, #pcViewDropdown { order: 3 !important; flex: 1 1 46% !important; display: block !important; margin: 0 !important; float: none !important; }
-            #todayButt, #pcViewButt { width: 100% !important; max-width: none !important; min-width: 0 !important; height: 36px !important; padding: 6px 10px !important; font-size: 13px !important; }
+            #pcTodayButton, #pcViewDropdown {
+                order: 3 !important;
+                flex: 1 1 46% !important;
+                height: auto !important;
+                min-height: 0 !important;
+                display: block !important;
+                margin: 0 !important;
+                float: none !important;
+                position: relative !important;
+                top: auto !important;
+            }
+            #todayButt, #pcViewButt {
+                width: 100% !important;
+                max-width: none !important;
+                min-width: 0 !important;
+                height: 36px !important;
+                min-height: 36px !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                padding: 6px 10px !important;
+                margin: 0 !important;
+                font-size: 13px !important;
+                line-height: 1.2 !important;
+                position: static !important;
+                top: auto !important;
+            }
+            #pcViewDropdown .dropdown-menu, #pc_AddButton .dropdown-menu {
+                z-index: 1060 !important;
+                top: 100% !important;
+                margin-top: 4px !important;
+            }
             #pcViewDropdown .dropdown-menu { right: 0 !important; left: auto !important; }
+            #calendar-content {
+                height: auto !important;
+                min-height: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
+                clear: both !important;
+                position: static !important;
+            }
+            #calendar-content hr { border-color: #334155 !important; margin: 8px 0 !important; }
+            #calendar-content .list-week-header, #calendar-content .week-header, #calendar-content h3, #calendar-content h4 {
+                color: #38BDF8 !important;
+                border-color: #334155 !important;
+                background: transparent !important;
+            }
+            #calendar-content .list-day-header, #calendar-content .day-header, #calendar-content .list-date-header {
+                color: #F8FAFC !important;
+                background: transparent !important;
+            }
+            #calendar-content .list-item, #calendar-content .list-item-work, #calendar-content .list-item-content,
+            #calendar-content .calendar-list-item, #calendar-content .schedule-item, #calendar-content .schedule-item-work,
+            #calendar-content .list-day-item, #calendar-content .shift-item {
+                background-color: #1E293B !important;
+                background-image: none !important;
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
+            }
+            #calendar-content .list-item, #calendar-content .calendar-list-item, #calendar-content .schedule-item {
+                border: 1px solid #334155 !important;
+                border-left: 4px solid #0284C7 !important;
+                border-radius: 12px !important;
+                padding: 8px 10px !important;
+                margin: 6px 0 !important;
+            }
+            #calendar-content .list-item *, #calendar-content .calendar-list-item *, #calendar-content .schedule-item * {
+                color: #F1F5F9 !important;
+                border-color: #334155 !important;
+            }
             .month-table { width: 100% !important; table-layout: fixed !important; background-color: #1E293B !important; border-collapse: collapse !important; }
             .month-week-days td { background-color: #0F172A !important; color: #94A3B8 !important; border: 1px solid #334155 !important; padding: 5px 1px !important; font-weight: bold !important; font-size: 11px !important; }
             .month-week-number { width: 22px !important; background-color: #0F172A !important; color: #64748B !important; border: 1px solid #334155 !important; text-align: center !important; font-size: 10px !important; }
@@ -1138,6 +1246,39 @@ class MainActivity : AppCompatActivity() {
         val js = """
             (function() {
                 var cssText = `$css`;
+                function fixCalendarListTheme() {
+                    var rootEl = document.getElementById('calendar-content') || document.querySelector('.calendar-body');
+                    if (!rootEl) return;
+                    var nodes = rootEl.querySelectorAll('div, table, tbody, tr, td, section, article, ul, li');
+                    for (var i = 0; i < nodes.length; i++) {
+                        var el = nodes[i];
+                        if (el.classList && (el.classList.contains('month-item') || el.classList.contains('month-day'))) continue;
+                        var cs = window.getComputedStyle(el);
+                        var bg = cs.backgroundColor;
+                        var m = bg && bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+                        if (m) {
+                            var a = m[4] !== undefined ? parseFloat(m[4]) : 1;
+                            if (a > 0.1 && parseInt(m[1], 10) > 205 && parseInt(m[2], 10) > 205 && parseInt(m[3], 10) > 205) {
+                                el.style.setProperty('background-color', '#1E293B', 'important');
+                                el.style.setProperty('background-image', 'none', 'important');
+                                el.style.setProperty('border-color', '#334155', 'important');
+                                if (el.offsetHeight >= 44 && el.offsetHeight <= 260 && el.offsetWidth > 180) {
+                                    el.style.setProperty('border', '1px solid #334155', 'important');
+                                    el.style.setProperty('border-left', '4px solid #0284C7', 'important');
+                                    el.style.setProperty('border-radius', '12px', 'important');
+                                }
+                            }
+                        }
+                        var col = cs.color;
+                        var cm = col && col.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                        if (cm) {
+                            var r = parseInt(cm[1], 10), g = parseInt(cm[2], 10), b = parseInt(cm[3], 10);
+                            if (r < 130 && g < 130 && b < 130) {
+                                el.style.setProperty('color', '#E2E8F0', 'important');
+                            }
+                        }
+                    }
+                }
                 function attachTheme() {
                     var root = document.documentElement || document.head;
                     if (!root) return false;
@@ -1150,13 +1291,15 @@ class MainActivity : AppCompatActivity() {
                     if (style.parentNode !== root || root.lastElementChild !== style) {
                         root.appendChild(style);
                     }
+                    fixCalendarListTheme();
                     return true;
                 }
-                if (!attachTheme()) {
-                    var obs = new MutationObserver(function() {
-                        if (attachTheme()) obs.disconnect();
+                attachTheme();
+                if (!window._numeronThemeObserver) {
+                    window._numeronThemeObserver = new MutationObserver(function() {
+                        attachTheme();
                     });
-                    obs.observe(document, { childList: true, subtree: true });
+                    window._numeronThemeObserver.observe(document, { childList: true, subtree: true });
                 }
                 if ($hasCreds) {
                     var form = document.getElementById('LoginForm');
