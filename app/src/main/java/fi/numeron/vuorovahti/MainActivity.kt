@@ -1103,9 +1103,8 @@ class MainActivity : AppCompatActivity() {
     }
 
         private fun handleAutoLogin() {
-        val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val user = (prefs.getString("username", "") ?: "").replace("\\", "\\\\").replace("'", "\\'")
-        val pass = (prefs.getString("password", "") ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
         if (user.isEmpty() || pass.isEmpty()) return
 
         val js = """

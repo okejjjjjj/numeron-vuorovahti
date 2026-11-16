@@ -348,7 +348,7 @@ object SettingsDialogHelper {
         authCard.addView(createLabel("Käyttäjätunnus"))
         val editUser = EditText(context).apply {
             hint = "Käyttäjätunnus"
-            setText(prefs.getString("username", ""))
+            setText(SecureCredentialManager.getUsername(context) ?: "")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             isSingleLine = true
             styleEditText(this)
@@ -358,7 +358,7 @@ object SettingsDialogHelper {
         authCard.addView(createLabel("Salasana"))
         val editPass = EditText(context).apply {
             hint = "Salasana"
-            setText(prefs.getString("password", ""))
+            setText(SecureCredentialManager.getPassword(context) ?: "")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             isSingleLine = true
             styleEditText(this)
@@ -567,11 +567,11 @@ object SettingsDialogHelper {
             val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
                 DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
 
+            SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
+
             prefs.edit()
                 .putString("org_raw_input", rawOrg)
                 .putString("server_url", normalizedUrl)
-                .putString("username", savedUser)
-                .putString("password", savedPass)
                 .putBoolean("demo_mode", isDemo)
                 .putString("calendar_user_tag", userTag)
                 .putInt("reminder_minutes", reminderMins)
