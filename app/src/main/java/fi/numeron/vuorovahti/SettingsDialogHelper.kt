@@ -317,7 +317,7 @@ object SettingsDialogHelper {
         addStatusRow(
             statusCard,
             "Seuraava kalenteritarkistus ajoitettu",
-            formatTimestamp(nextSyncMs, "Automaattinen tarkistus (12 h välein)")
+            formatTimestamp(nextSyncMs, "Arkisin klo 09:30 ja 14:30")
         )
         addStatusRow(
             statusCard,

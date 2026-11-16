@@ -277,10 +277,17 @@ class MainActivity : AppCompatActivity() {
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             }
             startSnapshotTransition {
+                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
+                val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
                 val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
-                if (existingCookies.isNullOrBlank()) {
+
+                if (existingCookies.isNullOrBlank() || sessionAgeMs > 11L * 60 * 60 * 1000L) {
                     scope.launch {
-                        BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                        val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                        if (ok) {
+                            prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+                        }
                         webView.loadUrl(url)
                     }
                 } else {
@@ -1127,6 +1134,15 @@ class MainActivity : AppCompatActivity() {
                     document.head.appendChild(style);
                 }
                 style.innerHTML = '$safeCss';
+                if (!window._sessionWatchInstalled) {
+                    window._sessionWatchInstalled = true;
+                    setInterval(function() {
+                        var modal = document.getElementById('session-expired-modal');
+                        if (modal && (modal.classList.contains('in') || modal.classList.contains('show') || modal.style.display === 'block')) {
+                            window.location.href = '/Login/Login';
+                        }
+                    }, 300);
+                }
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)

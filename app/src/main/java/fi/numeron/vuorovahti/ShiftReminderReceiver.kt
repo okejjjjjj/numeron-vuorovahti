@@ -251,26 +251,50 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             nm.notify(NOTIF_ID_CALENDAR_CHANGES, notification)
         }
 
+        fun computeNextOfficeHourSyncMs(nowMs: Long = System.currentTimeMillis()): Long {
+            val zone = java.time.ZoneId.systemDefault()
+            val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDateTime()
+            val candidateDate = now.toLocalDate()
+            val slots = listOf(java.time.LocalTime.of(9, 30), java.time.LocalTime.of(14, 30))
+
+            for (dayOffset in 0..7) {
+                val date = candidateDate.plusDays(dayOffset.toLong())
+                val dow = date.dayOfWeek
+                if (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY) continue
+                for (slot in slots) {
+                    val candidate = java.time.LocalDateTime.of(date, slot)
+                    if (candidate.isAfter(now.plusMinutes(5))) {
+                        return candidate.atZone(zone).toInstant().toEpochMilli()
+                    }
+                }
+            }
+            return nowMs + TimeUnit.HOURS.toMillis(12)
+        }
+
         fun ensureBackgroundSyncScheduled(context: Context) {
+            val nowMs = System.currentTimeMillis()
+            val nextTargetMs = computeNextOfficeHourSyncMs(nowMs)
+            val delayMs = (nextTargetMs - nowMs).coerceAtLeast(60_000L)
+
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
                 .build()
 
-            val syncRequest = PeriodicWorkRequestBuilder<BackgroundSyncWorker>(12, TimeUnit.HOURS)
+            val syncRequest = androidx.work.OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
                 .setConstraints(constraints)
                 .build()
 
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            WorkManager.getInstance(context).enqueueUniqueWork(
                 "NumeronVuorovahtiSync",
-                ExistingPeriodicWorkPolicy.KEEP,
+                androidx.work.ExistingWorkPolicy.REPLACE,
                 syncRequest
             )
-            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            if (prefs.getLong("next_calendar_sync_ms", 0L) <= System.currentTimeMillis()) {
-                prefs.edit()
-                    .putLong("next_calendar_sync_ms", System.currentTimeMillis() + TimeUnit.HOURS.toMillis(12))
-                    .apply()
-            }
+
+            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("next_calendar_sync_ms", nextTargetMs)
+                .apply()
         }
 
         fun showRequestDecisionNotification(context: Context, title: String, body: String, id: Int) {
@@ -432,11 +456,13 @@ class BackgroundSyncWorker(
             val nowMs = System.currentTimeMillis()
             prefs.edit()
                 .putLong("last_calendar_sync_ms", nowMs)
-                .putLong("next_calendar_sync_ms", nowMs + TimeUnit.HOURS.toMillis(12))
+                .putLong("last_valid_session_ms", nowMs)
                 .apply()
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
             Result.success()
         } else {
-            Result.retry()
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
+            Result.success()
         }
     }
 
