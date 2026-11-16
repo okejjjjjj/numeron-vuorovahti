@@ -24,6 +24,12 @@ object CalendarSyncHelper {
 
     const val EVENT_DESCRIPTION_TAG = "Synkronoitu Numeron Vuorovahti -sovelluksesta"
 
+    private val KNOWN_SHIFT_OR_LEAVE_KEYWORDS = listOf(
+        "työvuoro", "vuoro", "aamuvuoro", "iltavuoro", "yövuoro", "päivävuoro", "välivuoro",
+        "loma", "vuosiloma", "talviloma", "kesäloma", "poissaolo", "vapaa", "koulutus",
+        "sairausloma", "isyysvapaa", "vanhempainvapaa", "saldovapaa", "arkipyhä"
+    )
+
     private data class ExistingEvent(
         val eventId: Long,
         val title: String,
@@ -32,13 +38,20 @@ object CalendarSyncHelper {
         val colorKey: String?,
         val startMs: Long,
         val endMs: Long,
-        val isAllDay: Boolean
+        val isAllDay: Boolean,
+        val isOwnedByApp: Boolean
     )
 
     private data class ShiftColorKeys(
         val greenKey: String?,
         val orangeKey: String?,
         val purpleKey: String?
+    )
+
+    private data class ReminderEventItem(
+        val displayTitle: String,
+        val startMs: Long,
+        val endMs: Long
     )
 
     fun getTargetCalendarId(context: Context): Long? {
@@ -54,9 +67,25 @@ object CalendarSyncHelper {
         return defaultGoogle?.id
     }
 
-    private fun buildFullDescription(comment: String): String {
+    private fun getUserTag(context: Context): String {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        return (prefs.getString("calendar_user_tag", "") ?: "").trim()
+    }
+
+    private fun formatShiftTitle(baseTitle: String, userTag: String): String {
+        return if (userTag.isNotEmpty()) "$baseTitle ($userTag)" else baseTitle
+    }
+
+    private fun buildUserTagSuffix(userTag: String): String {
+        return if (userTag.isNotEmpty()) "$EVENT_DESCRIPTION_TAG [$userTag]" else EVENT_DESCRIPTION_TAG
+    }
+
+    private fun buildFullDescription(comment: String, userTag: String): String {
         val clean = comment.trim()
-        return if (clean.isEmpty()) EVENT_DESCRIPTION_TAG else "$clean\n\n$EVENT_DESCRIPTION_TAG"
+        val tagLine = buildUserTagSuffix(userTag)
+        return if (clean.isEmpty()) tagLine else "$clean
+
+$tagLine"
     }
 
     private fun resolveGoogleShiftColorKeys(context: Context, calendarId: Long): ShiftColorKeys {
@@ -129,10 +158,39 @@ object CalendarSyncHelper {
         val crossesMidnight = shift.end.toLocalDate().isAfter(shift.start.toLocalDate()) || endMinutes < startMinutes
 
         return when {
-            crossesMidnight || startMinutes >= 20 * 60 || startMinutes < 4 * 60 -> keys.purpleKey // Lila (yö)
-            startMinutes >= 11 * 60 + 30 -> keys.orangeKey                                        // Oranssi (ilta)
-            else -> keys.greenKey                                                                  // Vihreä (aamu)
+            crossesMidnight || startMinutes >= 20 * 60 || startMinutes < 4 * 60 -> keys.purpleKey
+            startMinutes >= 11 * 60 + 30 -> keys.orangeKey
+            else -> keys.greenKey
         }
+    }
+
+    private fun belongsToCurrentUser(description: String, title: String, userTag: String): Boolean {
+        if (!description.contains(EVENT_DESCRIPTION_TAG)) return false
+        if (userTag.isEmpty()) {
+            val bracketRegex = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\s*\[.+?]")
+            return !bracketRegex.containsMatchIn(description)
+        }
+        return description.contains("[$userTag]", ignoreCase = true) ||
+               title.endsWith("($userTag)", ignoreCase = true)
+    }
+
+    private fun belongsToAnotherUser(description: String, userTag: String): Boolean {
+        if (!description.contains(EVENT_DESCRIPTION_TAG)) return false
+        val match = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\s*\[(.+?)]").find(description)
+        if (match != null) {
+            val owner = match.groupValues[1].trim()
+            return !owner.equals(userTag, ignoreCase = true)
+        }
+        return userTag.isNotEmpty()
+    }
+
+    private fun looksLikeShiftOrLeave(title: String, desiredTitle: String, userTag: String): Boolean {
+        val lower = title.lowercase().trim()
+        if (userTag.isNotEmpty() && !lower.contains(userTag.lowercase())) {
+            return false
+        }
+        if (lower == desiredTitle.lowercase() || lower.startsWith("työvuoro")) return true
+        return KNOWN_SHIFT_OR_LEAVE_KEYWORDS.any { kw -> lower.contains(kw) }
     }
 
     fun syncShiftsToCalendar(context: Context, calendarId: Long, shifts: List<WorkShift>): List<CalendarChangeItem> {
@@ -145,12 +203,13 @@ object CalendarSyncHelper {
         val now = LocalDateTime.now()
         val nowMs = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val colorKeys = resolveGoogleShiftColorKeys(context, calendarId)
+        val userTag = getUserTag(context)
 
-        // Suodatetaan pois menneet ja meneillään olevat vuorot
         val upcomingShifts = shifts.filter { it.start.isAfter(now) }
 
-        // 1. Haetaan olemassa olevat sovelluksen synkronoimat tulevat tapahtumat vertailua varten
-        val existingEvents = mutableListOf<ExistingEvent>()
+        val ownedEvents = mutableListOf<ExistingEvent>()
+        val unownedCandidateEvents = mutableListOf<ExistingEvent>()
+
         val projection = arrayOf(
             CalendarContract.Events._ID,
             CalendarContract.Events.TITLE,
@@ -162,29 +221,37 @@ object CalendarSyncHelper {
             CalendarContract.Events.ALL_DAY
         )
         val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
-                "${CalendarContract.Events.DESCRIPTION} LIKE ? AND " +
                 "${CalendarContract.Events.DTSTART} > ? AND " +
                 "${CalendarContract.Events.DELETED} = 0"
-        val selectionArgs = arrayOf(calendarId.toString(), "%$EVENT_DESCRIPTION_TAG%", nowMs.toString())
+        val selectionArgs = arrayOf(calendarId.toString(), nowMs.toString())
 
         resolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, selectionArgs, null)?.use { c ->
             while (c.moveToNext()) {
-                existingEvents.add(
-                    ExistingEvent(
-                        eventId = c.getLong(0),
-                        title = c.getString(1) ?: "",
-                        location = c.getString(2) ?: "",
-                        description = c.getString(3) ?: "",
-                        colorKey = c.getString(4),
-                        startMs = c.getLong(5),
-                        endMs = c.getLong(6),
-                        isAllDay = c.getInt(7) == 1
-                    )
-                )
+                val id = c.getLong(0)
+                val title = c.getString(1) ?: ""
+                val loc = c.getString(2) ?: ""
+                val desc = c.getString(3) ?: ""
+                val cKey = c.getString(4)
+                val sMs = c.getLong(5)
+                val eMs = c.getLong(6)
+                val allDay = c.getInt(7) == 1
+
+                if (belongsToAnotherUser(desc, userTag)) {
+                    continue
+                }
+
+                val owned = belongsToCurrentUser(desc, title, userTag)
+                val ev = ExistingEvent(id, title, loc, desc, cKey, sMs, eMs, allDay, owned)
+                if (owned) {
+                    ownedEvents.add(ev)
+                } else {
+                    unownedCandidateEvents.add(ev)
+                }
             }
         }
 
-        val unmatchedExisting = existingEvents.toMutableList()
+        val unmatchedOwned = ownedEvents.toMutableList()
+        val unmatchedExternal = unownedCandidateEvents.toMutableList()
         val detectedChanges = mutableListOf<CalendarChangeItem>()
 
         for (shift in upcomingShifts) {
@@ -198,12 +265,12 @@ object CalendarSyncHelper {
             } else {
                 shift.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             }
-            val fullDescription = buildFullDescription(shift.description)
+            val desiredTitle = formatShiftTitle(shift.title, userTag)
+            val fullDescription = buildFullDescription(shift.description, userTag)
             val desiredColorKey = pickColorKeyForShift(shift, colorKeys)
 
-            // Etsitään täysin identtinen tapahtuma
-            val exactMatch = unmatchedExisting.firstOrNull {
-                it.title == shift.title &&
+            val exactMatch = unmatchedOwned.firstOrNull {
+                it.title == desiredTitle &&
                 it.location == shift.location &&
                 it.description == fullDescription &&
                 it.colorKey == desiredColorKey &&
@@ -213,20 +280,40 @@ object CalendarSyncHelper {
             }
 
             if (exactMatch != null) {
-                unmatchedExisting.remove(exactMatch)
+                unmatchedOwned.remove(exactMatch)
                 continue
             }
 
-            // Etsitään samalle päivälle osuva tapahtuma, jota on muokattu
-            val sameDayMatch = unmatchedExisting.firstOrNull { ex ->
+            val sameDayOwned = unmatchedOwned.firstOrNull { ex ->
+                ex.isAllDay == shift.isAllDayLeave &&
+                isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
+                (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
+            } ?: unmatchedOwned.firstOrNull { ex ->
                 ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
             }
 
-            if (sameDayMatch != null) {
-                unmatchedExisting.remove(sameDayMatch)
-                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, sameDayMatch.eventId)
+            val sameDayExternal = if (sameDayOwned == null) {
+                unmatchedExternal.firstOrNull { ex ->
+                    ex.isAllDay == shift.isAllDayLeave &&
+                    isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
+                    looksLikeShiftOrLeave(ex.title, desiredTitle, userTag)
+                }
+            } else {
+                null
+            }
+
+            val targetMatch = sameDayOwned ?: sameDayExternal
+
+            if (targetMatch != null) {
+                if (sameDayOwned != null) {
+                    unmatchedOwned.remove(sameDayOwned)
+                } else if (sameDayExternal != null) {
+                    unmatchedExternal.remove(sameDayExternal)
+                }
+
+                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, targetMatch.eventId)
                 val values = ContentValues().apply {
-                    put(CalendarContract.Events.TITLE, shift.title)
+                    put(CalendarContract.Events.TITLE, desiredTitle)
                     put(CalendarContract.Events.EVENT_LOCATION, shift.location)
                     put(CalendarContract.Events.DESCRIPTION, fullDescription)
                     if (desiredColorKey != null) {
@@ -246,22 +333,21 @@ object CalendarSyncHelper {
                         id = UUID.randomUUID().toString(),
                         type = ChangeType.MODIFIED,
                         calendarId = calendarId,
-                        eventId = sameDayMatch.eventId,
-                        title = shift.title,
+                        eventId = targetMatch.eventId,
+                        title = desiredTitle,
                         startMs = newStartMs,
                         endMs = newEndMs,
                         isAllDay = shift.isAllDayLeave,
-                        prevTitle = sameDayMatch.title,
-                        prevStartMs = sameDayMatch.startMs,
-                        prevEndMs = sameDayMatch.endMs,
-                        prevIsAllDay = sameDayMatch.isAllDay
+                        prevTitle = targetMatch.title,
+                        prevStartMs = targetMatch.startMs,
+                        prevEndMs = targetMatch.endMs,
+                        prevIsAllDay = targetMatch.isAllDay
                     )
                 )
             } else {
-                // Uusi tapahtuma lisätään
                 val values = ContentValues().apply {
                     put(CalendarContract.Events.CALENDAR_ID, calendarId)
-                    put(CalendarContract.Events.TITLE, shift.title)
+                    put(CalendarContract.Events.TITLE, desiredTitle)
                     put(CalendarContract.Events.EVENT_LOCATION, shift.location)
                     put(CalendarContract.Events.DESCRIPTION, fullDescription)
                     if (desiredColorKey != null) {
@@ -281,7 +367,7 @@ object CalendarSyncHelper {
                         type = ChangeType.ADDED,
                         calendarId = calendarId,
                         eventId = newEventId,
-                        title = shift.title,
+                        title = desiredTitle,
                         startMs = newStartMs,
                         endMs = newEndMs,
                         isAllDay = shift.isAllDayLeave
@@ -290,8 +376,7 @@ object CalendarSyncHelper {
             }
         }
 
-        // Poistetaan tulevat tapahtumat, jotka poistuivat työvuorolistalta
-        for (removedEx in unmatchedExisting) {
+        for (removedEx in unmatchedOwned) {
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, removedEx.eventId)
             resolver.delete(uri, null, null)
 
@@ -334,6 +419,7 @@ object CalendarSyncHelper {
         }
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val minutesBefore = prefs.getInt("reminder_minutes", 30)
+        val userTag = getUserTag(context)
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = System.currentTimeMillis()
@@ -354,6 +440,8 @@ object CalendarSyncHelper {
                 "${CalendarContract.Events.DELETED} = 0"
         val selectionArgs = arrayOf(calendarId.toString(), "%$EVENT_DESCRIPTION_TAG%", now.toString(), twoWeeksAhead.toString())
 
+        val userShifts = mutableListOf<ReminderEventItem>()
+
         context.contentResolver.query(
             CalendarContract.Events.CONTENT_URI,
             projection,
@@ -364,24 +452,43 @@ object CalendarSyncHelper {
             while (cursor.moveToNext()) {
                 val baseTitle = cursor.getString(0) ?: continue
                 val desc = cursor.getString(1) ?: ""
-                val shiftRoleInfo = desc.substringBefore(EVENT_DESCRIPTION_TAG).trim()
-                val displayTitle = if (shiftRoleInfo.isNotEmpty()) "$baseTitle ($shiftRoleInfo)" else baseTitle
                 val startMs = cursor.getLong(2)
                 val endMs = cursor.getLong(3)
                 val isAllDay = cursor.getInt(4) == 1
 
                 if (isAllDay) continue
+                if (!belongsToCurrentUser(desc, baseTitle, userTag)) continue
 
-                val startTrigger = startMs - (minutesBefore * 60_000L)
+                val shiftRoleInfo = desc.substringBefore(EVENT_DESCRIPTION_TAG).trim()
+                val displayTitle = if (shiftRoleInfo.isNotEmpty()) "$baseTitle ($shiftRoleInfo)" else baseTitle
+                userShifts.add(ReminderEventItem(displayTitle, startMs, endMs))
+            }
+        }
+
+        val sortedShifts = userShifts.sortedBy { it.startMs }
+        val maxGapMs = 15L * 60_000L
+
+        for (i in sortedShifts.indices) {
+            val current = sortedShifts[i]
+            val prev = if (i > 0) sortedShifts[i - 1] else null
+            val next = if (i < sortedShifts.lastIndex) sortedShifts[i + 1] else null
+
+            val continuesFromPrev = prev != null && (current.startMs - prev.endMs) in (-maxGapMs)..maxGapMs
+            val continuesToNext = next != null && (next.startMs - current.endMs) in (-maxGapMs)..maxGapMs
+
+            if (!continuesFromPrev) {
+                val startTrigger = current.startMs - (minutesBefore * 60_000L)
                 if (startTrigger > now) {
-                    val startStr = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                    setExactAlarmSafe(context, alarmManager, startTrigger, displayTitle, startStr, isEnding = false)
+                    val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
+                    setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
                 }
+            }
 
-                val endTrigger = endMs - (minutesBefore * 60_000L)
+            if (!continuesToNext) {
+                val endTrigger = current.endMs - (minutesBefore * 60_000L)
                 if (endTrigger > now) {
-                    val endStr = Instant.ofEpochMilli(endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                    setExactAlarmSafe(context, alarmManager, endTrigger, displayTitle, endStr, isEnding = true)
+                    val endStr = Instant.ofEpochMilli(current.endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
+                    setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
                 }
             }
         }

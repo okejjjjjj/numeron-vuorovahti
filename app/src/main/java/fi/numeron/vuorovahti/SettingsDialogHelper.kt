@@ -198,6 +198,15 @@ object SettingsDialogHelper {
         }
         layout.addView(spinnerCalendar)
 
+        layout.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
+        val editUserTag = EditText(context).apply {
+            hint = "Jätä tyhjäksi omassa kalenterissa"
+            setText(prefs.getString("calendar_user_tag", ""))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            isSingleLine = true
+        }
+        layout.addView(editUserTag)
+
         fun createColorSpinner(savedRgb: Int): Spinner {
             val spinner = Spinner(context)
             val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, SHIFT_COLOR_CHOICES)
@@ -252,6 +261,7 @@ object SettingsDialogHelper {
                 val rawOrg = editOrg.text.toString().trim()
                 val normalizedUrl = UrlNormalizer.normalizeOrgUrl(rawOrg)
                 val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
+                val userTag = editUserTag.text.toString().trim()
                 val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
 
                 val morningRgb = (spinnerMorningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_MORNING_RGB
@@ -263,6 +273,7 @@ object SettingsDialogHelper {
                     .putString("server_url", normalizedUrl)
                     .putString("username", editUser.text.toString().trim())
                     .putString("password", editPass.text.toString())
+                    .putString("calendar_user_tag", userTag)
                     .putInt("reminder_minutes", reminderMins)
                     .putInt("color_morning_rgb", morningRgb)
                     .putInt("color_evening_rgb", eveningRgb)
@@ -323,8 +334,8 @@ object SettingsDialogHelper {
                 if (url.contains("/Login/Login", ignoreCase = true)) {
                     if (!loginAttempted) {
                         loginAttempted = true
-                        val safeUser = username.replace("\\", "\\\\").replace("'", "\\'")
-                        val safePass = password.replace("\\", "\\\\").replace("'", "\\'")
+                        val safeUser = username.replace("", "\").replace("'", "'")
+                        val safePass = password.replace("", "\").replace("'", "'")
                         val js = """
                             (function() {
                                 var u = document.getElementById('Username');
@@ -352,7 +363,7 @@ object SettingsDialogHelper {
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(errJs) { errText ->
-                            val cleanErr = errText?.replace("\"", "")?.trim() ?: ""
+                            val cleanErr = errText?.replace(""", "")?.trim() ?: ""
                             if (cleanErr.isNotEmpty()) {
                                 cleanupAndRespond(false, "Kirjautuminen epäonnistui: $cleanErr")
                             } else {
