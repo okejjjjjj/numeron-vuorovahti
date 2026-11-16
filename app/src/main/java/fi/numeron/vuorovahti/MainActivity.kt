@@ -309,7 +309,8 @@ class MainActivity : AppCompatActivity() {
             context = this,
             shiftTitle = "Aamuvuoro (Testi-ilmoitus)",
             timeStr = timeStr,
-            isEnding = false
+            isEnding = false,
+            isTest = true
         )
     }
 
@@ -386,7 +387,20 @@ class MainActivity : AppCompatActivity() {
     private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.getBooleanExtra("AUTO_STAMP", false) == true) {
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+            val isTest = intent.getBooleanExtra("IS_TEST", false)
             intent.removeExtra("AUTO_STAMP")
+            intent.removeExtra("IS_TEST")
+
+            if (isTest) {
+                val dir = if (isEnding) "Ulos" else "Sisään"
+                Toast.makeText(
+                    this,
+                    "Testi-ilmoitus ($dir): Oikeaa leimausta ei suoritettu",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+
             pendingAction = if (isEnding) Action.STAMP_OUT else Action.STAMP_IN
             Toast.makeText(this, "Suoritetaan automaattinen leimaus...", Toast.LENGTH_SHORT).show()
         }

@@ -60,6 +60,10 @@ object CalendarSyncHelper {
     }
 
     private fun resolveGoogleShiftColorKeys(context: Context, calendarId: Long): ShiftColorKeys {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val morningRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+        val eveningRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
+        val nightRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
         val resolver = context.contentResolver
         var accountName: String? = null
         var accountType: String? = null
@@ -112,10 +116,9 @@ object CalendarSyncHelper {
             }?.first
         }
 
-        // Google Calendarin tapahtumavärien tavoitesävyt: vihreä (Basil/Sage), oranssi (Tangerine), lila (Grape)
-        val greenKey = findClosestKey(Color.rgb(11, 128, 67))
-        val orangeKey = findClosestKey(Color.rgb(244, 81, 30))
-        val purpleKey = findClosestKey(Color.rgb(142, 36, 170))
+        val greenKey = findClosestKey(morningRgb)
+        val orangeKey = findClosestKey(eveningRgb)
+        val purpleKey = findClosestKey(nightRgb)
         return ShiftColorKeys(greenKey, orangeKey, purpleKey)
     }
 

@@ -49,6 +49,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         // 2. Käyttäjä painoi ilmoituksen "Leimaa sisään/ulos" -painiketta
         if (action == ACTION_QUICK_STAMP) {
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+            val isTest = intent.getBooleanExtra("IS_TEST", false)
             val notifId = intent.getIntExtra("NOTIF_ID", 1001)
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(notifId)
@@ -57,6 +58,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("AUTO_STAMP", true)
                 putExtra("IS_ENDING", isEnding)
+                putExtra("IS_TEST", isTest)
             }
             context.startActivity(launchIntent)
             return
@@ -83,7 +85,8 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         context: Context,
         shiftTitle: String,
         timeStr: String,
-        isEnding: Boolean
+        isEnding: Boolean,
+        isTest: Boolean = false
     ) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_vuorovahti_reminders"
@@ -104,6 +107,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         val stampIntent = Intent(context, ShiftReminderReceiver::class.java).apply {
             action = ACTION_QUICK_STAMP
             putExtra("IS_ENDING", isEnding)
+            putExtra("IS_TEST", isTest)
             putExtra("NOTIF_ID", notifId)
         }
         val stampPi = PendingIntent.getBroadcast(

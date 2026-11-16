@@ -23,12 +23,40 @@ import androidx.core.content.ContextCompat
 data class CalendarOption(
     val id: Long,
     val name: String,
-    val accountName: String
+    val accountName: String,
+    val accountType: String
 ) {
-    override fun toString(): String = "$name ($accountName)"
+    override fun toString(): String {
+        val typeTag = if (accountType == "com.google") "Google" else "Paikallinen"
+        return "$name ($accountName) [$typeTag]"
+    }
+}
+
+data class ShiftColorChoice(
+    val name: String,
+    val rgb: Int
+) {
+    override fun toString(): String = name
 }
 
 object SettingsDialogHelper {
+
+    val SHIFT_COLOR_CHOICES = listOf(
+        ShiftColorChoice("Basilika (Vihreä)", Color.rgb(11, 128, 67)),
+        ShiftColorChoice("Salvia (Vaaleanvihreä)", Color.rgb(51, 182, 121)),
+        ShiftColorChoice("Mandariini (Oranssi)", Color.rgb(244, 81, 30)),
+        ShiftColorChoice("Banaani (Keltainen)", Color.rgb(246, 191, 38)),
+        ShiftColorChoice("Viinirypäle (Lila)", Color.rgb(142, 36, 170)),
+        ShiftColorChoice("Mustikka (Sininen)", Color.rgb(63, 81, 181)),
+        ShiftColorChoice("Riikinkukko (Turkoosi)", Color.rgb(3, 155, 229)),
+        ShiftColorChoice("Flamingo (Vaaleanpunainen)", Color.rgb(230, 124, 115)),
+        ShiftColorChoice("Tomaatti (Punainen)", Color.rgb(213, 0, 0)),
+        ShiftColorChoice("Grafiitti (Harmaa)", Color.rgb(97, 97, 97))
+    )
+
+    val DEFAULT_MORNING_RGB = Color.rgb(11, 128, 67)
+    val DEFAULT_EVENING_RGB = Color.rgb(244, 81, 30)
+    val DEFAULT_NIGHT_RGB = Color.rgb(142, 36, 170)
 
     fun getAvailableCalendars(context: Context): List<CalendarOption> {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
@@ -39,7 +67,8 @@ object SettingsDialogHelper {
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
             CalendarContract.Calendars.ACCOUNT_NAME,
-            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL
+            CalendarContract.Calendars.ACCOUNT_TYPE,
+            CalendarContract.Calendars.IS_PRIMARY
         )
         val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${CalendarContract.Calendars.VISIBLE} = 1"
         val selectionArgs = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
@@ -55,10 +84,16 @@ object SettingsDialogHelper {
                 val id = cursor.getLong(0)
                 val name = cursor.getString(1) ?: "Kalenteri"
                 val account = cursor.getString(2) ?: ""
-                list.add(CalendarOption(id, name, account))
+                val accountType = cursor.getString(3) ?: ""
+                val isPrimary = cursor.getInt(4) == 1
+                list.add(CalendarOption(id, name, account, accountType))
+                if (accountType == "com.google" && (isPrimary || name.equals(account, ignoreCase = true))) {
+                    val item = list.removeAt(list.lastIndex)
+                    list.add(0, item)
+                }
             }
         }
-        return list
+        return list.sortedBy { if (it.accountType == "com.google") 0 else 1 }
     }
 
     fun showSettingsDialog(
@@ -84,7 +119,6 @@ object SettingsDialogHelper {
             setPadding(0, 16, 0, 6)
         }
 
-        // 1. Organisaatiotunnus
         layout.addView(createLabel("Organisaatiotunnus (esim. siunsote)"))
         val editOrg = EditText(context).apply {
             hint = "siunsote"
@@ -94,7 +128,6 @@ object SettingsDialogHelper {
         }
         layout.addView(editOrg)
 
-        // 2. Käyttäjätunnus
         layout.addView(createLabel("Käyttäjätunnus"))
         val editUser = EditText(context).apply {
             hint = "Käyttäjätunnus"
@@ -104,7 +137,6 @@ object SettingsDialogHelper {
         }
         layout.addView(editUser)
 
-        // 3. Salasana
         layout.addView(createLabel("Salasana"))
         val editPass = EditText(context).apply {
             hint = "Salasana"
@@ -114,7 +146,6 @@ object SettingsDialogHelper {
         }
         layout.addView(editPass)
 
-        // 4. Testaustulos ja Testaa-painike
         val tvTestStatus = TextView(context).apply {
             text = ""
             textSize = 13f
@@ -155,7 +186,6 @@ object SettingsDialogHelper {
         layout.addView(btnTestCredentials)
         layout.addView(tvTestStatus)
 
-        // 5. Kalenterin valinta
         layout.addView(createLabel("Kohdekalenteri"))
         val calendars = getAvailableCalendars(context)
         val spinnerCalendar = Spinner(context)
@@ -164,11 +194,31 @@ object SettingsDialogHelper {
             spinnerCalendar.adapter = adapter
             val savedCalId = prefs.getLong("calendar_id", -1L)
             val idx = calendars.indexOfFirst { it.id == savedCalId }
-            if (idx >= 0) spinnerCalendar.setSelection(idx)
+            spinnerCalendar.setSelection(if (idx >= 0) idx else 0)
         }
         layout.addView(spinnerCalendar)
 
-        // 6. Muistutusaika (minuuttia ennen vuoroa)
+        fun createColorSpinner(savedRgb: Int): Spinner {
+            val spinner = Spinner(context)
+            val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, SHIFT_COLOR_CHOICES)
+            spinner.adapter = adapter
+            val idx = SHIFT_COLOR_CHOICES.indexOfFirst { it.rgb == savedRgb }
+            if (idx >= 0) spinner.setSelection(idx)
+            return spinner
+        }
+
+        layout.addView(createLabel("Aamuvuoron väri"))
+        val spinnerMorningColor = createColorSpinner(prefs.getInt("color_morning_rgb", DEFAULT_MORNING_RGB))
+        layout.addView(spinnerMorningColor)
+
+        layout.addView(createLabel("Iltavuoron väri"))
+        val spinnerEveningColor = createColorSpinner(prefs.getInt("color_evening_rgb", DEFAULT_EVENING_RGB))
+        layout.addView(spinnerEveningColor)
+
+        layout.addView(createLabel("Yövuoron väri"))
+        val spinnerNightColor = createColorSpinner(prefs.getInt("color_night_rgb", DEFAULT_NIGHT_RGB))
+        layout.addView(spinnerNightColor)
+
         layout.addView(createLabel("Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
@@ -177,7 +227,6 @@ object SettingsDialogHelper {
         }
         layout.addView(editReminder)
 
-        // Lisätoiminnot
         val btnSync = Button(context).apply {
             text = "Synkronoi työvuorot kalenteriin nyt"
             setOnClickListener { onManualSync() }
@@ -205,12 +254,19 @@ object SettingsDialogHelper {
                 val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
                 val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
 
+                val morningRgb = (spinnerMorningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_MORNING_RGB
+                val eveningRgb = (spinnerEveningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_EVENING_RGB
+                val nightRgb = (spinnerNightColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_NIGHT_RGB
+
                 prefs.edit()
                     .putString("org_raw_input", rawOrg)
                     .putString("server_url", normalizedUrl)
                     .putString("username", editUser.text.toString().trim())
                     .putString("password", editPass.text.toString())
                     .putInt("reminder_minutes", reminderMins)
+                    .putInt("color_morning_rgb", morningRgb)
+                    .putInt("color_evening_rgb", eveningRgb)
+                    .putInt("color_night_rgb", nightRgb)
                     .apply {
                         if (selectedCal != null) putLong("calendar_id", selectedCal.id)
                     }
