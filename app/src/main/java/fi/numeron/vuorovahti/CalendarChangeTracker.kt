@@ -1,21 +1,19 @@
 package fi.numeron.vuorovahti
 
-import android.Manifest
 import android.app.AlertDialog
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
-import android.view.ViewGroup
-import android.view.View
-import android.view.Gravity
-import android.graphics.drawable.GradientDrawable
-import android.graphics.Typeface
 import android.graphics.Color
-import android.content.pm.PackageManager
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.provider.CalendarContract
 import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -23,17 +21,12 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
-import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.util.TimeZone
 
 enum class ChangeType {
     ADDED, MODIFIED, REMOVED
@@ -98,16 +91,10 @@ object CalendarChangeTracker {
     private const val PREFS_NAME = "NumeronPrefs"
     private const val KEY_CHANGES = "last_calendar_changes"
 
-
     fun saveChanges(context: Context, changes: List<CalendarChangeItem>) {
         val arr = JSONArray()
         for (item in changes) {
-            val obj = JSONObject()
-            obj.put("id", item.id)
-            obj.put("type", item.type.name)
-            obj.put("calendarId", item.calendarId)
-            obj.put("eventId", item.eventId ?: 0L)
-            arr.put(obj)
+            arr.put(item.toJson())
         }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -122,15 +109,7 @@ object CalendarChangeTracker {
         try {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                result.add(
-                    CalendarChangeItem(
-                        id = obj.optString("id", ""),
-                        type = ChangeType.valueOf(obj.optString("type", "ADDED")),
-                        calendarId = obj.optLong("calendarId", 0L),
-                        eventId = obj.optLong("eventId", 0L)
-                    )
-                )
+                result.add(CalendarChangeItem.fromJson(arr.getJSONObject(i)))
             }
         } catch (_: Exception) {
         }
@@ -186,25 +165,64 @@ object CalendarChangeTracker {
             when (item.type) {
                 ChangeType.ADDED -> {
                     var removedFromCal = false
-                    val eid = item.eventId ?: 0L
-                    if (eid > 0L) {
+                    val eid = item.eventId
+                    if (eid != null && eid > 0L) {
                         val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
                         if (resolver.delete(uri, null, null) > 0) {
                             removedFromCal = true
                         }
                     }
                     if (!removedFromCal) {
-                        val sel = "${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
-                        val args = arrayOf(item.title, item.startMs.toString(), item.endMs.toString())
+                        val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
+                        val args = arrayOf(
+                            item.calendarId.toString(),
+                            item.title,
+                            item.startMs.toString(),
+                            item.endMs.toString()
+                        )
                         resolver.delete(CalendarContract.Events.CONTENT_URI, sel, args)
                     }
                 }
                 ChangeType.MODIFIED -> {
-                    // Ei tallennettuja vanhoja kenttiä muokkauksen palautukseen
+                    val prevTitle = item.prevTitle
+                    val prevStart = item.prevStartMs
+                    val prevEnd = item.prevEndMs
+                    if (!prevTitle.isNullOrEmpty() && prevStart != null && prevEnd != null && prevStart > 0L && prevEnd > 0L) {
+                        val values = ContentValues().apply {
+                            put(CalendarContract.Events.TITLE, prevTitle)
+                            put(CalendarContract.Events.DTSTART, prevStart)
+                            put(CalendarContract.Events.DTEND, prevEnd)
+                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
+                            put(
+                                CalendarContract.Events.EVENT_TIMEZONE,
+                                if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
+                            )
+                        }
+                        var restored = false
+                        val eid = item.eventId
+                        if (eid != null && eid > 0L) {
+                            val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
+                            if (resolver.update(uri, values, null, null) > 0) {
+                                restored = true
+                            }
+                        }
+                        if (!restored) {
+                            val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ?"
+                            val args = arrayOf(
+                                item.calendarId.toString(),
+                                item.title,
+                                item.startMs.toString()
+                            )
+                            resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args)
+                        }
+                    }
                 }
                 ChangeType.REMOVED -> {
-                    val savedCalId = item.calendarId
-                    val targetCalId = if (savedCalId > 0L) savedCalId else (CalendarSyncHelper.getTargetCalendarId(context) ?: -1L)
+                    val targetCalId = if (item.calendarId > 0L) {
+                        item.calendarId
+                    } else {
+                        CalendarSyncHelper.getTargetCalendarId(context) ?: -1L
+                    }
                     if (targetCalId > 0L) {
                         val values = ContentValues().apply {
                             put(CalendarContract.Events.CALENDAR_ID, targetCalId)
@@ -216,13 +234,12 @@ object CalendarChangeTracker {
                                 CalendarContract.Events.EVENT_TIMEZONE,
                                 if (item.isAllDay) "UTC" else ZoneId.systemDefault().id
                             )
-
                         }
                         resolver.insert(CalendarContract.Events.CONTENT_URI, values)
                     }
                 }
             }
-            val remaining = getLastChanges(context).filterNot { it == item }
+            val remaining = getLastChanges(context).filterNot { it.id == item.id }
             saveChanges(context, remaining)
             true
         } catch (_: Exception) {
@@ -262,16 +279,21 @@ object CalendarChangeTracker {
                 )
             }
             var updatedInCal = false
-            val eid = item.eventId ?: 0L
-            if (eid > 0L) {
+            val eid = item.eventId
+            if (eid != null && eid > 0L) {
                 val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
                 if (resolver.update(uri, values, null, null) > 0) {
                     updatedInCal = true
                 }
             }
             if (!updatedInCal) {
-                val sel = "${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
-                val args = arrayOf(item.title, item.startMs.toString(), item.endMs.toString())
+                val sel = "${CalendarContract.Events.CALENDAR_ID} = ? AND ${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
+                val args = arrayOf(
+                    item.calendarId.toString(),
+                    item.title,
+                    item.startMs.toString(),
+                    item.endMs.toString()
+                )
                 resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args)
             }
             val updatedItem = item.copy(
@@ -280,7 +302,7 @@ object CalendarChangeTracker {
                 endMs = newEndMs,
                 isAllDay = newIsAllDay
             )
-            val updatedList = getLastChanges(context).map { if (it == item) updatedItem else it }
+            val updatedList = getLastChanges(context).map { if (it.id == item.id) updatedItem else it }
             saveChanges(context, updatedList)
             true
         } catch (_: Exception) {
