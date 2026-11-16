@@ -16,7 +16,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "fi.numeron.vuorovahti"
+        applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 34
         versionCode = 4
