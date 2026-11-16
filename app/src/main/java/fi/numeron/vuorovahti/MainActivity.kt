@@ -527,7 +527,10 @@ class MainActivity : AppCompatActivity() {
                 injectDarkTheme(view)
 
                 when {
-                    url.contains("/Login/Login", ignoreCase = true) -> handleAutoLogin()
+                    url.contains("/Login/Login", ignoreCase = true) -> {
+                        startSnapshotTransition()
+                        handleAutoLogin()
+                    }
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
                         setActiveTab(btnNavStamp)
                         handleStampingPage()
@@ -1121,23 +1124,36 @@ class MainActivity : AppCompatActivity() {
     }
 
         private fun handleAutoLogin() {
-        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
-        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\", "\\").replace("'", "\'")
+        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\", "\").replace("'", "\'")
         if (user.isEmpty() || pass.isEmpty()) return
 
         val js = """
             (function() {
+                // Klikataan evästehyväksyntä pois tieltä jos löytyy
+                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(el => el.innerText.includes('Hyväksy'));
+                if (cookieBtn) { cookieBtn.click(); }
+
                 var u = document.getElementById('Username');
                 var p = document.getElementById('Password');
                 var f = document.getElementById('LoginForm');
-                if (u && p && f && u.value === '') {
+                if (u && p && f) {
                     u.value = '$user';
                     p.value = '$pass';
+                    u.dispatchEvent(new Event('input', { bubbles: true }));
+                    p.dispatchEvent(new Event('input', { bubbles: true }));
                     f.submit();
+                    return 'SUBMITTED';
                 }
+                return 'WAITING';
             })();
         """.trimIndent()
-        webView.evaluateJavascript(js, null)
+
+        webView.evaluateJavascript(js) { res ->
+            if (res?.contains("WAITING") == true) {
+                webView.postDelayed({ handleAutoLogin() }, 300L)
+            }
+        }
     }
 
 
