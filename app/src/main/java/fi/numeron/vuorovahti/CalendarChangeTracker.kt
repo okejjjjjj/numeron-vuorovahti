@@ -98,122 +98,140 @@ object CalendarChangeTracker {
     private const val PREFS_NAME = "NumeronPrefs"
     private const val KEY_CHANGES = "last_calendar_changes"
 
+
     fun saveChanges(context: Context, changes: List<CalendarChangeItem>) {
         val arr = JSONArray()
-        changes.forEach { arr.put(it.toJson()) }
+        for (item in changes) {
+            val obj = JSONObject()
+            obj.put("id", item.id)
+            obj.put("type", item.type.name)
+            obj.put("calendarId", item.calendarId)
+            obj.put("eventId", item.eventId ?: 0L)
+            arr.put(obj)
+        }
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putString(KEY_CHANGES, arr.toString())
             .apply()
     }
 
-    fun getLastChanges(context: Context): MutableList<CalendarChangeItem> {
+    fun getLastChanges(context: Context): List<CalendarChangeItem> {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_CHANGES, "[]") ?: "[]"
-        val list = mutableListOf<CalendarChangeItem>()
+            .getString(KEY_CHANGES, null) ?: return emptyList()
+        val result = mutableListOf<CalendarChangeItem>()
         try {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                list.add(CalendarChangeItem.fromJson(arr.getJSONObject(i)))
+                val obj = arr.getJSONObject(i)
+                result.add(
+                    CalendarChangeItem(
+                        id = obj.optString("id", ""),
+                        type = ChangeType.valueOf(obj.optString("type", "ADDED")),
+                        calendarId = obj.optLong("calendarId", 0L),
+                        eventId = obj.optLong("eventId", 0L)
+                    )
+                )
             }
         } catch (_: Exception) {
         }
-        return list
+        return result
+    }
+
+    fun clearChanges(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_CHANGES)
+            .apply()
     }
 
     fun formatSummary(changes: List<CalendarChangeItem>): String {
+        if (changes.isEmpty()) return "Ei muutoksia"
         val added = changes.count { it.type == ChangeType.ADDED }
-        val mod = changes.count { it.type == ChangeType.MODIFIED }
-        val rem = changes.count { it.type == ChangeType.REMOVED }
+        val modified = changes.count { it.type == ChangeType.MODIFIED }
+        val removed = changes.count { it.type == ChangeType.REMOVED }
         val parts = mutableListOf<String>()
         if (added > 0) parts.add("$added lisätty")
-        if (mod > 0) parts.add("$mod muokattu")
-        if (rem > 0) parts.add("$rem poistettu")
-        return if (parts.isEmpty()) "Ei muutoksia" else parts.joinToString(", ")
+        if (modified > 0) parts.add("$modified muokattu")
+        if (removed > 0) parts.add("$removed poistettu")
+        return parts.joinToString(", ")
     }
 
     fun formatChangeDisplay(item: CalendarChangeItem): String {
+        val tag = when (item.type) {
+            ChangeType.ADDED -> "[LISÄTTY]"
+            ChangeType.MODIFIED -> "[MUOKATTU]"
+            ChangeType.REMOVED -> "[POISTETTU]"
+        }
         val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
         val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-
-        fun fmtSpan(startMs: Long, endMs: Long, allDay: Boolean): String {
-            return if (allDay) {
-                val s = Instant.ofEpochMilli(startMs).atZone(ZoneOffset.UTC).toLocalDate()
-                val e = Instant.ofEpochMilli(endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
-                if (s == e) "${s.format(dateFmt)} (Koko päivä)"
-                else "${s.format(dateFmt)}–${e.format(dateFmt)} (Koko päivä)"
+        val whenStr = if (item.isAllDay) {
+            val sDate = Instant.ofEpochMilli(item.startMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val eDate = Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
+            if (eDate.isAfter(sDate)) {
+                "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
             } else {
-                val s = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                val e = Instant.ofEpochMilli(endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                "${s.format(dateFmt)} ${s.format(timeFmt)}–${e.format(timeFmt)}"
+                "${sDate.format(dateFmt)} (koko päivä)"
             }
+        } else {
+            val sDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            val eDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
         }
-
-        return when (item.type) {
-            ChangeType.ADDED -> "[LISÄTTY] ${item.title}\n${fmtSpan(item.startMs, item.endMs, item.isAllDay)}"
-            ChangeType.REMOVED -> "[POISTETTU] ${item.title}\n${fmtSpan(item.startMs, item.endMs, item.isAllDay)}"
-            ChangeType.MODIFIED -> {
-                val oldInfo = if (item.prevTitle != null && item.prevStartMs != null && item.prevEndMs != null) {
-                    "\nAiemmin: ${item.prevTitle} (${fmtSpan(item.prevStartMs, item.prevEndMs, item.prevIsAllDay)})"
-                } else ""
-                "[MUOKATTU] ${item.title}\nUusi: ${fmtSpan(item.startMs, item.endMs, item.isAllDay)}$oldInfo"
-            }
-        }
+        return "$tag ${item.title}\n$whenStr"
     }
 
     fun revertSingleChange(context: Context, item: CalendarChangeItem): Boolean {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
-            return false
-        }
-        val resolver = context.contentResolver
-        try {
+        return try {
+            val resolver = context.contentResolver
             when (item.type) {
                 ChangeType.ADDED -> {
-                    if (item.eventId != null) {
-                        val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, item.eventId)
-                        resolver.delete(uri, null, null)
+                    var removedFromCal = false
+                    val eid = item.eventId ?: 0L
+                    if (eid > 0L) {
+                        val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
+                        if (resolver.delete(uri, null, null) > 0) {
+                            removedFromCal = true
+                        }
                     }
-                }
-                ChangeType.REMOVED -> {
-                    val values = ContentValues().apply {
-                        put(CalendarContract.Events.CALENDAR_ID, item.calendarId)
-                        put(CalendarContract.Events.TITLE, item.prevTitle ?: item.title)
-                        put(CalendarContract.Events.DESCRIPTION, CalendarSyncHelper.EVENT_DESCRIPTION_TAG)
-                        val sMs = item.prevStartMs ?: item.startMs
-                        val eMs = item.prevEndMs ?: item.endMs
-                        val allDay = if (item.prevStartMs != null) item.prevIsAllDay else item.isAllDay
-                        put(CalendarContract.Events.ALL_DAY, if (allDay) 1 else 0)
-                        put(CalendarContract.Events.EVENT_TIMEZONE, if (allDay) "UTC" else TimeZone.getDefault().id)
-                        put(CalendarContract.Events.DTSTART, sMs)
-                        put(CalendarContract.Events.DTEND, eMs)
+                    if (!removedFromCal) {
+                        val sel = "${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
+                        val args = arrayOf(item.title, item.startMs.toString(), item.endMs.toString())
+                        resolver.delete(CalendarContract.Events.CONTENT_URI, sel, args)
                     }
-                    resolver.insert(CalendarContract.Events.CONTENT_URI, values)
                 }
                 ChangeType.MODIFIED -> {
-                    if (item.eventId != null && item.prevTitle != null && item.prevStartMs != null && item.prevEndMs != null) {
-                        val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, item.eventId)
+                    // Ei tallennettuja vanhoja kenttiä muokkauksen palautukseen
+                }
+                ChangeType.REMOVED -> {
+                    val savedCalId = item.calendarId
+                    val targetCalId = if (savedCalId > 0L) savedCalId else (CalendarSyncHelper.getTargetCalendarId(context) ?: -1L)
+                    if (targetCalId > 0L) {
                         val values = ContentValues().apply {
-                            put(CalendarContract.Events.TITLE, item.prevTitle)
-                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
-                            put(CalendarContract.Events.EVENT_TIMEZONE, if (item.prevIsAllDay) "UTC" else TimeZone.getDefault().id)
-                            put(CalendarContract.Events.DTSTART, item.prevStartMs)
-                            put(CalendarContract.Events.DTEND, item.prevEndMs)
+                            put(CalendarContract.Events.CALENDAR_ID, targetCalId)
+                            put(CalendarContract.Events.TITLE, item.title)
+                            put(CalendarContract.Events.DTSTART, item.startMs)
+                            put(CalendarContract.Events.DTEND, item.endMs)
+                            put(CalendarContract.Events.ALL_DAY, if (item.isAllDay) 1 else 0)
+                            put(
+                                CalendarContract.Events.EVENT_TIMEZONE,
+                                if (item.isAllDay) "UTC" else ZoneId.systemDefault().id
+                            )
+
                         }
-                        resolver.update(uri, values, null, null)
+                        resolver.insert(CalendarContract.Events.CONTENT_URI, values)
                     }
                 }
             }
-            val remaining = getLastChanges(context).filterNot { it.id == item.id }
+            val remaining = getLastChanges(context).filterNot { it == item }
             saveChanges(context, remaining)
-            CalendarSyncHelper.scheduleShiftReminders(context, item.calendarId)
-            return true
+            true
         } catch (_: Exception) {
-            return false
+            false
         }
     }
 
     fun revertAllChanges(context: Context): Int {
-        val current = getLastChanges(context)
+        val current = getLastChanges(context).toList()
         var count = 0
         for (item in current) {
             if (revertSingleChange(context, item)) {
@@ -231,40 +249,46 @@ object CalendarChangeTracker {
         newEndMs: Long,
         newIsAllDay: Boolean
     ): Boolean {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
-            return false
-        }
-        val resolver = context.contentResolver
-        try {
-            var activeEventId = item.eventId
+        return try {
+            val resolver = context.contentResolver
             val values = ContentValues().apply {
                 put(CalendarContract.Events.TITLE, newTitle)
-                put(CalendarContract.Events.ALL_DAY, if (newIsAllDay) 1 else 0)
-                put(CalendarContract.Events.EVENT_TIMEZONE, if (newIsAllDay) "UTC" else TimeZone.getDefault().id)
                 put(CalendarContract.Events.DTSTART, newStartMs)
                 put(CalendarContract.Events.DTEND, newEndMs)
+                put(CalendarContract.Events.ALL_DAY, if (newIsAllDay) 1 else 0)
+                put(
+                    CalendarContract.Events.EVENT_TIMEZONE,
+                    if (newIsAllDay) "UTC" else ZoneId.systemDefault().id
+                )
             }
-
-            if (item.type == ChangeType.REMOVED || activeEventId == null) {
-                values.put(CalendarContract.Events.CALENDAR_ID, item.calendarId)
-                values.put(CalendarContract.Events.DESCRIPTION, CalendarSyncHelper.EVENT_DESCRIPTION_TAG)
-                val insertedUri = resolver.insert(CalendarContract.Events.CONTENT_URI, values)
-                activeEventId = insertedUri?.lastPathSegment?.toLongOrNull()
-            } else {
-                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, activeEventId)
-                resolver.update(uri, values, null, null)
+            var updatedInCal = false
+            val eid = item.eventId ?: 0L
+            if (eid > 0L) {
+                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
+                if (resolver.update(uri, values, null, null) > 0) {
+                    updatedInCal = true
+                }
             }
-
+            if (!updatedInCal) {
+                val sel = "${CalendarContract.Events.TITLE} = ? AND ${CalendarContract.Events.DTSTART} = ? AND ${CalendarContract.Events.DTEND} = ?"
+                val args = arrayOf(item.title, item.startMs.toString(), item.endMs.toString())
+                resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args)
+            }
             val updatedItem = item.copy(
-                type = if (item.type == ChangeType.REMOVED) ChangeType.ADDED else item.type,
-                eventId = activeEventId,
                 title = newTitle,
                 startMs = newStartMs,
                 endMs = newEndMs,
                 isAllDay = newIsAllDay
             )
-            val all = getLastChanges(context).map { if (it.id == item.id) updatedItem else it }
-            saveChang    fun showManageChangesDialog(context: Context, onChanged: (() -> Unit)? = null) {
+            val updatedList = getLastChanges(context).map { if (it == item) updatedItem else it }
+            saveChanges(context, updatedList)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun showManageChangesDialog(context: Context, onChanged: (() -> Unit)? = null) {
         val changes = getLastChanges(context)
         val density = context.resources.displayMetrics.density
         fun dp(v: Int): Int = (v * density).toInt()
