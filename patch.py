@@ -1,128 +1,138 @@
 #!/usr/bin/env python3
 import os
 
-RES_DIR = os.path.join("app", "src", "main", "res")
-
 def write_file(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"Päivitetty: {path}")
+    # Varmistetaan puhtaat Unix-rivinvaihdot (\n)
+    normalized = content.replace("\r\n", "\n")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(normalized)
+    print(f"Päivitetty / Luotu: {path}")
 
-# 1. Väriresurssit vaalealle ja tummalle tilalle
-colors_day = """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="notif_title_color">#0F1722</color>
-    <color name="notif_subtitle_color">#334155</color>
-</resources>
+# 1. Luodaan SecureCredentialManager.kt
+secure_manager_code = """package fi.numeron.vuorovahti
+
+import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
+
+object SecureCredentialManager {
+
+    private const val PREFS_FILE = "secure_numeron_prefs"
+    private const val KEY_USERNAME = "secure_username"
+    private const val KEY_PASSWORD = "secure_password"
+
+    private fun getEncryptedPrefs(context: Context) = try {
+        val masterKey = MasterKey.Builder(context, MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+
+        EncryptedSharedPreferences.create(
+            context,
+            PREFS_FILE,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        null
+    }
+
+    fun saveCredentials(context: Context, username: String, password: String) {
+        getEncryptedPrefs(context)?.edit()?.apply {
+            putString(KEY_USERNAME, username)
+            putString(KEY_PASSWORD, password)
+            apply()
+        }
+    }
+
+    fun getUsername(context: Context): String? {
+        // Fallback vanhoihin suojaamattomiin SharedPreferences-tietoihin migraatiota varten
+        getEncryptedPrefs(context)?.getString(KEY_USERNAME, null)?.let { if (it.isNotEmpty()) return it }
+        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).getString("username", null)
+    }
+
+    fun getPassword(context: Context): String? {
+        getEncryptedPrefs(context)?.getString(KEY_PASSWORD, null)?.let { if (it.isNotEmpty()) return it }
+        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).getString("password", null)
+    }
+
+    fun clearCredentials(context: Context) {
+        getEncryptedPrefs(context)?.edit()?.clear()?.apply()
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).edit()
+            .remove("username")
+            .remove("password")
+            .apply()
+    }
+}
 """
+write_file("app/src/main/java/fi/numeron/vuorovahti/SecureCredentialManager.kt", secure_manager_code)
 
-colors_night = """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="notif_title_color">#F1F5F9</color>
-    <color name="notif_subtitle_color">#CBD5E1</color>
-</resources>
-"""
+# 2. Tarkistetaan ja päivitetään build.gradle.kts (app) riippuvuus
+gradle_path = "app/build.gradle.kts"
+if os.path.exists(gradle_path):
+    with open(gradle_path, "r", encoding="utf-8") as f:
+        gradle_content = f.read()
+    
+    dep_line = 'implementation("androidx.security:security-crypto:1.1.0-alpha06")'
+    if dep_line not in gradle_content:
+        # Lisätään dependencies-lohkoon
+        if "dependencies {" in gradle_content:
+            gradle_content = gradle_content.replace("dependencies {", f"dependencies {{\n    {dep_line}")
+            write_file(gradle_path, gradle_content)
+            print("Lisätty security-crypto riippuvuus build.gradle.kts-tiedostoon.")
 
-# 2. Päivitetyt ilmoitusasettelut (@color-viittauksilla)
-layout_notif_expanded = """<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="12dp">
+# 3. Päivitetään SettingsDialogHelper.kt lukemaan ja tallentamaan tunnukset SecureCredentialManagerin kautta
+settings_path = "app/src/main/java/fi/numeron/vuorovahti/SettingsDialogHelper.kt"
+if os.path.exists(settings_path):
+    with open(settings_path, "r", encoding="utf-8") as f:
+        settings_code = f.read()
 
-    <TextView
-        android:id="@+id/notifTitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Vuoro alkaa klo 07:00"
-        android:textColor="@color/notif_title_color"
-        android:textSize="15sp"
-        android:textStyle="bold" />
+    # Korvataan vanha SharedPreferences-haku SecureCredentialManagerilla
+    settings_code = settings_code.replace(
+        'setText(prefs.getString("username", ""))',
+        'setText(SecureCredentialManager.getUsername(context) ?: "")'
+    )
+    settings_code = settings_code.replace(
+        'setText(prefs.getString("password", ""))',
+        'setText(SecureCredentialManager.getPassword(context) ?: "")'
+    )
 
-    <TextView
-        android:id="@+id/notifSubtitle"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:text="Aamuvuoro"
-        android:textColor="@color/notif_subtitle_color"
-        android:textSize="13sp" />
+    # Korvataan tallennus kutsumaan SecureCredentialManager.saveCredentials
+    old_save_block = """            prefs.edit()
+                .putString("org_raw_input", rawOrg)
+                .putString("server_url", normalizedUrl)
+                .putString("username", savedUser)
+                .putString("password", savedPass)"""
 
-    <TextView
-        android:id="@+id/btnNotifStamp"
-        android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_marginTop="10dp"
-        android:background="@drawable/bg_notif_btn_in"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:text="LEIMAA SISÄÄN"
-        android:textColor="#FFFFFF"
-        android:textSize="14sp"
-        android:textStyle="bold" />
-</LinearLayout>
-"""
+    new_save_block = """            SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
 
-layout_notif_collapsed = """<?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:padding="10dp">
+            prefs.edit()
+                .putString("org_raw_input", rawOrg)
+                .putString("server_url", normalizedUrl)"""
 
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:paddingEnd="8dp">
+    settings_code = settings_code.replace(old_save_block, new_save_block)
+    
+    # Poistetaan vanhat plaintext-avaimet tallennuksesta jos ne jäivät sinne
+    settings_code = settings_code.replace('.putString("username", savedUser)\n                ', '')
+    settings_code = settings_code.replace('.putString("password", savedPass)\n                ', '')
 
-        <TextView
-            android:id="@+id/notifTitleCollapsed"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="Vuoro alkaa klo 07:00"
-            android:textColor="@color/notif_title_color"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+    write_file(settings_path, settings_code)
 
-        <TextView
-            android:id="@+id/notifSubtitleCollapsed"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:text="Aamuvuoro"
-            android:textColor="@color/notif_subtitle_color"
-            android:textSize="12sp" />
-    </LinearLayout>
+# 4. Päivitetään MainActivity.kt lukemaan tunnukset SecureCredentialManagerin kautta
+main_path = "app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt"
+if os.path.exists(main_path):
+    with open(main_path, "r", encoding="utf-8") as f:
+        main_code = f.read()
 
-    <TextView
-        android:id="@+id/btnNotifStampCollapsed"
-        android:layout_width="wrap_content"
-        android:layout_height="34dp"
-        android:background="@drawable/bg_notif_btn_in"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:text="SISÄÄN"
-        android:textColor="#FFFFFF"
-        android:textSize="12sp"
-        android:textStyle="bold" />
-</LinearLayout>
-"""
+    old_login_read = """        val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val user = (prefs.getString("username", "") ?: "").replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")
+        val pass = (prefs.getString("password", "") ?: "").replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")"""
 
-write_file(os.path.join(RES_DIR, "values", "notif_colors.xml"), colors_day)
-write_file(os.path.join(RES_DIR, "values-night", "notif_colors.xml"), colors_night)
-write_file(os.path.join(RES_DIR, "layout", "notification_stamp_expanded.xml"), layout_notif_expanded)
-write_file(os.path.join(RES_DIR, "layout", "notification_stamp_collapsed.xml"), layout_notif_collapsed)
+    new_login_read = """        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")
+        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")"""
 
-print("Notifikaation tekstivärit päivitetty vaalealle ja tummalle tilalle!")
+    main_code = main_code.replace(old_login_read, new_login_read)
+    write_file(main_path, main_code)
+
+print("Kaikki muutokset on tehty onnistuneesti puhtailla Unix-rivinvaihdoilla!")
