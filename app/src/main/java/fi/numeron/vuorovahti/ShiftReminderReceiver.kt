@@ -270,6 +270,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 )
             }
             val openIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("OPEN_REQUESTS", true)
             }
             val pi = PendingIntent.getActivity(
@@ -300,12 +301,14 @@ class BackgroundSyncWorker(
         }
 
         val prefs = appContext.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val user = prefs.getString("username", "") ?: ""
-        val pass = prefs.getString("password", "") ?: ""
+        val rawUser = SecureCredentialManager.getUsername(appContext) ?: ""
+        val rawPass = SecureCredentialManager.getPassword(appContext) ?: ""
+        val user = rawUser.replace("\\", "\\\\").replace("'", "\\'")
+        val pass = rawPass.replace("\\", "\\\\").replace("'", "\\'")
         val baseUrl = UrlNormalizer.getSavedBaseUrl(appContext)
         val trackRequests = prefs.getBoolean("track_requests", true)
 
-        if (user.isEmpty() || pass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
+        if (rawUser.isEmpty() || rawPass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
 
         val calId = CalendarSyncHelper.getTargetCalendarId(appContext)
             ?: return@withContext Result.failure()
@@ -403,14 +406,21 @@ class BackgroundSyncWorker(
         }
 
         if (payload.htmlPages.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
+            CookieManager.getInstance().flush()
+            val changes = withContext(Dispatchers.IO) {
                 val allShifts = payload.htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
-                CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
+                val detectedChanges = CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
                 payload.requestsJson?.let { checkRequestUpdates(it) }
+                detectedChanges
+            }
+            if (changes.isNotEmpty()) {
+                ShiftReminderReceiver.showCalendarChangesNotification(appContext, changes)
             }
             CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+            val nowMs = System.currentTimeMillis()
             prefs.edit()
-                .putLong("next_calendar_sync_ms", System.currentTimeMillis() + TimeUnit.HOURS.toMillis(12))
+                .putLong("last_calendar_sync_ms", nowMs)
+                .putLong("next_calendar_sync_ms", nowMs + TimeUnit.HOURS.toMillis(12))
                 .apply()
             Result.success()
         } else {

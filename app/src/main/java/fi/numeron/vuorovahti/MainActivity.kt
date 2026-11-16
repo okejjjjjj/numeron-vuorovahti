@@ -525,6 +525,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 injectDarkTheme(view)
+                CookieManager.getInstance().flush()
 
                 when {
                     url.contains("/Login/Login", ignoreCase = true) -> {
@@ -1244,7 +1245,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         try {
-            CookieManager.getInstance().removeAllCookies(null)
             CookieManager.getInstance().flush()
         } catch (_: Exception) {}
         scope.cancel()
