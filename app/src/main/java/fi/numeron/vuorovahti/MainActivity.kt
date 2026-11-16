@@ -1067,7 +1067,6 @@ class MainActivity : AppCompatActivity() {
             }
         """.trimIndent().replace("\n", " ")
 
-        val js = """
         val safeCss = css.replace("\\", "\\\\").replace("'", "\\'")
         val js = """
             (function() {
