@@ -1010,10 +1010,10 @@ class MainActivity : AppCompatActivity() {
         view?.evaluateJavascript(js, null)
     }
 
-    private fun handleAutoLogin() {
+        private fun handleAutoLogin() {
         val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val user = (prefs.getString("username", "") ?: "").replace("\", "\\").replace("'", "\'")
-        val pass = (prefs.getString("password", "") ?: "").replace("\", "\\").replace("'", "\'")
+        val user = (prefs.getString("username", "") ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val pass = (prefs.getString("password", "") ?: "").replace("\\", "\\\\").replace("'", "\\'")
         if (user.isEmpty() || pass.isEmpty()) return
 
         val js = """
@@ -1030,6 +1030,7 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
         webView.evaluateJavascript(js, null)
     }
+
 
     private fun handleStampingPage() {
         if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
