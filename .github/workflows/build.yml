@@ -18,11 +18,14 @@ jobs:
       - name: Run patch.py if present
         run: |
           if [ -f "patch.py" ]; then
+            pip install pillow
             python3 patch.py
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git diff --quiet || (git commit -am "Apply patch.py changes [skip ci]" && git push)
+            git add -A
+            git diff --cached --quiet || (git commit -m "Apply patch.py changes [skip ci]" && git push)
           fi
+
 
       - name: Commit and push version bump
         run: |
