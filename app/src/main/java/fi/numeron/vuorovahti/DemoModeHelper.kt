@@ -10,10 +10,24 @@ import java.time.format.DateTimeFormatter
 
 object DemoModeHelper {
 
+    fun isDemoCredentials(org: String, user: String, pass: String): Boolean {
+        return org.trim().equals("demo", ignoreCase = true) &&
+            user.trim().equals("demo", ignoreCase = true) &&
+            pass.trim().equals("demo", ignoreCase = true)
+    }
+
     fun isDemoEnabled(context: Context): Boolean {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val user = prefs.getString("username", "") ?: ""
-        return prefs.getBoolean("demo_mode", user.isEmpty())
+        val org = (prefs.getString("org_raw_input", "") ?: "").trim()
+        val serverUrl = (prefs.getString("server_url", "") ?: "").trim()
+        val user = (prefs.getString("username", "") ?: "").trim()
+        val pass = prefs.getString("password", "") ?: ""
+
+        // Aktivoituu käynnistettäessä, jos tunnuksia ei ole asetettu TAI tunnukset ovat "demo"
+        if (user.isEmpty() || pass.isEmpty() || (org.isEmpty() && serverUrl.isEmpty())) {
+            return true
+        }
+        return isDemoCredentials(org.ifEmpty { serverUrl }, user, pass)
     }
 
     fun getDemoStampingHtml(context: Context): String {

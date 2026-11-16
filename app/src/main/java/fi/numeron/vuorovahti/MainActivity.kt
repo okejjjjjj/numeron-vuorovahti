@@ -70,6 +70,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_AppCompat_NoActionBar)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 

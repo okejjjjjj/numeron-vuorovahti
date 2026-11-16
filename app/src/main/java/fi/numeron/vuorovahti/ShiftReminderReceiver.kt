@@ -261,7 +261,7 @@ class BackgroundSyncWorker(
         val prefs = appContext.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val user = prefs.getString("username", "") ?: ""
         val pass = prefs.getString("password", "") ?: ""
-        val baseUrl = prefs.getString("server_url", "https://numeronwfm.com")?.trimEnd('/') ?: "https://numeronwfm.com"
+        val baseUrl = UrlNormalizer.getSavedBaseUrl(appContext)
         val trackRequests = prefs.getBoolean("track_requests", true)
 
         if (user.isEmpty() || pass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()

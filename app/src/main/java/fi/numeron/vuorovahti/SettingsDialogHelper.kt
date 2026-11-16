@@ -169,6 +169,11 @@ object SettingsDialogHelper {
                     tvTestStatus.text = "Virhe: Syötä käyttäjätunnus ja salasana."
                     return@setOnClickListener
                 }
+                if (DemoModeHelper.isDemoCredentials(editOrg.text.toString(), user, pass)) {
+                    tvTestStatus.setTextColor(Color.parseColor("#10B981"))
+                    tvTestStatus.text = "Demotila tunnistettu! Tallenna asetukset ottaaksesi demotilan käyttöön."
+                    return@setOnClickListener
+                }
 
                 isEnabled = false
                 tvTestStatus.setTextColor(Color.parseColor("#38BDF8"))
@@ -268,11 +273,17 @@ object SettingsDialogHelper {
                 val eveningRgb = (spinnerEveningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_EVENING_RGB
                 val nightRgb = (spinnerNightColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_NIGHT_RGB
 
+                val savedUser = editUser.text.toString().trim()
+                val savedPass = editPass.text.toString()
+                val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
+                    DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
+
                 prefs.edit()
                     .putString("org_raw_input", rawOrg)
                     .putString("server_url", normalizedUrl)
-                    .putString("username", editUser.text.toString().trim())
-                    .putString("password", editPass.text.toString())
+                    .putString("username", savedUser)
+                    .putString("password", savedPass)
+                    .putBoolean("demo_mode", isDemo)
                     .putString("calendar_user_tag", userTag)
                     .putInt("reminder_minutes", reminderMins)
                     .putInt("color_morning_rgb", morningRgb)
@@ -283,7 +294,8 @@ object SettingsDialogHelper {
                     }
                     .apply()
 
-                Toast.makeText(context, "Tallennettu ($normalizedUrl)", Toast.LENGTH_SHORT).show()
+                val statusMsg = if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
+                Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
                 onSaved()
             }
             .setNegativeButton("Peruuta", null)
