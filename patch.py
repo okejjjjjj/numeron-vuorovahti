@@ -17,16 +17,11 @@ imports_to_add = [
 ]
 for imp in imports_to_add:
     if imp not in content:
-        content = content.replace("import android.graphics.Bitmap
-", f"import android.graphics.Bitmap
-{imp}
-", 1)
+        content = content.replace("import android.graphics.Bitmap", f"import android.graphics.Bitmap\n{imp}", 1)
 
 # 2. Korvataan vanha blur-siirtymälogiikka kuvakaappaus-crossfade-logiikalla
 old_transition_block = re.search(
-    r"    private var transitionOverlay: FrameLayout\? = null.*?    private fun endBlurTransition\(\).*?
-    \}
-",
+    r"    private var transitionOverlay: FrameLayout\? = null.*?    private fun endBlurTransition\(\).*?\n    \}\n",
     content,
     flags=re.DOTALL,
 )
