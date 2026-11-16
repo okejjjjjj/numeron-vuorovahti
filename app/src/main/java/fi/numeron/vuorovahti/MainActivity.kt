@@ -95,6 +95,9 @@ class MainActivity : AppCompatActivity() {
         setupBottomBar()
         handleIncomingIntent(intent)
 
+        // Näytetään heti käynnistyksessä splash-ruutu "Kirjaudutaan..."
+        startSnapshotTransition()
+
         if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
             navigateToTab(Tab.REQUESTS)
         } else {
@@ -777,16 +780,22 @@ class MainActivity : AppCompatActivity() {
             #forgotStampPanel {
                 display: none !important;
             }
-            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"] {
+            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"], #forgotStampPanel[style*="display: block"], #forgotStampPanel[style*="display:block"] {
                 display: block !important;
                 position: fixed !important;
-                left: 8px !important;
-                right: 8px !important;
-                bottom: 8px !important;
+                left: 12px !important;
+                right: 12px !important;
+                bottom: 12px !important;
                 top: auto !important;
                 z-index: 1050 !important;
-                max-height: 88vh !important;
+                background-color: #182332 !important;
+                border: 1px solid #2A394A !important;
+                border-radius: 14px !important;
+                padding: 16px !important;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
+                max-height: 85vh !important;
                 overflow-y: auto !important;
+                color: #F1F5F9 !important;
             }
 
             /* === 6. TOIVEET & KENDO UI === */
@@ -836,10 +845,19 @@ class MainActivity : AppCompatActivity() {
                 color: #F1F5F9 !important;
                 border-color: #37475A !important;
             }
-            .k-list-container, .k-list, .k-calendar, .k-calendar .k-header {
-                background-color: #1E293B !important;
+            .k-list-container, .k-list, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap, select, .k-animation-container {
+                background-color: #182332 !important;
                 color: #F1F5F9 !important;
-                border-color: #37475A !important;
+                border: 1px solid #2A394A !important;
+            }
+            .k-list .k-item {
+                color: #F1F5F9 !important;
+                background-color: #182332 !important;
+                padding: 10px 12px !important;
+            }
+            .k-list .k-item:hover, .k-list .k-state-selected, .k-list .k-state-focused {
+                background-color: #233040 !important;
+                color: #38BDF8 !important;
             }
             .k-list .k-item:hover, .k-list .k-state-focused, .k-list .k-state-selected {
                 background-color: #2A394A !important;
@@ -1207,6 +1225,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            CookieManager.getInstance().removeAllCookies(null)
+            CookieManager.getInstance().flush()
+        } catch (_: Exception) {}
         scope.cancel()
     }
 }
