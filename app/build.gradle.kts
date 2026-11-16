@@ -18,7 +18,7 @@ android {
     defaultConfig {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 4
         versionName = "3.0"
     }
