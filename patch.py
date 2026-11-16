@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 
 def write_file(path, content):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -13,103 +14,57 @@ if os.path.exists(main_path):
     with open(main_path, "r", encoding="utf-8") as f:
         code = f.read()
 
-    # 1. Lisätään splash onCreate-vaiheeseen
-    old_on_create = """        setupWebView()
-        setupBottomBar()
-        handleIncomingIntent(intent)"""
+    # 1. Päivitetään handleAutoLogin käyttämään regexiä (varmasti osuu kohdilleen)
+    pattern_login = r'private fun handleAutoLogin\(\) \{.*?\n    \}'
+    new_handle_login = """private fun handleAutoLogin() {
+        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\\\", "\\\\\\\\").replace("'", "\\\\'")
+        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\\\", "\\\\").replace("'", "\\\\'")
+        if (user.isEmpty() || pass.isEmpty()) return
 
-    new_on_create = """        setupWebView()
-        setupBottomBar()
-        handleIncomingIntent(intent)
+        val js = \"\"\"
+            (function() {
+                // Klikataan evästehyväksyntä pois tieltä jos löytyy
+                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(el => el.innerText.includes('Hyväksy'));
+                if (cookieBtn) { cookieBtn.click(); }
 
-        // Näytetään heti käynnistyksessä splash-ruutu "Kirjaudutaan..."
-        startSnapshotTransition()"""
+                var u = document.getElementById('Username');
+                var p = document.getElementById('Password');
+                var f = document.getElementById('LoginForm');
+                if (u && p && f) {
+                    u.value = '$user';
+                    p.value = '$pass';
+                    u.dispatchEvent(new Event('input', { bubbles: true }));
+                    p.dispatchEvent(new Event('input', { bubbles: true }));
+                    f.submit();
+                    return 'SUBMITTED';
+                }
+                return 'WAITING';
+            })();
+        \"\"\".trimIndent()
 
-    if old_on_create in code:
-        code = code.replace(old_on_create, new_on_create)
-
-    # 2. Tyhjennetään evästeet onDestroyssa (kirjaudutaan ulos suljettaessa)
-    old_ondestroy = """    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
+        webView.evaluateJavascript(js) { res ->
+            if (res?.contains("WAITING") == true) {
+                webView.postDelayed({ handleAutoLogin() }, 300L)
+            }
+        }
     }"""
 
-    new_ondestroy = """    override fun onDestroy() {
-        super.onDestroy()
-        try {
-            CookieManager.getInstance().removeAllCookies(null)
-            CookieManager.getInstance().flush()
-        } catch (_: Exception) {}
-        scope.cancel()
-    }"""
+    if re.search(pattern_login, code, re.DOTALL):
+        code = re.sub(pattern_login, new_handle_login, code, flags=re.DOTALL)
+        print("handleAutoLogin päivitetty onnistuneesti.")
+    else:
+        print("Virhe: handleAutoLogin-metodia ei löytynyt.")
 
-    if old_ondestroy in code:
-        code = code.replace(old_ondestroy, new_ondestroy)
+    # 2. Varmistetaan, että splash-peittokuva on päällä kirjautumisen ajan onPageFinished-vaiheessa
+    old_branch = 'url.contains("/Login/Login", ignoreCase = true) -> handleAutoLogin()'
+    new_branch = '''url.contains("/Login/Login", ignoreCase = true) -> {
+                        startSnapshotTransition()
+                        handleAutoLogin()
+                    }'''
 
-    # 3. Korjataan #forgotStampPanel CSS
-    target_forgot_panel = """            #forgotStampPanel {
-                display: none !important;
-            }
-            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"] {
-                display: block !important;
-                position: fixed !important;
-                left: 8px !important;
-                right: 8px !important;
-                bottom: 8px !important;
-                top: auto !important;
-                z-index: 1050 !important;
-                max-height: 88vh !important;
-                overflow-y: auto !important;
-            }"""
-
-    replacement_forgot_panel = """            #forgotStampPanel {
-                display: none !important;
-            }
-            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"], #forgotStampPanel[style*="display: block"], #forgotStampPanel[style*="display:block"] {
-                display: block !important;
-                position: fixed !important;
-                left: 12px !important;
-                right: 12px !important;
-                bottom: 12px !important;
-                top: auto !important;
-                z-index: 1050 !important;
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 14px !important;
-                padding: 16px !important;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
-                max-height: 85vh !important;
-                overflow-y: auto !important;
-                color: #F1F5F9 !important;
-            }"""
-
-    if target_forgot_panel in code:
-        code = code.replace(target_forgot_panel, replacement_forgot_panel)
-
-    # 4. Korjataan Kendo UI / Visman pudotusvalikoiden ja listojen tyylit
-    kendo_css_target = """.k-list-container, .k-list, .k-calendar, .k-calendar .k-header {
-                background-color: #1E293B !important;
-                color: #F1F5F9 !important;
-                border-color: #37475A !important;
-            }"""
-
-    kendo_css_replacement = """.k-list-container, .k-list, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap, select, .k-animation-container {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                border: 1px solid #2A394A !important;
-            }
-            .k-list .k-item {
-                color: #F1F5F9 !important;
-                background-color: #182332 !important;
-                padding: 10px 12px !important;
-            }
-            .k-list .k-item:hover, .k-list .k-state-selected, .k-list .k-state-focused {
-                background-color: #233040 !important;
-                color: #38BDF8 !important;
-            }"""
-
-    if kendo_css_target in code:
-        code = code.replace(kendo_css_target, kendo_css_replacement)
+    if old_branch in code:
+        code = code.replace(old_branch, new_branch)
+        print("Kirjautumisen splash-ohjaus päivitetty.")
 
     write_file(main_path, code)
-    print("Kaikki korjaukset viety MainActivity.kt-tiedostoon onnistuneesti!")
+    print("MainActivity.kt korjattu valmiiksi!")
