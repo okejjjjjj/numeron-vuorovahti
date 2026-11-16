@@ -396,6 +396,11 @@ object CalendarSyncHelper {
             )
         }
 
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putLong("last_calendar_sync_ms", System.currentTimeMillis())
+            .apply()
+
         if (detectedChanges.isNotEmpty()) {
             CalendarChangeTracker.saveChanges(context, detectedChanges)
             ShiftReminderReceiver.showCalendarChangesNotification(context, detectedChanges)
@@ -465,6 +470,8 @@ object CalendarSyncHelper {
 
         val sortedShifts = userShifts.sortedBy { it.startMs }
         val maxGapMs = 15L * 60_000L
+        var earliestNextTriggerMs = Long.MAX_VALUE
+        var earliestNextLabel = ""
 
         for (i in sortedShifts.indices) {
             val current = sortedShifts[i]
@@ -479,6 +486,10 @@ object CalendarSyncHelper {
                 if (startTrigger > now) {
                     val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                     setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
+                    if (startTrigger < earliestNextTriggerMs) {
+                        earliestNextTriggerMs = startTrigger
+                        earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
+                    }
                 }
             }
 
@@ -487,9 +498,23 @@ object CalendarSyncHelper {
                 if (endTrigger > now) {
                     val endStr = Instant.ofEpochMilli(current.endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                     setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
+                    if (endTrigger < earliestNextTriggerMs) {
+                        earliestNextTriggerMs = endTrigger
+                        earliestNextLabel = "Ulos (${current.displayTitle}, päättyy klo $endStr)"
+                    }
                 }
             }
         }
+
+        prefs.edit().apply {
+            if (earliestNextTriggerMs < Long.MAX_VALUE) {
+                putLong("next_reminder_ms", earliestNextTriggerMs)
+                putString("next_reminder_label", earliestNextLabel)
+            } else {
+                remove("next_reminder_ms")
+                remove("next_reminder_label")
+            }
+        }.apply()
     }
 
     private fun setExactAlarmSafe(

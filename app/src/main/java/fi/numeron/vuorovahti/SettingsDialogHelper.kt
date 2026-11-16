@@ -5,8 +5,13 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.provider.CalendarContract
 import android.text.InputType
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -19,6 +24,10 @@ import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.work.WorkManager
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 data class CalendarOption(
     val id: Long,
@@ -96,6 +105,26 @@ object SettingsDialogHelper {
         return list.sortedBy { if (it.accountType == "com.google") 0 else 1 }
     }
 
+    private fun formatTimestamp(ms: Long, fallback: String): String {
+        if (ms <= 0L) return fallback
+        val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy 'klo' HH:mm")
+        return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(fmt)
+    }
+
+    private fun resolveNextSyncMs(context: Context, fallbackSavedMs: Long): Long {
+        try {
+            val infos = WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork("NumeronVuorovahtiSync")
+                .get()
+            val nextRun = infos.firstOrNull { !it.state.isFinished }?.nextScheduleTimeMillis ?: 0L
+            if (nextRun > System.currentTimeMillis() && nextRun < Long.MAX_VALUE) {
+                return nextRun
+            }
+        } catch (_: Exception) {
+        }
+        return fallbackSavedMs
+    }
+
     fun showSettingsDialog(
         context: Context,
         onManualSync: () -> Unit,
@@ -104,56 +133,247 @@ object SettingsDialogHelper {
         onSaved: () -> Unit
     ) {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val density = context.resources.displayMetrics.density
+        fun dp(v: Int): Int = (v * density).toInt()
 
-        val scrollView = ScrollView(context)
+        fun makeCardBg(fillHex: String = "#182332", strokeHex: String = "#2A394A", radiusDp: Int = 12): GradientDrawable {
+            return GradientDrawable().apply {
+                setColor(Color.parseColor(fillHex))
+                setStroke(dp(1), Color.parseColor(strokeHex))
+                cornerRadius = dp(radiusDp).toFloat()
+            }
+        }
+
+        val rootContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#0F1722"))
+        }
+
+        val headerBar = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#182332"))
+            setPadding(dp(20), dp(18), dp(20), dp(14))
+        }
+        headerBar.addView(TextView(context).apply {
+            text = "Vuorovahti – Asetukset"
+            textSize = 19f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#F1F5F9"))
+        })
+        headerBar.addView(TextView(context).apply {
+            text = "Tunnukset, kalenterisynkronointi ja ilmoitukset"
+            textSize = 12f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(0, dp(2), 0, 0)
+        })
+        rootContainer.addView(headerBar)
+
+        val divider = View(context).apply {
+            setBackgroundColor(Color.parseColor("#2A394A"))
+        }
+        rootContainer.addView(divider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
+
+        val scrollView = ScrollView(context).apply {
+            isFillViewport = true
+        }
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 36, 48, 24)
+            setPadding(dp(16), dp(14), dp(16), dp(16))
         }
         scrollView.addView(layout)
+        rootContainer.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        fun createSectionCard(title: String): LinearLayout {
+            val card = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = makeCardBg("#182332", "#2A394A", 12)
+                setPadding(dp(16), dp(14), dp(16), dp(16))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(14)
+                }
+            }
+            val sectionHeader = TextView(context).apply {
+                text = title.uppercase()
+                textSize = 11f
+                letterSpacing = 0.06f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#38BDF8"))
+                setPadding(0, 0, 0, dp(8))
+            }
+            card.addView(sectionHeader)
+            layout.addView(card)
+            return card
+        }
 
         fun createLabel(text: String): TextView = TextView(context).apply {
             this.text = text
             textSize = 13f
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, 16, 0, 6)
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setPadding(0, dp(10), 0, dp(5))
         }
 
-        layout.addView(createLabel("Organisaatiotunnus (esim. siunsote)"))
+        fun styleEditText(et: EditText) {
+            et.background = makeCardBg("#111923", "#37475A", 8)
+            et.setTextColor(Color.parseColor("#F1F5F9"))
+            et.setHintTextColor(Color.parseColor("#64748B"))
+            et.setPadding(dp(12), dp(10), dp(12), dp(10))
+            et.textSize = 14f
+        }
+
+        fun styleButton(btn: Button, bgHex: String = "#233040", strokeHex: String = "#37475A", textHex: String = "#F1F5F9") {
+            btn.background = makeCardBg(bgHex, strokeHex, 8)
+            btn.setTextColor(Color.parseColor(textHex))
+            btn.isAllCaps = false
+            btn.textSize = 14f
+            btn.setTypeface(null, Typeface.BOLD)
+            btn.setPadding(dp(14), dp(11), dp(14), dp(11))
+            val lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(10)
+            }
+            btn.layoutParams = lp
+        }
+
+        fun styleSpinner(spinner: Spinner) {
+            spinner.background = makeCardBg("#111923", "#37475A", 8)
+            spinner.setPadding(dp(8), dp(6), dp(8), dp(6))
+        }
+
+        fun createDarkAdapter(items: List<Any>): ArrayAdapter<Any> {
+            return object : ArrayAdapter<Any>(context, android.R.layout.simple_spinner_item, items) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val tv = super.getView(position, convertView, parent) as TextView
+                    tv.setTextColor(Color.parseColor("#F1F5F9"))
+                    tv.textSize = 14f
+                    return tv
+                }
+
+                override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val tv = super.getDropDownView(position, convertView, parent) as TextView
+                    tv.setBackgroundColor(Color.parseColor("#1E293B"))
+                    tv.setTextColor(Color.parseColor("#F1F5F9"))
+                    tv.setPadding(dp(14), dp(12), dp(14), dp(12))
+                    tv.textSize = 14f
+                    return tv
+                }
+            }
+        }
+
+        // === KORTTI 1: TILA JA AIKATAULUT ===
+        val statusCard = createSectionCard("Tila ja aikataulut")
+
+        val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
+        val nextSyncMs = resolveNextSyncMs(context, prefs.getLong("next_calendar_sync_ms", 0L))
+        val lastNotifMs = prefs.getLong("last_reminder_sent_ms", 0L)
+        val lastNotifLabel = prefs.getString("last_reminder_sent_label", "") ?: ""
+        val nextNotifMs = prefs.getLong("next_reminder_ms", 0L)
+        val nextNotifLabel = prefs.getString("next_reminder_label", "") ?: ""
+
+        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null) {
+            val box = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                background = makeCardBg("#111923", "#233040", 8)
+                setPadding(dp(12), dp(9), dp(12), dp(9))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    bottomMargin = dp(8)
+                }
+            }
+            box.addView(TextView(context).apply {
+                text = title
+                textSize = 11f
+                setTextColor(Color.parseColor("#94A3B8"))
+            })
+            box.addView(TextView(context).apply {
+                text = value
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#F1F5F9"))
+                setPadding(0, dp(2), 0, 0)
+            })
+            if (!subValue.isNullOrEmpty()) {
+                box.addView(TextView(context).apply {
+                    text = subValue
+                    textSize = 12f
+                    setTextColor(Color.parseColor("#38BDF8"))
+                    setPadding(0, dp(2), 0, 0)
+                })
+            }
+            parent.addView(box)
+        }
+
+        addStatusRow(
+            statusCard,
+            "Kalenterimerkinnät tarkistettu edellisen kerran",
+            formatTimestamp(lastSyncMs, "Ei vielä tarkistettu")
+        )
+        addStatusRow(
+            statusCard,
+            "Seuraava kalenteritarkistus ajoitettu",
+            formatTimestamp(nextSyncMs, "Automaattinen tarkistus (12 h välein)")
+        )
+        addStatusRow(
+            statusCard,
+            "Edellinen leimausnotifikaatio lähetetty",
+            formatTimestamp(lastNotifMs, "Ei vielä lähetetty"),
+            if (lastNotifMs > 0L) lastNotifLabel else null
+        )
+        addStatusRow(
+            statusCard,
+            "Seuraava leimausnotifikaatio lähetetään",
+            if (nextNotifMs > System.currentTimeMillis()) formatTimestamp(nextNotifMs, "") else "Ei tulevia ajoitettuja hälytyksiä",
+            if (nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
+        )
+
+        // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
+        val authCard = createSectionCard("Kirjautuminen ja yhteys")
+
+        authCard.addView(createLabel("Organisaatiotunnus (esim. siunsote)"))
         val editOrg = EditText(context).apply {
             hint = "siunsote"
             setText(prefs.getString("org_raw_input", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
+            styleEditText(this)
         }
-        layout.addView(editOrg)
+        authCard.addView(editOrg)
 
-        layout.addView(createLabel("Käyttäjätunnus"))
+        authCard.addView(createLabel("Käyttäjätunnus"))
         val editUser = EditText(context).apply {
             hint = "Käyttäjätunnus"
             setText(prefs.getString("username", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             isSingleLine = true
+            styleEditText(this)
         }
-        layout.addView(editUser)
+        authCard.addView(editUser)
 
-        layout.addView(createLabel("Salasana"))
+        authCard.addView(createLabel("Salasana"))
         val editPass = EditText(context).apply {
             hint = "Salasana"
             setText(prefs.getString("password", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             isSingleLine = true
+            styleEditText(this)
         }
-        layout.addView(editPass)
+        authCard.addView(editPass)
 
         val tvTestStatus = TextView(context).apply {
             text = ""
             textSize = 13f
-            setPadding(0, 12, 0, 12)
+            setPadding(0, dp(8), 0, dp(2))
         }
 
         val btnTestCredentials = Button(context).apply {
             text = "Testaa yhteys ja tunnukset"
+            styleButton(this, "#1E3A5F", "#0284C7", "#E0F2FE")
             setOnClickListener {
                 val normalizedUrl = UrlNormalizer.normalizeOrgUrl(editOrg.text.toString())
                 val user = editUser.text.toString().trim()
@@ -188,118 +408,188 @@ object SettingsDialogHelper {
                 }
             }
         }
-        layout.addView(btnTestCredentials)
-        layout.addView(tvTestStatus)
+        authCard.addView(btnTestCredentials)
+        authCard.addView(tvTestStatus)
 
-        layout.addView(createLabel("Kohdekalenteri"))
+        // === KORTTI 3: KALENTERI JA VÄRIKOODIT ===
+        val calCard = createSectionCard("Kalenteri ja värikoodit")
+
+        calCard.addView(createLabel("Kohdekalenteri"))
         val calendars = getAvailableCalendars(context)
-        val spinnerCalendar = Spinner(context)
+        val spinnerCalendar = Spinner(context).apply { styleSpinner(this) }
         if (calendars.isNotEmpty()) {
-            val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, calendars)
-            spinnerCalendar.adapter = adapter
+            spinnerCalendar.adapter = createDarkAdapter(calendars)
             val savedCalId = prefs.getLong("calendar_id", -1L)
             val idx = calendars.indexOfFirst { it.id == savedCalId }
             spinnerCalendar.setSelection(if (idx >= 0) idx else 0)
         }
-        layout.addView(spinnerCalendar)
+        calCard.addView(spinnerCalendar)
 
-        layout.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
+        calCard.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
         val editUserTag = EditText(context).apply {
             hint = "Jätä tyhjäksi omassa kalenterissa"
             setText(prefs.getString("calendar_user_tag", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             isSingleLine = true
+            styleEditText(this)
         }
-        layout.addView(editUserTag)
+        calCard.addView(editUserTag)
 
         fun createColorSpinner(savedRgb: Int): Spinner {
-            val spinner = Spinner(context)
-            val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, SHIFT_COLOR_CHOICES)
-            spinner.adapter = adapter
+            val spinner = Spinner(context).apply { styleSpinner(this) }
+            spinner.adapter = createDarkAdapter(SHIFT_COLOR_CHOICES)
             val idx = SHIFT_COLOR_CHOICES.indexOfFirst { it.rgb == savedRgb }
             if (idx >= 0) spinner.setSelection(idx)
             return spinner
         }
 
-        layout.addView(createLabel("Aamuvuoron väri"))
+        calCard.addView(createLabel("Aamuvuoron väri"))
         val spinnerMorningColor = createColorSpinner(prefs.getInt("color_morning_rgb", DEFAULT_MORNING_RGB))
-        layout.addView(spinnerMorningColor)
+        calCard.addView(spinnerMorningColor)
 
-        layout.addView(createLabel("Iltavuoron väri"))
+        calCard.addView(createLabel("Iltavuoron väri"))
         val spinnerEveningColor = createColorSpinner(prefs.getInt("color_evening_rgb", DEFAULT_EVENING_RGB))
-        layout.addView(spinnerEveningColor)
+        calCard.addView(spinnerEveningColor)
 
-        layout.addView(createLabel("Yövuoron väri"))
+        calCard.addView(createLabel("Yövuoron väri"))
         val spinnerNightColor = createColorSpinner(prefs.getInt("color_night_rgb", DEFAULT_NIGHT_RGB))
-        layout.addView(spinnerNightColor)
+        calCard.addView(spinnerNightColor)
 
-        layout.addView(createLabel("Muistutus ennen vuoroa (min)"))
+        // === KORTTI 4: MUISTUTUKSET JA TOIMINNOT ===
+        val actionCard = createSectionCard("Muistutukset ja toiminnot")
+
+        actionCard.addView(createLabel("Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
             inputType = InputType.TYPE_CLASS_NUMBER
             isSingleLine = true
+            styleEditText(this)
         }
-        layout.addView(editReminder)
+        actionCard.addView(editReminder)
 
         val btnSync = Button(context).apply {
             text = "Synkronoi työvuorot kalenteriin nyt"
-            setOnClickListener { onManualSync() }
+            styleButton(this, "#1982C4", "#38BDF8", "#FFFFFF")
         }
-        layout.addView(btnSync)
+        actionCard.addView(btnSync)
 
         val btnChanges = Button(context).apply {
             text = "Hallitse kalenterimuutoksia"
-            setOnClickListener { onManageChanges() }
+            styleButton(this, "#233040", "#37475A", "#F1F5F9")
         }
-        layout.addView(btnChanges)
+        actionCard.addView(btnChanges)
 
         val btnTestNotif = Button(context).apply {
             text = "Lähetä testi-ilmoitus"
-            setOnClickListener { onTestNotification() }
+            styleButton(this, "#233040", "#37475A", "#F1F5F9")
         }
-        layout.addView(btnTestNotif)
+        actionCard.addView(btnTestNotif)
 
-        AlertDialog.Builder(context)
-            .setTitle("Vuorovahti – Asetukset")
-            .setView(scrollView)
-            .setPositiveButton("Tallenna") { _, _ ->
-                val rawOrg = editOrg.text.toString().trim()
-                val normalizedUrl = UrlNormalizer.normalizeOrgUrl(rawOrg)
-                val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
-                val userTag = editUserTag.text.toString().trim()
-                val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
+        // Alapalkki: Peruuta ja Tallenna
+        val bottomDivider = View(context).apply {
+            setBackgroundColor(Color.parseColor("#2A394A"))
+        }
+        rootContainer.addView(bottomDivider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
 
-                val morningRgb = (spinnerMorningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_MORNING_RGB
-                val eveningRgb = (spinnerEveningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_EVENING_RGB
-                val nightRgb = (spinnerNightColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_NIGHT_RGB
+        val footerBar = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END
+            setBackgroundColor(Color.parseColor("#182332"))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
 
-                val savedUser = editUser.text.toString().trim()
-                val savedPass = editPass.text.toString()
-                val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
-                    DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
-
-                prefs.edit()
-                    .putString("org_raw_input", rawOrg)
-                    .putString("server_url", normalizedUrl)
-                    .putString("username", savedUser)
-                    .putString("password", savedPass)
-                    .putBoolean("demo_mode", isDemo)
-                    .putString("calendar_user_tag", userTag)
-                    .putInt("reminder_minutes", reminderMins)
-                    .putInt("color_morning_rgb", morningRgb)
-                    .putInt("color_evening_rgb", eveningRgb)
-                    .putInt("color_night_rgb", nightRgb)
-                    .apply {
-                        if (selectedCal != null) putLong("calendar_id", selectedCal.id)
-                    }
-                    .apply()
-
-                val statusMsg = if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
-                Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
-                onSaved()
+        val btnCancel = Button(context).apply {
+            text = "Peruuta"
+            background = makeCardBg("#233040", "#37475A", 8)
+            setTextColor(Color.parseColor("#CBD5E1"))
+            isAllCaps = false
+            textSize = 14f
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginEnd = dp(10)
             }
-            .setNegativeButton("Peruuta", null)
-            .show()
+        }
+
+        val btnSave = Button(context).apply {
+            text = "Tallenna"
+            background = makeCardBg("#1982C4", "#38BDF8", 8)
+            setTextColor(Color.parseColor("#FFFFFF"))
+            isAllCaps = false
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(22), dp(10), dp(22), dp(10))
+        }
+
+        footerBar.addView(btnCancel)
+        footerBar.addView(btnSave)
+        rootContainer.addView(footerBar)
+
+        val dialog = AlertDialog.Builder(context)
+            .setView(rootContainer)
+            .create()
+
+        dialog.window?.setBackgroundDrawable(makeCardBg("#0F1722", "#2A394A", 14))
+
+        btnSync.setOnClickListener {
+            dialog.dismiss()
+            onManualSync()
+        }
+
+        btnChanges.setOnClickListener {
+            dialog.dismiss()
+            onManageChanges()
+        }
+
+        btnTestNotif.setOnClickListener {
+            onTestNotification()
+        }
+
+        btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        btnSave.setOnClickListener {
+            val rawOrg = editOrg.text.toString().trim()
+            val normalizedUrl = UrlNormalizer.normalizeOrgUrl(rawOrg)
+            val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
+            val userTag = editUserTag.text.toString().trim()
+            val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
+
+            val morningRgb = (spinnerMorningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_MORNING_RGB
+            val eveningRgb = (spinnerEveningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_EVENING_RGB
+            val nightRgb = (spinnerNightColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_NIGHT_RGB
+
+            val savedUser = editUser.text.toString().trim()
+            val savedPass = editPass.text.toString()
+            val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
+                DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
+
+            prefs.edit()
+                .putString("org_raw_input", rawOrg)
+                .putString("server_url", normalizedUrl)
+                .putString("username", savedUser)
+                .putString("password", savedPass)
+                .putBoolean("demo_mode", isDemo)
+                .putString("calendar_user_tag", userTag)
+                .putInt("reminder_minutes", reminderMins)
+                .putInt("color_morning_rgb", morningRgb)
+                .putInt("color_evening_rgb", eveningRgb)
+                .putInt("color_night_rgb", nightRgb)
+                .apply {
+                    if (selectedCal != null) putLong("calendar_id", selectedCal.id)
+                }
+                .apply()
+
+            val statusMsg = if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
+            Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+            onSaved()
+        }
+
+        dialog.show()
     }
 
     private fun testLoginWithHiddenWebView(

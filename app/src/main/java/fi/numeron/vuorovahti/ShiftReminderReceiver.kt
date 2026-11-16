@@ -13,6 +13,7 @@ import android.os.Looper
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.work.Constraints
@@ -101,8 +102,24 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         }
 
         val notifId = if (isEnding) 2002 else 1001
-        val buttonLabel = if (isEnding) "Leimaa ulos" else "Leimaa sisään"
+        val fullButtonLabel = if (isEnding) "LEIMAA ULOS" else "LEIMAA SISÄÄN"
+        val shortButtonLabel = if (isEnding) "ULOS" else "SISÄÄN"
         val contentTitle = if (isEnding) "Vuoro päättyy klo $timeStr" else "Vuoro alkaa klo $timeStr"
+        val btnBgRes = if (isEnding) R.drawable.bg_notif_btn_out else R.drawable.bg_notif_btn_in
+
+        val dirTag = if (isEnding) "Ulos" else "Sisään"
+        val testSuffix = if (isTest) " [Testi]" else ""
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putLong("last_reminder_sent_ms", System.currentTimeMillis())
+            .putString("last_reminder_sent_label", "$dirTag – $shiftTitle$testSuffix")
+            .apply()
+
+        if (!isTest) {
+            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+                CalendarSyncHelper.scheduleShiftReminders(context, calId)
+            }
+        }
 
         val stampIntent = Intent(context, ShiftReminderReceiver::class.java).apply {
             action = ACTION_QUICK_STAMP
@@ -127,14 +144,32 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val collapsedView = RemoteViews(context.packageName, R.layout.notification_stamp_collapsed).apply {
+            setTextViewText(R.id.notifTitleCollapsed, contentTitle)
+            setTextViewText(R.id.notifSubtitleCollapsed, shiftTitle)
+            setTextViewText(R.id.btnNotifStampCollapsed, shortButtonLabel)
+            setInt(R.id.btnNotifStampCollapsed, "setBackgroundResource", btnBgRes)
+            setOnClickPendingIntent(R.id.btnNotifStampCollapsed, stampPi)
+        }
+
+        val expandedView = RemoteViews(context.packageName, R.layout.notification_stamp_expanded).apply {
+            setTextViewText(R.id.notifTitle, contentTitle)
+            setTextViewText(R.id.notifSubtitle, shiftTitle)
+            setTextViewText(R.id.btnNotifStamp, fullButtonLabel)
+            setInt(R.id.btnNotifStamp, "setBackgroundResource", btnBgRes)
+            setOnClickPendingIntent(R.id.btnNotifStamp, stampPi)
+        }
+
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle(contentTitle)
             .setContentText(shiftTitle)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(collapsedView)
+            .setCustomBigContentView(expandedView)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(openAppPi)
-            .addAction(android.R.drawable.ic_menu_send, buttonLabel, stampPi)
             .build()
 
         nm.notify(notifId, notification)
@@ -218,6 +253,12 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 ExistingPeriodicWorkPolicy.KEEP,
                 syncRequest
             )
+            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            if (prefs.getLong("next_calendar_sync_ms", 0L) <= System.currentTimeMillis()) {
+                prefs.edit()
+                    .putLong("next_calendar_sync_ms", System.currentTimeMillis() + TimeUnit.HOURS.toMillis(12))
+                    .apply()
+            }
         }
 
         fun showRequestDecisionNotification(context: Context, title: String, body: String, id: Int) {
@@ -368,6 +409,9 @@ class BackgroundSyncWorker(
                 payload.requestsJson?.let { checkRequestUpdates(it) }
             }
             CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+            prefs.edit()
+                .putLong("next_calendar_sync_ms", System.currentTimeMillis() + TimeUnit.HOURS.toMillis(12))
+                .apply()
             Result.success()
         } else {
             Result.retry()
