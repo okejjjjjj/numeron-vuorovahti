@@ -1124,14 +1124,16 @@ class MainActivity : AppCompatActivity() {
     }
 
         private fun handleAutoLogin() {
-        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\", "\\").replace("'", "\'")
-        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\", "\").replace("'", "\'")
+            private fun handleAutoLogin() {
+        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
         if (user.isEmpty() || pass.isEmpty()) return
 
         val js = """
             (function() {
-                // Klikataan evästehyväksyntä pois tieltä jos löytyy
-                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(el => el.innerText.includes('Hyväksy'));
+                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(function(el) {
+                    return el.innerText.includes('Hyväksy');
+                });
                 if (cookieBtn) { cookieBtn.click(); }
 
                 var u = document.getElementById('Username');
@@ -1155,6 +1157,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
 
 
     private fun handleStampingPage() {
