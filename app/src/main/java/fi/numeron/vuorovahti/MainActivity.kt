@@ -104,8 +104,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getBaseUrl(): String {
-        val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        return prefs.getString("server_url", "https://numeronwfm.com")?.trimEnd('/') ?: "https://numeronwfm.com"
+        return UrlNormalizer.getSavedBaseUrl(this)
     }
 
     private fun updateDemoBanner() {
@@ -199,6 +198,12 @@ class MainActivity : AppCompatActivity() {
             webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
         } else {
             val baseUrl = getBaseUrl()
+            if (baseUrl.isEmpty()) {
+                endBlurTransition()
+                Toast.makeText(this, "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
+                btnNavSettings.performClick()
+                return
+            }
             val url = when (tab) {
                 Tab.STAMP -> "$baseUrl/WorktimeStamping"
                 Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
@@ -1007,8 +1012,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleAutoLogin() {
         val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val user = prefs.getString("username", "") ?: ""
-        val pass = prefs.getString("password", "") ?: ""
+        val user = (prefs.getString("username", "") ?: "").replace("\", "\\").replace("'", "\'")
+        val pass = (prefs.getString("password", "") ?: "").replace("\", "\\").replace("'", "\'")
         if (user.isEmpty() || pass.isEmpty()) return
 
         val js = """
