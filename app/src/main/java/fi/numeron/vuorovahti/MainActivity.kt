@@ -277,7 +277,15 @@ class MainActivity : AppCompatActivity() {
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             }
             startSnapshotTransition {
-                webView.loadUrl(url)
+                val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
+                if (existingCookies.isNullOrBlank()) {
+                    scope.launch {
+                        BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                        webView.loadUrl(url)
+                    }
+                } else {
+                    webView.loadUrl(url)
+                }
             }
         }
     }
