@@ -76,6 +76,23 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        window.statusBarColor = Color.parseColor("#0F1722")
+        window.navigationBarColor = Color.parseColor("#0F1722")
+        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
+        val contentFrame = findViewById<ViewGroup>(android.R.id.content)
+        contentFrame.setBackgroundColor(Color.parseColor("#0F1722"))
+        val activityRoot = contentFrame.getChildAt(0)
+        if (activityRoot != null) {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(activityRoot) { v, windowInsets ->
+                val insets = windowInsets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+                v.setPadding(insets.left, insets.top, insets.right, insets.bottom)
+                windowInsets
+            }
+        }
+
         requestNeededPermissions()
         ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
 
