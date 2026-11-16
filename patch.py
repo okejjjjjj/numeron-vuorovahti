@@ -50,6 +50,24 @@ if source_file:
     fg_canvas.paste(inner, (56, 56), inner)
     fg_canvas.save(os.path.join(drawable_dir, "ic_launcher_foreground.png"))
 
+    adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background"/>
+    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+</adaptive-icon>
+"""
+    with open(os.path.join(anydpi_dir, "ic_launcher.xml"), "w", encoding="utf-8") as f:
+        f.write(adaptive_xml)
+    with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
+        f.write(adaptive_xml)
+
+    values_dir = os.path.join(RES_DIR, "values")
+    os.makedirs(values_dir, exist_ok=True)
+    with open(os.path.join(values_dir, "ic_launcher_background.xml"), "w", encoding="utf-8") as f:
+        f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#182230</color>\n</resources>\n')
+
+    print("Sovelluskuvakkeet generoitu onnistuneesti!")
+
 # Luodaan puuttuva Theme.Vuorovahti.Splash -aloitusnäyttöteema
 themes_dir = os.path.join("app", "src", "main", "res", "values")
 os.makedirs(themes_dir, exist_ok=True)
@@ -69,24 +87,3 @@ with open(themes_path, "w", encoding="utf-8") as f:
     f.write(themes_xml)
 
 print("themes.xml (Theme.Vuorovahti.Splash) luotu onnistuneesti.")
-
-
-
-    
-    adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@color/ic_launcher_background"/>
-    <foreground android:drawable="@drawable/ic_launcher_foreground"/>
-</adaptive-icon>
-"""
-    with open(os.path.join(anydpi_dir, "ic_launcher.xml"), "w", encoding="utf-8") as f:
-        f.write(adaptive_xml)
-    with open(os.path.join(anydpi_dir, "ic_launcher_round.xml"), "w", encoding="utf-8") as f:
-        f.write(adaptive_xml)
-
-    values_dir = os.path.join(RES_DIR, "values")
-    os.makedirs(values_dir, exist_ok=True)
-    with open(os.path.join(values_dir, "ic_launcher_background.xml"), "w", encoding="utf-8") as f:
-        f.write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#182230</color>\n</resources>\n')
-
-    print("Sovelluskuvakkeet generoitu onnistuneesti!")
