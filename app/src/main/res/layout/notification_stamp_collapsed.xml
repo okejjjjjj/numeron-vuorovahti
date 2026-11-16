@@ -20,7 +20,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:text="Vuoro alkaa klo 07:00"
-            android:textColor="#0F1722"
+            android:textColor="@color/notif_title_color"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -31,7 +31,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:text="Aamuvuoro"
-            android:textColor="#334155"
+            android:textColor="@color/notif_subtitle_color"
             android:textSize="12sp" />
     </LinearLayout>
 
