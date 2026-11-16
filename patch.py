@@ -50,6 +50,29 @@ if source_file:
     fg_canvas.paste(inner, (56, 56), inner)
     fg_canvas.save(os.path.join(drawable_dir, "ic_launcher_foreground.png"))
 
+# Luodaan puuttuva Theme.Vuorovahti.Splash -aloitusnäyttöteema
+themes_dir = os.path.join("app", "src", "main", "res", "values")
+os.makedirs(themes_dir, exist_ok=True)
+themes_path = os.path.join(themes_dir, "themes.xml")
+
+themes_xml = """<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Vuorovahti.Splash" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#0F1722</item>
+        <item name="android:statusBarColor">#0F1722</item>
+        <item name="android:navigationBarColor">#0F1722</item>
+    </style>
+</resources>
+"""
+
+with open(themes_path, "w", encoding="utf-8") as f:
+    f.write(themes_xml)
+
+print("themes.xml (Theme.Vuorovahti.Splash) luotu onnistuneesti.")
+
+
+
+    
     adaptive_xml = """<?xml version="1.0" encoding="utf-8"?>
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background"/>
