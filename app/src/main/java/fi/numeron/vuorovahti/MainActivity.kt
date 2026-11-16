@@ -30,6 +30,8 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import android.graphics.Bitmap
+import android.widget.ImageView
+import android.graphics.Canvas
 import android.graphics.Color
 import android.widget.ProgressBar
 import android.widget.FrameLayout
@@ -114,22 +116,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var transitionOverlay: FrameLayout? = null
+    private var snapshotView: ImageView? = null
     private var isTransitionActive: Boolean = false
-    private var blurAnimator: ValueAnimator? = null
-    private var currentBlurRadius: Float = 0f
-
-    private fun applyWebViewBlur(radius: Float) {
-        currentBlurRadius = radius
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (radius <= 0.5f) {
-                webView.setRenderEffect(null)
-            } else {
-                webView.setRenderEffect(
-                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
-                )
-            }
-        }
-    }
 
     private fun ensureTransitionOverlay(): FrameLayout {
         transitionOverlay?.let { overlay ->
@@ -139,12 +127,38 @@ class MainActivity : AppCompatActivity() {
 
         val rootContent = findViewById<FrameLayout>(android.R.id.content)
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#880F1722"))
+            setBackgroundColor(Color.parseColor("#0F1722"))
             alpha = 0f
             visibility = View.GONE
             isClickable = true
             isFocusable = true
         }
+
+        val snap = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            alpha = 1f
+            visibility = View.GONE
+        }
+        overlay.addView(
+            snap,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        snapshotView = snap
+
+        val scrim = View(this).apply {
+            setBackgroundColor(Color.parseColor("#660F1722"))
+        }
+        overlay.addView(
+            scrim,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
         val spinner = ProgressBar(this).apply {
             isIndeterminate = true
             indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
@@ -174,58 +188,55 @@ class MainActivity : AppCompatActivity() {
         overlay.layoutParams = lp
     }
 
-    private fun startBlurTransition(onBlurReady: (() -> Unit)? = null) {
+    private fun startSnapshotTransition(onReady: (() -> Unit)? = null) {
         val overlay = ensureTransitionOverlay()
         overlay.animate().cancel()
-        blurAnimator?.cancel()
-
-        val maxRadius = 22f * resources.displayMetrics.density
 
         if (!isTransitionActive) {
             isTransitionActive = true
-            overlay.visibility = View.VISIBLE
-            overlay.animate()
-                .alpha(1f)
-                .setDuration(160L)
-                .start()
 
-            blurAnimator = ValueAnimator.ofFloat(currentBlurRadius, maxRadius).apply {
-                duration = 160L
-                addUpdateListener { anim ->
-                    applyWebViewBlur(anim.animatedValue as Float)
+            if (webView.width > 0 && webView.height > 0 && webView.alpha > 0.5f) {
+                try {
+                    val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.ARGB_8888)
+                    val canvas = Canvas(bitmap)
+                    webView.draw(canvas)
+                    snapshotView?.setImageBitmap(bitmap)
+                    snapshotView?.visibility = View.VISIBLE
+                } catch (_: Exception) {
+                    snapshotView?.setImageDrawable(null)
+                    snapshotView?.visibility = View.GONE
                 }
-                start()
+            } else {
+                snapshotView?.setImageDrawable(null)
+                snapshotView?.visibility = View.GONE
             }
 
-            if (onBlurReady != null) {
-                webView.postDelayed({ onBlurReady() }, 130L)
+            overlay.alpha = 1f
+            overlay.visibility = View.VISIBLE
+            webView.alpha = 0f
+
+            if (onReady != null) {
+                webView.post { onReady() }
             }
         } else {
-            onBlurReady?.invoke()
+            onReady?.invoke()
         }
     }
 
-    private fun endBlurTransition() {
+    private fun endSnapshotTransition() {
         val overlay = transitionOverlay ?: return
         if (!isTransitionActive) return
 
         overlay.animate().cancel()
-        blurAnimator?.cancel()
-
-        blurAnimator = ValueAnimator.ofFloat(currentBlurRadius, 0f).apply {
-            duration = 260L
-            addUpdateListener { anim ->
-                applyWebViewBlur(anim.animatedValue as Float)
-            }
-            start()
-        }
+        webView.alpha = 1f
 
         overlay.animate()
             .alpha(0f)
-            .setDuration(260L)
+            .setDuration(220L)
             .withEndAction {
-                applyWebViewBlur(0f)
                 overlay.visibility = View.GONE
+                snapshotView?.setImageDrawable(null)
+                snapshotView?.visibility = View.GONE
                 isTransitionActive = false
             }
             .start()
@@ -242,7 +253,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (DemoModeHelper.isDemoEnabled(this)) {
-            startBlurTransition {
+            startSnapshotTransition {
                 val html = when (tab) {
                     Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
                     Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
@@ -262,7 +273,7 @@ class MainActivity : AppCompatActivity() {
                 Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             }
-            startBlurTransition {
+            startSnapshotTransition {
                 webView.loadUrl(url)
             }
         }
@@ -450,9 +461,18 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
 
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                val url = request?.url?.toString() ?: return false
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    startSnapshotTransition()
+                    return false
+                }
+                return super.shouldOverrideUrlLoading(view, request)
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                startBlurTransition()
+                startSnapshotTransition()
             }
 
             override fun shouldInterceptRequest(
@@ -497,7 +517,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (url.startsWith("https://demo.local/")) {
                     handleDemoAutoStamp()
-                    endBlurTransition()
+                    endSnapshotTransition()
                     return
                 }
 
@@ -520,7 +540,7 @@ class MainActivity : AppCompatActivity() {
 
                 val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 280L else 200L
                 view?.postDelayed({
-                    endBlurTransition()
+                    endSnapshotTransition()
                 }, revealDelay)
             }
         }
