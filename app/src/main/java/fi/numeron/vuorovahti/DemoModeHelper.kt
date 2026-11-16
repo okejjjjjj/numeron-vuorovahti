@@ -20,8 +20,8 @@ object DemoModeHelper {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val org = (prefs.getString("org_raw_input", "") ?: "").trim()
         val serverUrl = (prefs.getString("server_url", "") ?: "").trim()
-        val user = (prefs.getString("username", "") ?: "").trim()
-        val pass = prefs.getString("password", "") ?: ""
+        val user = (SecureCredentialManager.getUsername(context) ?: "").trim()
+        val pass = SecureCredentialManager.getPassword(context) ?: ""
 
         // Aktivoituu käynnistettäessä, jos tunnuksia ei ole asetettu TAI tunnukset ovat "demo"
         if (user.isEmpty() || pass.isEmpty() || (org.isEmpty() && serverUrl.isEmpty())) {
