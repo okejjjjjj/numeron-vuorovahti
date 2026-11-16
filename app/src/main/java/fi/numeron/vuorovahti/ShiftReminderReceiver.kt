@@ -23,7 +23,9 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -80,6 +82,16 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         val isEnding = intent.getBooleanExtra("IS_ENDING", false)
 
         showReminderNotification(context, title, timeStr, isEnding)
+
+        val appCtx = context.applicationContext
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                BackgroundAuthHelper.ensureAuthenticatedSession(appCtx)
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 
     fun showReminderNotification(
