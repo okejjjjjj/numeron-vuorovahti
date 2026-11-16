@@ -70,7 +70,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
-        setTheme(R.style.Theme_AppCompat_NoActionBar)
+        setTheme(androidx.appcompat.R.style.Theme_AppCompat_NoActionBar)
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -1068,6 +1068,8 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent().replace("\n", " ")
 
         val js = """
+        val safeCss = css.replace("\\", "\\\\").replace("'", "\\'")
+        val js = """
             (function() {
                 var style = document.getElementById('custom-dark-theme');
                 if (!style) {
@@ -1075,7 +1077,7 @@ class MainActivity : AppCompatActivity() {
                     style.id = 'custom-dark-theme';
                     document.head.appendChild(style);
                 }
-                style.innerHTML = '$css';
+                style.innerHTML = '$safeCss';
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
