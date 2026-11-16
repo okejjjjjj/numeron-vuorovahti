@@ -533,9 +533,11 @@ class MainActivity : AppCompatActivity() {
             val currentlyIn = prefs.getBoolean("demo_stamped_in", false)
             if (wantIn != currentlyIn) {
                 webView.evaluateJavascript("DemoBridge.toggleStamp()", null)
+                webView.postDelayed({ finishAndRemoveTask() }, 1200L)
             } else {
                 val stateStr = if (wantIn) "Sisään" else "Ulos"
                 Toast.makeText(this, "Demotila: Olet jo leimannut tilaan $stateStr", Toast.LENGTH_SHORT).show()
+                webView.postDelayed({ finishAndRemoveTask() }, 1200L)
             }
         }
     }
@@ -1125,9 +1127,11 @@ class MainActivity : AppCompatActivity() {
             when {
                 cleanResult.startsWith("STAMPED_") -> {
                     Toast.makeText(this, "Leimaus suoritettu ($targetText)", Toast.LENGTH_SHORT).show()
+                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
                 cleanResult.startsWith("WRONG_DIRECTION_") -> {
                     Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
+                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
             }
         }

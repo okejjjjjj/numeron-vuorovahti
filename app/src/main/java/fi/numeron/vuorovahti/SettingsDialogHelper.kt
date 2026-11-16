@@ -334,8 +334,8 @@ object SettingsDialogHelper {
                 if (url.contains("/Login/Login", ignoreCase = true)) {
                     if (!loginAttempted) {
                         loginAttempted = true
-                        val safeUser = username.replace("", "\").replace("'", "'")
-                        val safePass = password.replace("", "\").replace("'", "'")
+                        val safeUser = username.replace("\\", "\\\\").replace("'", "\\'")
+                        val safePass = password.replace("\\", "\\\\").replace("'", "\\'")
                         val js = """
                             (function() {
                                 var u = document.getElementById('Username');
@@ -363,7 +363,7 @@ object SettingsDialogHelper {
                             })();
                         """.trimIndent()
                         view?.evaluateJavascript(errJs) { errText ->
-                            val cleanErr = errText?.replace(""", "")?.trim() ?: ""
+                            val cleanErr = errText?.replace("\"", "")?.trim() ?: ""
                             if (cleanErr.isNotEmpty()) {
                                 cleanupAndRespond(false, "Kirjautuminen epäonnistui: $cleanErr")
                             } else {

@@ -83,9 +83,7 @@ object CalendarSyncHelper {
     private fun buildFullDescription(comment: String, userTag: String): String {
         val clean = comment.trim()
         val tagLine = buildUserTagSuffix(userTag)
-        return if (clean.isEmpty()) tagLine else "$clean
-
-$tagLine"
+        return if (clean.isEmpty()) tagLine else "$clean\n\n$tagLine"
     }
 
     private fun resolveGoogleShiftColorKeys(context: Context, calendarId: Long): ShiftColorKeys {
@@ -167,7 +165,7 @@ $tagLine"
     private fun belongsToCurrentUser(description: String, title: String, userTag: String): Boolean {
         if (!description.contains(EVENT_DESCRIPTION_TAG)) return false
         if (userTag.isEmpty()) {
-            val bracketRegex = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\s*\[.+?]")
+            val bracketRegex = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\\s*\\[.+?]")
             return !bracketRegex.containsMatchIn(description)
         }
         return description.contains("[$userTag]", ignoreCase = true) ||
@@ -176,7 +174,7 @@ $tagLine"
 
     private fun belongsToAnotherUser(description: String, userTag: String): Boolean {
         if (!description.contains(EVENT_DESCRIPTION_TAG)) return false
-        val match = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\s*\[(.+?)]").find(description)
+        val match = Regex("Synkronoitu Numeron Vuorovahti -sovelluksesta\\s*\\[(.+?)]").find(description)
         if (match != null) {
             val owner = match.groupValues[1].trim()
             return !owner.equals(userTag, ignoreCase = true)
