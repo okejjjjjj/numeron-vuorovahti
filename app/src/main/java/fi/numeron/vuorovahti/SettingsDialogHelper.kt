@@ -1,22 +1,65 @@
 package fi.numeron.vuorovahti
 
+import android.Manifest
 import android.app.AlertDialog
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.provider.CalendarContract
 import android.text.InputType
-import android.view.Gravity
-import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
+
+data class CalendarOption(
+    val id: Long,
+    val name: String,
+    val accountName: String
+) {
+    override fun toString(): String = "$name ($accountName)"
+}
 
 object SettingsDialogHelper {
+
+    fun getAvailableCalendars(context: Context): List<CalendarOption> {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+            return emptyList()
+        }
+        val list = mutableListOf<CalendarOption>()
+        val projection = arrayOf(
+            CalendarContract.Calendars._ID,
+            CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
+            CalendarContract.Calendars.ACCOUNT_NAME,
+            CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL
+        )
+        val selection = "${CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${CalendarContract.Calendars.VISIBLE} = 1"
+        val selectionArgs = arrayOf(CalendarContract.Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
+
+        context.contentResolver.query(
+            CalendarContract.Calendars.CONTENT_URI,
+            projection,
+            selection,
+            selectionArgs,
+            null
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val id = cursor.getLong(0)
+                val name = cursor.getString(1) ?: "Kalenteri"
+                val account = cursor.getString(2) ?: ""
+                list.add(CalendarOption(id, name, account))
+            }
+        }
+        return list
+    }
 
     fun showSettingsDialog(
         context: Context,
@@ -112,6 +155,28 @@ object SettingsDialogHelper {
         layout.addView(btnTestCredentials)
         layout.addView(tvTestStatus)
 
+        // 5. Kalenterin valinta
+        layout.addView(createLabel("Kohdekalenteri"))
+        val calendars = getAvailableCalendars(context)
+        val spinnerCalendar = Spinner(context)
+        if (calendars.isNotEmpty()) {
+            val adapter = ArrayAdapter(context, android.R.layout.simple_spinner_dropdown_item, calendars)
+            spinnerCalendar.adapter = adapter
+            val savedCalId = prefs.getLong("calendar_id", -1L)
+            val idx = calendars.indexOfFirst { it.id == savedCalId }
+            if (idx >= 0) spinnerCalendar.setSelection(idx)
+        }
+        layout.addView(spinnerCalendar)
+
+        // 6. Muistutusaika (minuuttia ennen vuoroa)
+        layout.addView(createLabel("Muistutus ennen vuoroa (min)"))
+        val editReminder = EditText(context).apply {
+            setText(prefs.getInt("reminder_minutes", 30).toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            isSingleLine = true
+        }
+        layout.addView(editReminder)
+
         // Lisätoiminnot
         val btnSync = Button(context).apply {
             text = "Synkronoi työvuorot kalenteriin nyt"
@@ -137,11 +202,18 @@ object SettingsDialogHelper {
             .setPositiveButton("Tallenna") { _, _ ->
                 val rawOrg = editOrg.text.toString().trim()
                 val normalizedUrl = UrlNormalizer.normalizeOrgUrl(rawOrg)
+                val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
+                val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
+
                 prefs.edit()
                     .putString("org_raw_input", rawOrg)
                     .putString("server_url", normalizedUrl)
                     .putString("username", editUser.text.toString().trim())
                     .putString("password", editPass.text.toString())
+                    .putInt("reminder_minutes", reminderMins)
+                    .apply {
+                        if (selectedCal != null) putLong("calendar_id", selectedCal.id)
+                    }
                     .apply()
 
                 Toast.makeText(context, "Tallennettu ($normalizedUrl)", Toast.LENGTH_SHORT).show()
@@ -151,9 +223,6 @@ object SettingsDialogHelper {
             .show()
     }
 
-    /**
-     * Testaa kirjautumisen näkymättömällä WebView-instanssilla ilman että pääikkuna häiriintyy.
-     */
     private fun testLoginWithHiddenWebView(
         context: Context,
         baseUrl: String,
@@ -166,7 +235,6 @@ object SettingsDialogHelper {
             settings.domStorageEnabled = true
         }
 
-        // Tyhjennetään vanhat testievästeet jotta kirjautuminen varmasti testataan tuoreeltaan
         CookieManager.getInstance().removeAllCookies(null)
 
         var loginAttempted = false
@@ -199,8 +267,8 @@ object SettingsDialogHelper {
                 if (url.contains("/Login/Login", ignoreCase = true)) {
                     if (!loginAttempted) {
                         loginAttempted = true
-                        val safeUser = username.replace("'", "\\'")
-                        val safePass = password.replace("'", "\\'")
+                        val safeUser = username.replace("\\", "\\\\").replace("'", "\\'")
+                        val safePass = password.replace("\\", "\\\\").replace("'", "\\'")
                         val js = """
                             (function() {
                                 var u = document.getElementById('Username');
@@ -221,7 +289,6 @@ object SettingsDialogHelper {
                             }
                         }
                     } else {
-                        // Palattiin kirjautumissivulle -> tarkistetaan virheilmoitus DOMista
                         val errJs = """
                             (function() {
                                 var err = document.querySelector('.validation-summary-errors, .alert-danger');
