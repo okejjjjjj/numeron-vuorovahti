@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.animation.ValueAnimator
 import android.os.Bundle
 import android.view.View
 import android.webkit.CookieManager
@@ -113,12 +114,31 @@ class MainActivity : AppCompatActivity() {
 
     private var transitionOverlay: FrameLayout? = null
     private var isTransitionActive: Boolean = false
+    private var blurAnimator: ValueAnimator? = null
+    private var currentBlurRadius: Float = 0f
+
+    private fun applyWebViewBlur(radius: Float) {
+        currentBlurRadius = radius
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (radius <= 0.5f) {
+                webView.setRenderEffect(null)
+            } else {
+                webView.setRenderEffect(
+                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+                )
+            }
+        }
+    }
 
     private fun ensureTransitionOverlay(): FrameLayout {
-        transitionOverlay?.let { return it }
-        val parent = webView.parent as ViewGroup
+        transitionOverlay?.let { overlay ->
+            syncOverlayBoundsToWebView(overlay)
+            return overlay
+        }
+
+        val rootContent = findViewById<FrameLayout>(android.R.id.content)
         val overlay = FrameLayout(this).apply {
-            setBackgroundColor(Color.parseColor("#B80F1722"))
+            setBackgroundColor(Color.parseColor("#880F1722"))
             alpha = 0f
             visibility = View.GONE
             isClickable = true
@@ -129,48 +149,81 @@ class MainActivity : AppCompatActivity() {
             indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
         }
         val sizePx = (34 * resources.displayMetrics.density).toInt()
-        val lp = FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER)
-        overlay.addView(spinner, lp)
-        parent.addView(
-            overlay,
-            ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        )
+        overlay.addView(spinner, FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER))
+
+        rootContent.addView(overlay, FrameLayout.LayoutParams(webView.width, webView.height))
+        syncOverlayBoundsToWebView(overlay)
         transitionOverlay = overlay
         return overlay
     }
 
-    private fun startBlurTransition() {
+    private fun syncOverlayBoundsToWebView(overlay: FrameLayout) {
+        if (webView.width <= 0 || webView.height <= 0) return
+        val rootContent = findViewById<View>(android.R.id.content)
+        val webLoc = IntArray(2)
+        val rootLoc = IntArray(2)
+        webView.getLocationInWindow(webLoc)
+        rootContent.getLocationInWindow(rootLoc)
+
+        val lp = overlay.layoutParams as FrameLayout.LayoutParams
+        lp.width = webView.width
+        lp.height = webView.height
+        lp.leftMargin = webLoc[0] - rootLoc[0]
+        lp.topMargin = webLoc[1] - rootLoc[1]
+        overlay.layoutParams = lp
+    }
+
+    private fun startBlurTransition(onBlurReady: (() -> Unit)? = null) {
         val overlay = ensureTransitionOverlay()
         overlay.animate().cancel()
+        blurAnimator?.cancel()
+
+        val maxRadius = 22f * resources.displayMetrics.density
+
         if (!isTransitionActive) {
             isTransitionActive = true
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                val radius = 22f * resources.displayMetrics.density
-                webView.setRenderEffect(
-                    RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
-                )
-            }
             overlay.visibility = View.VISIBLE
             overlay.animate()
                 .alpha(1f)
-                .setDuration(120L)
+                .setDuration(160L)
                 .start()
+
+            blurAnimator = ValueAnimator.ofFloat(currentBlurRadius, maxRadius).apply {
+                duration = 160L
+                addUpdateListener { anim ->
+                    applyWebViewBlur(anim.animatedValue as Float)
+                }
+                start()
+            }
+
+            if (onBlurReady != null) {
+                webView.postDelayed({ onBlurReady() }, 130L)
+            }
+        } else {
+            onBlurReady?.invoke()
         }
     }
 
     private fun endBlurTransition() {
         val overlay = transitionOverlay ?: return
+        if (!isTransitionActive) return
+
         overlay.animate().cancel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            webView.setRenderEffect(null)
+        blurAnimator?.cancel()
+
+        blurAnimator = ValueAnimator.ofFloat(currentBlurRadius, 0f).apply {
+            duration = 260L
+            addUpdateListener { anim ->
+                applyWebViewBlur(anim.animatedValue as Float)
+            }
+            start()
         }
+
         overlay.animate()
             .alpha(0f)
-            .setDuration(220L)
+            .setDuration(260L)
             .withEndAction {
+                applyWebViewBlur(0f)
                 overlay.visibility = View.GONE
                 isTransitionActive = false
             }
@@ -187,19 +240,18 @@ class MainActivity : AppCompatActivity() {
             Tab.SHIFTS -> setActiveTab(btnNavShifts)
         }
 
-        startBlurTransition()
-
         if (DemoModeHelper.isDemoEnabled(this)) {
-            val html = when (tab) {
-                Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
-                Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
-                Tab.SHIFTS -> DemoModeHelper.getDemoShiftsHtml(this)
+            startBlurTransition {
+                val html = when (tab) {
+                    Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
+                    Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
+                    Tab.SHIFTS -> DemoModeHelper.getDemoShiftsHtml(this)
+                }
+                webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
             }
-            webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
         } else {
             val baseUrl = getBaseUrl()
             if (baseUrl.isEmpty()) {
-                endBlurTransition()
                 Toast.makeText(this, "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
                 btnNavSettings.performClick()
                 return
@@ -209,7 +261,9 @@ class MainActivity : AppCompatActivity() {
                 Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             }
-            webView.loadUrl(url)
+            startBlurTransition {
+                webView.loadUrl(url)
+            }
         }
     }
 
@@ -449,7 +503,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 160L else 80L
+                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 280L else 200L
                 view?.postDelayed({
                     endBlurTransition()
                 }, revealDelay)
