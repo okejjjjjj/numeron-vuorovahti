@@ -696,6 +696,16 @@ object SettingsDialogHelper {
 
         footerBar.addView(btnCancel)
         footerBar.addView(btnSave)
+                // Vastuuvapauslauseke (epävirallinen sovellus)
+        val tvDisclaimer = TextView(context).apply {
+            text = "Tämä on itsenäinen, epävirallinen kolmannen osapuolen asiakassovellus. Numeron vuorovahti ei ole millään tavalla sidoksissa Vismaan, Numeroniin tai muihin mahdollisiin tahoihin."
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        rootContainer.addView(tvDisclaimer)
+
         rootContainer.addView(footerBar)
 
         val dialog = AlertDialog.Builder(context)
