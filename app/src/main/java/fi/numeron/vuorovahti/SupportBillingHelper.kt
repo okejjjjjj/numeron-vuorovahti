@@ -83,8 +83,10 @@ class SupportBillingHelper(
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
+        // Play Billing Library 8.0.0 palauttaa QueryProductDetailsResult-olion
+        billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
             if (isDestroyed) return@queryProductDetailsAsync
+            val productDetailsList = queryProductDetailsResult.productDetailsList
             if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
                 val sorted = productDetailsList.sortedBy {
                     it.oneTimePurchaseOfferDetails?.priceAmountMicros ?: 0L
