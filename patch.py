@@ -4,38 +4,44 @@ import sys
 import re
 
 def main():
-    # 1. Lisätään AndroidManifest.xml:ään viittaus varmuuskopiosääntöihin, jos sitä ei vielä ole
-    manifest_path = pathlib.Path("app/src/main/AndroidManifest.xml")
-    if not manifest_path.exists():
-        manifest_path = pathlib.Path("AndroidManifest.xml")
+    settings_path = pathlib.Path("SettingsDialogHelper.kt.txt")
+    if not settings_path.exists():
+        alt = pathlib.Path("app/src/main/java/fi/numeron/vuorovahti/SettingsDialogHelper.kt")
+        if alt.exists():
+            settings_path = alt
+        else:
+            print("Virhe: SettingsDialogHelper-tiedostoa ei löytynyt.", file=sys.stderr)
+            sys.exit(1)
 
-    if manifest_path.exists():
-        m_content = manifest_path.read_text(encoding="utf-8")
-        if "fullBackupContent" not in m_content:
-            # Lisätään android:fullBackupContent="@xml/backup_rules" android:allowBackup="true" yhteyteen
-            m_content = m_content.replace(
-                'android:allowBackup="true"',
-                'android:allowBackup="true"\n        android:fullBackupContent="@xml/backup_rules"'
-            )
-            manifest_path.write_text(m_content, encoding="utf-8")
-            print(f"Päivitetty Manifest: {manifest_path}")
+    content = settings_path.read_text(encoding="utf-8")
+    original = content
 
-    # 2. Luodaan res/xml/backup_rules.xml -tiedosto, joka varmuuskopioi SharedPreferences-tiedoston (NumeronPrefs.xml)
-    xml_dir = pathlib.Path("app/src/main/res/xml")
-    xml_dir.mkdir(parents=True, exist_ok=True)
-    backup_rules_path = xml_dir / "backup_rules.xml"
-    
-    backup_rules_content = '''<?xml version="1.0" encoding="utf-8"?>
-<full-backup-content>
-    <!-- Varmuuskopioidaan sovelluksen SharedPreferences-asetukset (organisaatiotunnus ym.) -->
-    <include domain="sharedpref" path="NumeronPrefs.xml" />
-</full-backup-content>
+    # Lisätään vastuuvapauslauseke asetussivun alalaitaan (ennen rootContainer.addView(rootContainer tai dialogin luontia))
+    disclaimer_code = '''        // Vastuuvapauslauseke (epävirallinen sovellus)
+        val tvDisclaimer = TextView(context).apply {
+            text = "Tämä on itsenäinen, epävirallinen kolmannen osapuolen asiakassovellus. Numeron vuorovahti ei ole millään tavalla sidoksissa Vismaan, Numeroniin tai muihin mahdollisiin tahoihin."
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+        }
+        rootContainer.addView(tvDisclaimer)
+
 '''
-    backup_rules_path.write_text(backup_rules_content, encoding="utf-8")
-    print(f"Luotu/päivitetty varmuuskopiosäännöt: {backup_rules_path}")
 
-    # 3. Nostetaan versionCode-arvoa pienellä pykälällä build.gradle.kts -tiedostosta
-    for gradle_path in [pathlib.Path("app/build.gradle.kts"), pathlib.Path("app/build.gradle"), pathlib.Path("build.gradle.kts")]:
+    # Etsitään kohta, johon alapalkki (footerBar) tai dialogi lisätään, ja lisätään vastuuvapauslauseke juuri ennen footerBar-lisäystä
+    target_pattern = 'rootContainer.addView(footerBar)'
+    if target_pattern in content and 'epävirallinen' not in content:
+        content = content.replace(target_pattern, disclaimer_code + '        ' + target_pattern, 1)
+
+    if content != original:
+        settings_path.write_text(content, encoding="utf-8")
+        print(f"Päivitetty onnistuneesti: {settings_path}")
+    else:
+        print("Ei muutoksia tehtävänä tai vastuuvapauslauseke oli jo lisätty.")
+
+    # Nostetaan build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
+    for gradle_path in [pathlib.Path("build.gradle.kts.txt"), pathlib.Path("app/build.gradle.kts"), pathlib.Path("build.gradle")]:
         if gradle_path.exists():
             g_content = gradle_path.read_text(encoding="utf-8")
             match = re.search(r'versionCode\s*=\s*(\d+)', g_content)
