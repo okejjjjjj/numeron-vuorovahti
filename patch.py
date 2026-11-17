@@ -38,395 +38,499 @@ def replace_idempotent(content: str, old: str, new: str, label: str) -> str:
     return content.replace(old, new, 1)
 
 
-def fix_webview_pages():
-    main_path = "app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt"
-    with open(main_path, "r", encoding="utf-8") as f:
-        main = f.read()
-    orig_main = main
+def update_calendar_change_tracker():
+    path = "app/src/main/java/fi/numeron/vuorovahti/CalendarChangeTracker.kt"
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    orig = content
 
-    old_kendo_css = """            .k-grid-header th.k-header, .k-grid-header th.k-header > .k-link {
-                background-color: #233040 !important;
-                color: #F1F5F9 !important;
-                border-color: #2A394A !important;
-                padding: 10px 8px !important;
-            }
-            .k-grid tr {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-            }
-            .k-grid tr.k-alt {
-                background-color: #131C28 !important;
-            }
-            .k-grid td {
-                border-color: #2A394A !important;
-                color: #F1F5F9 !important;
-                padding: 10px 8px !important;
-            }
-            .k-grid tr:hover td {
-                background-color: #233040 !important;
-                color: #FFFFFF !important;
-            }
-            .k-grid tr.k-state-selected td {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
-            .k-widget, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-select, .k-input, .k-pager-wrap .k-link, .k-pager-info {
-                background-color: #111923 !important;
-                color: #F1F5F9 !important;
-                border-color: #37475A !important;
-            }
-            .k-list-container, .k-list, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap, select, .k-animation-container {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                border: 1px solid #2A394A !important;
-            }
-            .k-list .k-item {
-                color: #F1F5F9 !important;
-                background-color: #182332 !important;
-                padding: 10px 12px !important;
-            }
-            .k-list .k-item:hover, .k-list .k-state-selected, .k-list .k-state-focused {
-                background-color: #233040 !important;
-                color: #38BDF8 !important;
-            }
-            .k-list .k-item:hover, .k-list .k-state-focused, .k-list .k-state-selected {
-                background-color: #2A394A !important;
-                color: #FFFFFF !important;
-            }"""
+    old_model = """data class CalendarChangeItem(
+    val id: String,
+    val type: ChangeType,
+    val calendarId: Long,
+    val eventId: Long?, // Nykyisen kalenteritapahtuman ID (ADDED / MODIFIED)
+    val title: String,
+    val startMs: Long,
+    val endMs: Long,
+    val isAllDay: Boolean,
+    // Edeltävät arvot kumoamista varten (MODIFIED / REMOVED)
+    val prevTitle: String? = null,
+    val prevStartMs: Long? = null,
+    val prevEndMs: Long? = null,
+    val prevIsAllDay: Boolean = false,
+    val timestampMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("type", type.name)
+        put("calendarId", calendarId)
+        put("eventId", eventId ?: -1L)
+        put("title", title)
+        put("startMs", startMs)
+        put("endMs", endMs)
+        put("isAllDay", isAllDay)
+        if (prevTitle != null) put("prevTitle", prevTitle)
+        if (prevStartMs != null) put("prevStartMs", prevStartMs)
+        if (prevEndMs != null) put("prevEndMs", prevEndMs)
+        put("prevIsAllDay", prevIsAllDay)
+        put("timestampMs", timestampMs)
+    }
 
-    new_kendo_css = """            .k-grid {
-                overflow-x: auto !important;
-            }
-            .k-grid-content {
-                overflow-x: auto !important;
-                -webkit-overflow-scrolling: touch !important;
-            }
-            .k-grid-header th.k-header,
-            .k-grid-header th.k-header .k-link,
-            .k-grid-header th.k-header .k-column-title,
-            .k-grid-header th.k-header .k-grid-header-menu,
-            .k-grid-header th.k-header .k-icon {
-                background-color: #233040 !important;
-                color: #F1F5F9 !important;
-                border-color: #2A394A !important;
-            }
-            .k-grid-header th.k-header {
-                padding: 10px 8px !important;
-            }
-            .k-checkbox,
-            .k-grid input[type="checkbox"] {
-                background-color: #111923 !important;
-                border: 1px solid #38BDF8 !important;
-                border-radius: 4px !important;
-                width: 18px !important;
-                height: 18px !important;
-                appearance: auto !important;
-                -webkit-appearance: checkbox !important;
-            }
-            .k-checkbox:checked {
-                background-color: #1982C4 !important;
-                border-color: #38BDF8 !important;
-            }
-            .k-grid tr {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-            }
-            .k-grid tr.k-alt {
-                background-color: #131C28 !important;
-            }
-            .k-grid td {
-                border-color: #2A394A !important;
-                color: #F1F5F9 !important;
-                padding: 10px 8px !important;
-            }
-            .k-grid tr:hover td {
-                background-color: #233040 !important;
-                color: #FFFFFF !important;
-            }
-            .k-grid tr.k-state-selected td {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
-            .k-widget, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-select, .k-input,
-            .k-picker, .k-dropdownlist, .k-input-inner, .k-input-value-text,
-            .k-pager-wrap .k-link, .k-pager-info {
-                background-color: #111923 !important;
-                color: #F1F5F9 !important;
-                border-color: #37475A !important;
-            }
-            .k-pager-wrap .k-picker,
-            .k-pager-wrap .k-dropdownlist {
-                min-width: 68px !important;
-                height: 34px !important;
-                display: inline-flex !important;
-                align-items: center !important;
-            }
-            .k-pager-wrap .k-input-inner {
-                padding: 4px 8px !important;
-                display: flex !important;
-                align-items: center !important;
-            }
-            .k-pager-wrap .k-input-value-text {
-                color: #F1F5F9 !important;
-                font-size: 13px !important;
-                visibility: visible !important;
-                opacity: 1 !important;
-            }
-            .k-input-button {
-                background-color: #233040 !important;
-                color: #F1F5F9 !important;
-                border-left: 1px solid #37475A !important;
-            }
-            .k-list-container, .k-list, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap,
-            select, .k-animation-container, .k-popup, .k-list-ul, .k-calendar, .k-time-list-wrapper {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                border: 1px solid #2A394A !important;
-            }
-            .k-calendar-header, .k-calendar-view, .k-calendar td, .k-calendar th {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                border-color: #2A394A !important;
-            }
-            .k-calendar td.k-selected .k-link, .k-calendar td.k-state-selected .k-link {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
-            .k-list .k-item, .k-list-item, .k-time-list .k-item {
-                color: #F1F5F9 !important;
-                background-color: #182332 !important;
-                padding: 10px 12px !important;
-            }
-            .k-list .k-item:hover, .k-list .k-state-focused, .k-list .k-state-selected,
-            .k-list-item:hover, .k-list-item.k-hover, .k-list-item.k-selected, .k-list-item.k-focus {
-                background-color: #2A394A !important;
-                color: #FFFFFF !important;
-            }
+    companion object {
+        fun fromJson(obj: JSONObject): CalendarChangeItem {
+            val evId = obj.optLong("eventId", -1L)
+            return CalendarChangeItem(
+                id = obj.getString("id"),
+                type = ChangeType.valueOf(obj.getString("type")),
+                calendarId = obj.getLong("calendarId"),
+                eventId = if (evId > 0) evId else null,
+                title = obj.getString("title"),
+                startMs = obj.getLong("startMs"),
+                endMs = obj.getLong("endMs"),
+                isAllDay = obj.getBoolean("isAllDay"),
+                prevTitle = if (obj.has("prevTitle")) obj.getString("prevTitle") else null,
+                prevStartMs = if (obj.has("prevStartMs")) obj.getLong("prevStartMs") else null,
+                prevEndMs = if (obj.has("prevEndMs")) obj.getLong("prevEndMs") else null,
+                prevIsAllDay = obj.optBoolean("prevIsAllDay", false),
+                timestampMs = obj.optLong("timestampMs", System.currentTimeMillis())
+            )
+        }
+    }
+}"""
 
-            /* === SELECT2 & TOIVEEN MUOKKAUS (/PersonRequests/Edit) === */
-            .select2-container {
-                width: 100% !important;
-            }
-            .select2-container--default .select2-selection--single {
-                background-color: #111923 !important;
-                border: 1px solid #37475A !important;
-                border-radius: 8px !important;
-                height: 40px !important;
-                display: flex !important;
-                align-items: center !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__rendered {
-                color: #F1F5F9 !important;
-                line-height: 38px !important;
-                padding-left: 12px !important;
-                padding-right: 30px !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__placeholder {
-                color: #64748B !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__arrow {
-                height: 38px !important;
-                right: 8px !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__arrow b {
-                border-color: #94A3B8 transparent transparent transparent !important;
-            }
-            .select2-dropdown {
-                background-color: #182332 !important;
-                border: 1px solid #37475A !important;
-                border-radius: 8px !important;
-                color: #F1F5F9 !important;
-            }
-            .select2-search--dropdown .select2-search__field {
-                background-color: #111923 !important;
-                color: #F1F5F9 !important;
-                border: 1px solid #37475A !important;
-                border-radius: 6px !important;
-            }
-            .select2-results__option {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                padding: 10px 12px !important;
-            }
-            .select2-container--default .select2-results__option--highlighted[aria-selected],
-            .select2-container--default .select2-results__option--highlighted {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
-            .select2-container--default .select2-results__option[aria-selected="true"] {
-                background-color: #233040 !important;
-                color: #38BDF8 !important;
-            }
-            #FullDaySwitch,
-            #SeriesRequestSwitch {
-                min-width: 54px !important;
-                height: 28px !important;
-                border-radius: 14px !important;
-                position: relative !important;
-            }
-            #FullDaySwitch:not(.active),
-            #SeriesRequestSwitch:not(.active) {
-                background-color: #233040 !important;
-                border-color: #475569 !important;
-            }
-            #FullDaySwitch.active,
-            #SeriesRequestSwitch.active {
-                background-color: #1982C4 !important;
-                border-color: #38BDF8 !important;
-            }
-            .input-group-addon {
-                background-color: #233040 !important;
-                border: 1px solid #37475A !important;
-                color: #38BDF8 !important;
-                border-radius: 0 8px 8px 0 !important;
-            }
-            .vismaicon-datepicker::before {
-                content: "📅" !important;
-                font-style: normal !important;
-            }
-            .vismaicon-time::before {
-                content: "🕒" !important;
-                font-style: normal !important;
-            }
-            hr {
-                border-top: 1px solid #2A394A !important;
-            }
-            .editPageContainer table {
-                width: 100% !important;
-            }
-            .editPageContainer td {
-                padding-right: 6px !important;
-            }
-            #InfoTextArea {
-                width: 100% !important;
-            }
-            .FooterPanel {
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 8px !important;
-            }
-            .FooterPanel .SubmitButton:not(.hidden) {
-                width: 100% !important;
-                margin: 0 !important;
-                padding: 12px !important;
-            }"""
+    new_model = """data class CalendarChangeItem(
+    val id: String,
+    val type: ChangeType,
+    val calendarId: Long,
+    val eventId: Long?, // Nykyisen kalenteritapahtuman ID (ADDED / MODIFIED)
+    val title: String,
+    val startMs: Long,
+    val endMs: Long,
+    val isAllDay: Boolean,
+    val location: String = "",
+    val description: String = "",
+    // Edeltävät arvot kumoamista ja vertailua varten (MODIFIED / REMOVED)
+    val prevTitle: String? = null,
+    val prevStartMs: Long? = null,
+    val prevEndMs: Long? = null,
+    val prevIsAllDay: Boolean = false,
+    val prevLocation: String? = null,
+    val prevDescription: String? = null,
+    val timestampMs: Long = System.currentTimeMillis()
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("type", type.name)
+        put("calendarId", calendarId)
+        put("eventId", eventId ?: -1L)
+        put("title", title)
+        put("startMs", startMs)
+        put("endMs", endMs)
+        put("isAllDay", isAllDay)
+        put("location", location)
+        put("description", description)
+        if (prevTitle != null) put("prevTitle", prevTitle)
+        if (prevStartMs != null) put("prevStartMs", prevStartMs)
+        if (prevEndMs != null) put("prevEndMs", prevEndMs)
+        put("prevIsAllDay", prevIsAllDay)
+        if (prevLocation != null) put("prevLocation", prevLocation)
+        if (prevDescription != null) put("prevDescription", prevDescription)
+        put("timestampMs", timestampMs)
+    }
 
-    main = replace_idempotent(main, old_kendo_css, new_kendo_css, "Kendo & Select2 CSS")
+    companion object {
+        fun fromJson(obj: JSONObject): CalendarChangeItem {
+            val evId = obj.optLong("eventId", -1L)
+            return CalendarChangeItem(
+                id = obj.getString("id"),
+                type = ChangeType.valueOf(obj.getString("type")),
+                calendarId = obj.getLong("calendarId"),
+                eventId = if (evId > 0) evId else null,
+                title = obj.getString("title"),
+                startMs = obj.getLong("startMs"),
+                endMs = obj.getLong("endMs"),
+                isAllDay = obj.getBoolean("isAllDay"),
+                location = obj.optString("location", ""),
+                description = obj.optString("description", ""),
+                prevTitle = if (obj.has("prevTitle")) obj.getString("prevTitle") else null,
+                prevStartMs = if (obj.has("prevStartMs")) obj.getLong("prevStartMs") else null,
+                prevEndMs = if (obj.has("prevEndMs")) obj.getLong("prevEndMs") else null,
+                prevIsAllDay = obj.optBoolean("prevIsAllDay", false),
+                prevLocation = if (obj.has("prevLocation")) obj.getString("prevLocation") else null,
+                prevDescription = if (obj.has("prevDescription")) obj.getString("prevDescription") else null,
+                timestampMs = obj.optLong("timestampMs", System.currentTimeMillis())
+            )
+        }
+    }
+}"""
 
-    old_forgot_css = """            #forgotStampPanel {
-                display: none !important;
+    content = replace_idempotent(content, old_model, new_model, "CalendarChangeItem model")
+
+    old_format = """    fun formatChangeDisplay(item: CalendarChangeItem): String {
+        val tag = when (item.type) {
+            ChangeType.ADDED -> "[LISÄTTY]"
+            ChangeType.MODIFIED -> "[MUOKATTU]"
+            ChangeType.REMOVED -> "[POISTETTU]"
+        }
+        val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+        val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
+        val whenStr = if (item.isAllDay) {
+            val sDate = Instant.ofEpochMilli(item.startMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val eDate = Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
+            if (eDate.isAfter(sDate)) {
+                "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
+            } else {
+                "${sDate.format(dateFmt)} (koko päivä)"
             }
-            #forgotStampPanel[style*="top: 0"], #forgotStampPanel[style*="top:0"], #forgotStampPanel[style*="display: block"], #forgotStampPanel[style*="display:block"] {
-                display: block !important;
-                position: fixed !important;
-                left: 12px !important;
-                right: 12px !important;
-                bottom: 12px !important;
-                top: auto !important;
-                z-index: 1050 !important;
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 14px !important;
-                padding: 16px !important;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
-                max-height: 85vh !important;
-                overflow-y: auto !important;
-                color: #F1F5F9 !important;
-            }"""
+        } else {
+            val sDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            val eDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
+        }
+        return "$tag ${item.title}\\n$whenStr"
+    }"""
 
-    new_forgot_css = """            #forgotStampPanel,
-            #forgotStampPanel.minimized,
-            #forgotStampPanel[style*="top: 100%"],
-            #forgotStampPanel[style*="top:100%"] {
-                display: none !important;
+    new_format = """    private fun formatRange(startMs: Long, endMs: Long, isAllDay: Boolean): String {
+        val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+        val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
+        return if (isAllDay) {
+            val sDate = Instant.ofEpochMilli(startMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val eDate = Instant.ofEpochMilli(endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
+            if (eDate.isAfter(sDate)) {
+                "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
+            } else {
+                "${sDate.format(dateFmt)} (koko päivä)"
             }
-            #forgotStampPanel[style*="top:"]:not(.minimized):not([style*="top: 100%"]):not([style*="top:100%"]),
-            #forgotStampPanel.force-open {
-                display: block !important;
-                position: fixed !important;
-                left: 12px !important;
-                right: 12px !important;
-                bottom: 12px !important;
-                top: auto !important;
-                z-index: 1050 !important;
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 14px !important;
-                padding: 16px !important;
-                box-shadow: 0 10px 25px rgba(0,0,0,0.5) !important;
-                max-height: 85vh !important;
-                overflow-y: auto !important;
-                color: #F1F5F9 !important;
+        } else {
+            val sDt = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            val eDt = Instant.ofEpochMilli(endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            if (sDt.toLocalDate() == eDt.toLocalDate()) {
+                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
+            } else {
+                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)} – ${eDt.format(dateFmt)} klo ${eDt.format(timeFmt)}"
             }
-            .drw-fog-of-war.showing {
-                display: block !important;
-                position: fixed !important;
-                top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
-                bottom: 0 !important;
-                background-color: rgba(0, 0, 0, 0.65) !important;
-                z-index: 1040 !important;
-            }"""
+        }
+    }
 
-    main = replace_idempotent(main, old_forgot_css, new_forgot_css, "forgotStampPanel CSS")
+    private fun extractUserNote(desc: String): String {
+        return desc.substringBefore(CalendarSyncHelper.EVENT_DESCRIPTION_TAG).trim()
+    }
 
-    old_js_tail = """                if (!window._sessionWatchInstalled) {
-                    window._sessionWatchInstalled = true;
-                    setInterval(function() {
-                        var modal = document.getElementById('session-expired-modal');
-                        if (modal && (modal.classList.contains('in') || modal.classList.contains('show') || modal.style.display === 'block')) {
-                            window.location.href = '/Login/Login';
-                        }
-                    }, 300);
-                }"""
+    fun buildModificationDiffLines(item: CalendarChangeItem): List<String> {
+        if (item.type != ChangeType.MODIFIED) return emptyList()
+        val diffs = mutableListOf<String>()
 
-    new_js_tail = """                if (!window._sessionWatchInstalled) {
-                    window._sessionWatchInstalled = true;
-                    setInterval(function() {
-                        var modal = document.getElementById('session-expired-modal');
-                        if (modal && (modal.classList.contains('in') || modal.classList.contains('show') || modal.style.display === 'block')) {
-                            window.location.href = '/Login/Login';
-                        }
-                    }, 300);
+        val oldTitle = item.prevTitle?.trim()
+        if (!oldTitle.isNullOrEmpty() && oldTitle != item.title.trim()) {
+            diffs.add("Otsikko: $oldTitle → ${item.title}")
+        }
+
+        val prevStart = item.prevStartMs
+        val prevEnd = item.prevEndMs
+        if (prevStart != null && prevEnd != null &&
+            (prevStart != item.startMs || prevEnd != item.endMs || item.prevIsAllDay != item.isAllDay)
+        ) {
+            val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
+            if (!item.prevIsAllDay && !item.isAllDay) {
+                val oldStartDt = Instant.ofEpochMilli(prevStart).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val oldEndDt = Instant.ofEpochMilli(prevEnd).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val newStartDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val newEndDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+
+                if (oldStartDt.toLocalDate() == newStartDt.toLocalDate() &&
+                    oldEndDt.toLocalDate() == newEndDt.toLocalDate()
+                ) {
+                    val oldTime = "klo ${oldStartDt.format(timeFmt)}–${oldEndDt.format(timeFmt)}"
+                    val newTime = "klo ${newStartDt.format(timeFmt)}–${newEndDt.format(timeFmt)}"
+                    diffs.add("Kellonaika (${newStartDt.format(dateFmt)}): $oldTime → $newTime")
+                } else {
+                    val oldFull = formatRange(prevStart, prevEnd, false)
+                    val newFull = formatRange(item.startMs, item.endMs, false)
+                    diffs.add("Ajankohta: $oldFull → $newFull")
                 }
-                if (!window._forgotStampHelperInstalled) {
-                    window._forgotStampHelperInstalled = true;
-                    document.addEventListener('click', function(e) {
-                        var btn = e.target && e.target.closest('#forgottenStampButton');
-                        if (btn) {
-                            setTimeout(function() {
-                                var panel = document.getElementById('forgotStampPanel');
-                                if (panel) {
-                                    var topVal = panel.style.top || '';
-                                    if (panel.classList.contains('minimized') || !topVal || topVal === '100%') {
-                                        panel.classList.remove('minimized');
-                                        panel.classList.add('force-open');
-                                        panel.style.top = '0px';
-                                    }
-                                }
-                            }, 350);
-                        }
-                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
-                        if (cancelBtn) {
-                            var panel = document.getElementById('forgotStampPanel');
-                            if (panel) {
-                                panel.classList.remove('force-open');
-                                panel.classList.add('minimized');
-                                panel.style.top = '100%';
+            } else {
+                val oldFull = formatRange(prevStart, prevEnd, item.prevIsAllDay)
+                val newFull = formatRange(item.startMs, item.endMs, item.isAllDay)
+                diffs.add("Ajankohta: $oldFull → $newFull")
+            }
+        }
+
+        val oldLoc = item.prevLocation?.trim()
+        val newLoc = item.location.trim()
+        if (oldLoc != null && oldLoc != newLoc) {
+            val fromStr = oldLoc.ifEmpty { "(tyhjä)" }
+            val toStr = newLoc.ifEmpty { "(tyhjä)" }
+            diffs.add("Sijainti: $fromStr → $toStr")
+        }
+
+        val prevDescRaw = item.prevDescription
+        if (prevDescRaw != null) {
+            val oldNote = extractUserNote(prevDescRaw)
+            val newNote = extractUserNote(item.description)
+            if (oldNote != newNote) {
+                val fromStr = oldNote.ifEmpty { "(tyhjä)" }
+                val toStr = newNote.ifEmpty { "(tyhjä)" }
+                diffs.add("Lisätiedot: $fromStr → $toStr")
+            }
+        }
+
+        return diffs
+    }
+
+    fun formatNotificationLine(item: CalendarChangeItem): String {
+        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
+        return when (item.type) {
+            ChangeType.ADDED -> "+ ${item.title} ($whenStr)"
+            ChangeType.REMOVED -> "- ${item.title} ($whenStr)"
+            ChangeType.MODIFIED -> {
+                val diffs = buildModificationDiffLines(item)
+                if (diffs.isNotEmpty()) {
+                    "~ ${item.title}: ${diffs.joinToString("; ")}"
+                } else {
+                    "~ ${item.title} ($whenStr)"
+                }
+            }
+        }
+    }
+
+    fun formatChangeDisplay(item: CalendarChangeItem): String {
+        val tag = when (item.type) {
+            ChangeType.ADDED -> "[LISÄTTY]"
+            ChangeType.MODIFIED -> "[MUOKATTU]"
+            ChangeType.REMOVED -> "[POISTETTU]"
+        }
+        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
+        if (item.type == ChangeType.MODIFIED) {
+            val diffs = buildModificationDiffLines(item)
+            if (diffs.isNotEmpty()) {
+                return "$tag ${item.title}\\n$whenStr\\n${diffs.joinToString("\\n")}"
+            }
+        }
+        return "$tag ${item.title}\\n$whenStr"
+    }"""
+
+    content = replace_idempotent(content, old_format, new_format, "formatChangeDisplay diff output")
+
+    old_revert_mod = """                        val values = ContentValues().apply {
+                            put(CalendarContract.Events.TITLE, prevTitle)
+                            put(CalendarContract.Events.DTSTART, prevStart)
+                            put(CalendarContract.Events.DTEND, prevEnd)
+                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
+                            put(
+                                CalendarContract.Events.EVENT_TIMEZONE,
+                                if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
+                            )
+                        }"""
+
+    new_revert_mod = """                        val values = ContentValues().apply {
+                            put(CalendarContract.Events.TITLE, prevTitle)
+                            if (item.prevLocation != null) {
+                                put(CalendarContract.Events.EVENT_LOCATION, item.prevLocation)
                             }
-                        }
-                    }, true);
+                            if (item.prevDescription != null) {
+                                put(CalendarContract.Events.DESCRIPTION, item.prevDescription)
+                            }
+                            put(CalendarContract.Events.DTSTART, prevStart)
+                            put(CalendarContract.Events.DTEND, prevEnd)
+                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
+                            put(
+                                CalendarContract.Events.EVENT_TIMEZONE,
+                                if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
+                            )
+                        }"""
+
+    content = replace_idempotent(content, old_revert_mod, new_revert_mod, "revertSingleChange location & description")
+
+    if content != orig:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+        print(f"Päivitetty: {path}")
+    else:
+        print(f"Jo ajan tasalla: {path}")
+
+
+def update_calendar_sync_helper():
+    path = "app/src/main/java/fi/numeron/vuorovahti/CalendarSyncHelper.kt"
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    orig = content
+
+    old_update_block = """                resolver.update(uri, values, null, null)
+
+                detectedChanges.add(
+                    CalendarChangeItem(
+                        id = UUID.randomUUID().toString(),
+                        type = ChangeType.MODIFIED,
+                        calendarId = calendarId,
+                        eventId = targetMatch.eventId,
+                        title = desiredTitle,
+                        startMs = effectiveStartMs,
+                        endMs = newEndMs,
+                        isAllDay = shift.isAllDayLeave,
+                        prevTitle = targetMatch.title,
+                        prevStartMs = targetMatch.startMs,
+                        prevEndMs = targetMatch.endMs,
+                        prevIsAllDay = targetMatch.isAllDay
+                    )
+                )"""
+
+    new_update_block = """                resolver.update(uri, values, null, null)
+
+                val contentChanged =
+                    targetMatch.title != desiredTitle ||
+                    targetMatch.location != shift.location ||
+                    targetMatch.description != fullDescription ||
+                    targetMatch.startMs != effectiveStartMs ||
+                    targetMatch.endMs != newEndMs ||
+                    targetMatch.isAllDay != shift.isAllDayLeave
+
+                if (contentChanged) {
+                    detectedChanges.add(
+                        CalendarChangeItem(
+                            id = UUID.randomUUID().toString(),
+                            type = ChangeType.MODIFIED,
+                            calendarId = calendarId,
+                            eventId = targetMatch.eventId,
+                            title = desiredTitle,
+                            startMs = effectiveStartMs,
+                            endMs = newEndMs,
+                            isAllDay = shift.isAllDayLeave,
+                            location = shift.location,
+                            description = fullDescription,
+                            prevTitle = targetMatch.title,
+                            prevStartMs = targetMatch.startMs,
+                            prevEndMs = targetMatch.endMs,
+                            prevIsAllDay = targetMatch.isAllDay,
+                            prevLocation = targetMatch.location,
+                            prevDescription = targetMatch.description
+                        )
+                    )
                 }"""
 
-    main = replace_idempotent(main, old_js_tail, new_js_tail, "forgotStampPanel JS fallback")
+    content = replace_idempotent(content, old_update_block, new_update_block, "MODIFIED CalendarChangeItem details")
 
-    if main != orig_main:
-        with open(main_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(main)
-        print(f"Päivitetty: {main_path}")
+    old_add_block = """                detectedChanges.add(
+                    CalendarChangeItem(
+                        id = UUID.randomUUID().toString(),
+                        type = ChangeType.ADDED,
+                        calendarId = calendarId,
+                        eventId = newEventId,
+                        title = desiredTitle,
+                        startMs = newStartMs,
+                        endMs = newEndMs,
+                        isAllDay = shift.isAllDayLeave
+                    )
+                )"""
+
+    new_add_block = """                detectedChanges.add(
+                    CalendarChangeItem(
+                        id = UUID.randomUUID().toString(),
+                        type = ChangeType.ADDED,
+                        calendarId = calendarId,
+                        eventId = newEventId,
+                        title = desiredTitle,
+                        startMs = newStartMs,
+                        endMs = newEndMs,
+                        isAllDay = shift.isAllDayLeave,
+                        location = shift.location,
+                        description = fullDescription
+                    )
+                )"""
+
+    content = replace_idempotent(content, old_add_block, new_add_block, "ADDED CalendarChangeItem details")
+
+    old_rem_block = """            detectedChanges.add(
+                CalendarChangeItem(
+                    id = UUID.randomUUID().toString(),
+                    type = ChangeType.REMOVED,
+                    calendarId = calendarId,
+                    eventId = null,
+                    title = removedEx.title,
+                    startMs = removedEx.startMs,
+                    endMs = removedEx.endMs,
+                    isAllDay = removedEx.isAllDay,
+                    prevTitle = removedEx.title,
+                    prevStartMs = removedEx.startMs,
+                    prevEndMs = removedEx.endMs,
+                    prevIsAllDay = removedEx.isAllDay
+                )
+            )"""
+
+    new_rem_block = """            detectedChanges.add(
+                CalendarChangeItem(
+                    id = UUID.randomUUID().toString(),
+                    type = ChangeType.REMOVED,
+                    calendarId = calendarId,
+                    eventId = null,
+                    title = removedEx.title,
+                    startMs = removedEx.startMs,
+                    endMs = removedEx.endMs,
+                    isAllDay = removedEx.isAllDay,
+                    location = removedEx.location,
+                    description = removedEx.description,
+                    prevTitle = removedEx.title,
+                    prevStartMs = removedEx.startMs,
+                    prevEndMs = removedEx.endMs,
+                    prevIsAllDay = removedEx.isAllDay,
+                    prevLocation = removedEx.location,
+                    prevDescription = removedEx.description
+                )
+            )"""
+
+    content = replace_idempotent(content, old_rem_block, new_rem_block, "REMOVED CalendarChangeItem details")
+
+    if content != orig:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+        print(f"Päivitetty: {path}")
     else:
-        print(f"Jo ajan tasalla: {main_path}")
+        print(f"Jo ajan tasalla: {path}")
+
+
+def update_shift_reminder_receiver():
+    path = "app/src/main/java/fi/numeron/vuorovahti/ShiftReminderReceiver.kt"
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    orig = content
+
+    old_notif = """            val summary = CalendarChangeTracker.formatSummary(changes)
+            val detailsLines = changes.take(5).joinToString("\\n") {
+                val prefix = when (it.type) {
+                    ChangeType.ADDED -> "+ "
+                    ChangeType.MODIFIED -> "~ "
+                    ChangeType.REMOVED -> "- "
+                }
+                "$prefix${it.title}"
+            }"""
+
+    new_notif = """            val summary = CalendarChangeTracker.formatSummary(changes)
+            val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
+            if (changes.size > 6) {
+                shownItems.add("...ja ${changes.size - 6} muuta muutosta")
+            }
+            val detailsLines = shownItems.joinToString("\\n")
+            val collapsedText = shownItems.firstOrNull()
+                ?: "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia\""""
+
+    content = replace_idempotent(content, old_notif, new_notif, "ShiftReminderReceiver notification details")
+
+    old_builder = """                .setContentTitle("Google-kalenteria päivitetty ($summary)")
+                .setContentText("Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia")
+                .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))"""
+
+    new_builder = """                .setContentTitle("Google-kalenteria päivitetty ($summary)")
+                .setContentText(collapsedText)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))"""
+
+    content = replace_idempotent(content, old_builder, new_builder, "ShiftReminderReceiver NotificationCompat text")
+
+    if content != orig:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+        print(f"Päivitetty: {path}")
+    else:
+        print(f"Jo ajan tasalla: {path}")
 # ==============================================================================
 # === POISTETTAVA KORJAUSOSIO PÄÄTTYY ===
 # ==============================================================================
@@ -434,4 +538,6 @@ def fix_webview_pages():
 
 if __name__ == "__main__":
     bump_version_code()
-    fix_webview_pages()
+    update_calendar_change_tracker()
+    update_calendar_sync_helper()
+    update_shift_reminder_receiver()
