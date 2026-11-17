@@ -4,44 +4,45 @@ import sys
 import re
 
 def main():
-    main_act_path = pathlib.Path("app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt")
-    if not main_act_path.exists():
-        alt = pathlib.Path("MainActivity.kt")
-        if alt.exists():
-            main_act_path = alt
-        else:
-            print(f"Virhe: Tiedostoa {main_act_path} ei löytynyt.", file=sys.stderr)
-            sys.exit(1)
+    # 1. Lisätään AndroidManifest.xml:ään viittaus varmuuskopiosääntöihin, jos sitä ei vielä ole
+    manifest_path = pathlib.Path("app/src/main/AndroidManifest.xml")
+    if not manifest_path.exists():
+        manifest_path = pathlib.Path("AndroidManifest.xml")
 
-    content = main_act_path.read_text(encoding="utf-8")
-    original = content
+    if manifest_path.exists():
+        m_content = manifest_path.read_text(encoding="utf-8")
+        if "fullBackupContent" not in m_content:
+            # Lisätään android:fullBackupContent="@xml/backup_rules" android:allowBackup="true" yhteyteen
+            m_content = m_content.replace(
+                'android:allowBackup="true"',
+                'android:allowBackup="true"\n        android:fullBackupContent="@xml/backup_rules"'
+            )
+            manifest_path.write_text(m_content, encoding="utf-8")
+            print(f"Päivitetty Manifest: {manifest_path}")
 
-    # 1. Poistetaan #numeron-balance-card CSS-lohkot joustavasti regexillä
-    content = re.sub(r'\s*#numeron-balance-card\s*\{[^}]*\}', '', content)
-    content = re.sub(r'\s*#numeron-balance-card\s+\.bal-[a-z]+\s*\{[^}]*\}', '', content, flags=re.IGNORECASE)
+    # 2. Luodaan res/xml/backup_rules.xml -tiedosto, joka varmuuskopioi SharedPreferences-tiedoston (NumeronPrefs.xml)
+    xml_dir = pathlib.Path("app/src/main/res/xml")
+    xml_dir.mkdir(parents=True, exist_ok=True)
+    backup_rules_path = xml_dir / "backup_rules.xml"
+    
+    backup_rules_content = '''<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Varmuuskopioidaan sovelluksen SharedPreferences-asetukset (organisaatiotunnus ym.) -->
+    <include domain="sharedpref" path="NumeronPrefs.xml" />
+</full-backup-content>
+'''
+    backup_rules_path.write_text(backup_rules_content, encoding="utf-8")
+    print(f"Luotu/päivitetty varmuuskopiosäännöt: {backup_rules_path}")
 
-    # 2. Poistetaan saldon JS-latauslohko injektiosta kokonaan
-    js_pattern = re.compile(r'// === SALDO LEIMAUSSIVUN YLÄOSAAN.*?(?=// === SUORA|\Z)', re.DOTALL)
-    content = js_pattern.sub('', content)
-
-    # 3. Varmistetaan että mahdolliset DOM-viittaukset eivät aiheuta ongelmia
-    content = re.sub(r"document\.getElementById\('numeron-balance-card'\)", "false", content)
-
-    if content != original:
-        main_act_path.write_text(content, encoding="utf-8")
-        print(f"Päivitetty onnistuneesti (saldokysely poistettu): {main_act_path}")
-    else:
-        print("Ei muutoksia tehtävänä tai saldokyselyä ei löytynyt.")
-
-    # 4. Nostetaan automaattisesti build.gradle / build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
-    for gradle_path in [pathlib.Path("app/build.gradle"), pathlib.Path("app/build.gradle.kts"), pathlib.Path("build.gradle")]:
+    # 3. Nostetaan versionCode-arvoa pienellä pykälällä build.gradle.kts -tiedostosta
+    for gradle_path in [pathlib.Path("app/build.gradle.kts"), pathlib.Path("app/build.gradle"), pathlib.Path("build.gradle.kts")]:
         if gradle_path.exists():
             g_content = gradle_path.read_text(encoding="utf-8")
-            match = re.search(r'versionCode\s+(\d+)', g_content)
+            match = re.search(r'versionCode\s*=\s*(\d+)', g_content)
             if match:
                 old_code = int(match.group(1))
                 new_code = old_code + 1
-                g_content = g_content.replace(f"versionCode {old_code}", f"versionCode {new_code}")
+                g_content = g_content.replace(f"versionCode = {old_code}", f"versionCode = {new_code}")
                 gradle_path.write_text(g_content, encoding="utf-8")
                 print(f"Nostettu versionCode arvosta {old_code} arvoon {new_code} ({gradle_path})")
                 break
