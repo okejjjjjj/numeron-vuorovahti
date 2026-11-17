@@ -28,9 +28,9 @@ def bump_version_code():
 
 
 # ==============================================================================
-# === POISTETTAVA KORJAUSOSIO ALKAA (Poista kun muutos on ajettu) ===
+# === POISTETTAVA KORJAUSOSIO ALKAA (Poista kun muutokset on ajettu) ===
 # ==============================================================================
-def fix_notification_stamp_button():
+def apply_reliability_fixes():
     # 1. ShiftReminderReceiver.kt: avaa MainActivity suoraan PendingIntent.getActivity-kutsulla
     receiver_path = "app/src/main/java/fi/numeron/vuorovahti/ShiftReminderReceiver.kt"
     if os.path.exists(receiver_path):
@@ -70,7 +70,7 @@ def fix_notification_stamp_button():
                 f.write(rec)
             print(f"Päivitetty: {receiver_path}")
 
-    # 2. MainActivity.kt: sulje ilmoitus, varmista ohjaus leimaussivulle ja odota painiketta
+    # 2. MainActivity.kt: leimauksen vahvistus, istunnon aikaleima, ilmoituksen poisto ja hälytyslupa
     main_path = "app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt"
     if os.path.exists(main_path):
         with open(main_path, "r", encoding="utf-8") as f:
@@ -78,6 +78,7 @@ def fix_notification_stamp_button():
 
         orig_main = main
 
+        # 2a. Ilmoituksen poisto avattaessa
         old_intent_fn = """    private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.getBooleanExtra("AUTO_STAMP", false) == true) {
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
@@ -102,13 +103,86 @@ def fix_notification_stamp_button():
         if old_intent_fn in main and 'getIntExtra("NOTIF_ID"' not in main:
             main = main.replace(old_intent_fn, new_intent_fn, 1)
 
-        old_when_end = """                    url.contains("/Calendar", ignoreCase = true) -> {
+        # 2b. Tarkkojen hälytysten luvan tarkistus (Android 12+)
+        old_perms_fn = """        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 101)
+        }
+    }"""
+
+        new_perms_fn = """        if (missing.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 101)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            if (!alarmManager.canScheduleExactAlarms() && !prefs.getBoolean("exact_alarm_prompted", false)) {
+                prefs.edit().putBoolean("exact_alarm_prompted", true).apply()
+                Toast.makeText(
+                    this,
+                    "Salli tarkat hälytykset, jotta vuoromuistutukset tulevat ajallaan",
+                    Toast.LENGTH_LONG
+                ).show()
+                try {
+                    startActivity(
+                        Intent(
+                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                            android.net.Uri.parse("package:$packageName")
+                        )
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }"""
+
+        if old_perms_fn in main and "canScheduleExactAlarms" not in main:
+            main = main.replace(old_perms_fn, new_perms_fn, 1)
+
+        # 2c. Päivitä last_valid_session_ms onPageFinished-metodissa + paluu leimaussivulle
+        old_page_finished = """                injectDarkTheme(view)
+                CookieManager.getInstance().flush()
+
+                when {
+                    url.contains("/Login/Login", ignoreCase = true) -> {
+                        startSnapshotTransition()
+                        handleAutoLogin()
+                    }
+                    url.contains("/WorktimeStamping", ignoreCase = true) -> {
+                        setActiveTab(btnNavStamp)
+                        handleStampingPage()
+                    }
+                    url.contains("/PersonRequests", ignoreCase = true) -> {
+                        setActiveTab(btnNavRequests)
+                    }
+                    url.contains("/Calendar", ignoreCase = true) -> {
                         setActiveTab(btnNavShifts)
                         handleCalendarPage()
                     }
                 }"""
 
-        new_when_end = """                    url.contains("/Calendar", ignoreCase = true) -> {
+        new_page_finished = """                injectDarkTheme(view)
+                CookieManager.getInstance().flush()
+                if (!url.contains("/Login/", ignoreCase = true)) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                }
+
+                when {
+                    url.contains("/Login/Login", ignoreCase = true) -> {
+                        startSnapshotTransition()
+                        handleAutoLogin()
+                    }
+                    url.contains("/WorktimeStamping", ignoreCase = true) -> {
+                        setActiveTab(btnNavStamp)
+                        handleStampingPage()
+                    }
+                    url.contains("/PersonRequests", ignoreCase = true) -> {
+                        setActiveTab(btnNavRequests)
+                    }
+                    url.contains("/Calendar", ignoreCase = true) -> {
                         setActiveTab(btnNavShifts)
                         handleCalendarPage()
                     }
@@ -117,9 +191,10 @@ def fix_notification_stamp_button():
                     }
                 }"""
 
-        if old_when_end in main and "pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT ->" not in main:
-            main = main.replace(old_when_end, new_when_end, 1)
+        if old_page_finished in main:
+            main = main.replace(old_page_finished, new_page_finished, 1)
 
+        # 2d. Leimauksen DOM-vahvistus ennen sovelluksen sulkemista
         old_stamp_fn = """    private fun handleStampingPage() {
         if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
 
@@ -164,32 +239,50 @@ def fix_notification_stamp_button():
         val js = \"\"\"
             (function() {
                 var btn = document.getElementById('punchButton');
-                if (!btn) return 'NO_BUTTON';
+                if (!btn) return JSON.stringify({ status: 'NO_BUTTON' });
                 var btnText = (btn.innerText || btn.textContent || '').trim();
-                if (!btnText) return 'NO_BUTTON';
+                if (!btnText) return JSON.stringify({ status: 'NO_BUTTON' });
+                var firstRow = '';
+                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
+                if (rowEl) {
+                    firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\\s+/g, ' ').trim();
+                }
                 if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
                     btn.click();
-                    return 'STAMPED_' + btnText;
+                    return JSON.stringify({ status: 'CLICKED', btn: btnText, row: firstRow });
                 } else {
-                    return 'WRONG_DIRECTION_' + btnText;
+                    return JSON.stringify({ status: 'WRONG_DIRECTION', btn: btnText, row: firstRow });
                 }
             })();
         \"\"\".trimIndent()
 
-        webView.evaluateJavascript(js) { result ->
-            val cleanResult = (result ?: "").replace("\\"", "")
+        webView.evaluateJavascript(js) { rawResult ->
+            val unescaped = try {
+                if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
+            } catch (_: Exception) {
+                null
+            }
+            val obj = try {
+                if (unescaped != null) org.json.JSONObject(unescaped) else null
+            } catch (_: Exception) {
+                null
+            }
+            val status = obj?.optString("status", "") ?: ""
+
             when {
-                cleanResult.startsWith("STAMPED_") -> {
+                status == "CLICKED" -> {
                     pendingAction = Action.NONE
-                    Toast.makeText(this, "Leimaus suoritettu ($targetText)", Toast.LENGTH_SHORT).show()
-                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
+                    val beforeBtn = obj?.optString("btn", "") ?: ""
+                    val beforeRow = obj?.optString("row", "") ?: ""
+                    Toast.makeText(this, "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
+                    verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
                 }
-                cleanResult.startsWith("WRONG_DIRECTION_") -> {
+                status == "WRONG_DIRECTION" -> {
                     pendingAction = Action.NONE
                     Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
-                cleanResult == "NO_BUTTON" && attempt < 10 -> {
+                status == "NO_BUTTON" && attempt < 10 -> {
                     webView.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
                 }
                 else -> {
@@ -197,6 +290,60 @@ def fix_notification_stamp_button():
                 }
             }
         }
+    }
+
+    private fun verifyStampAndClose(
+        targetText: String,
+        beforeBtn: String,
+        beforeRow: String,
+        checkAttempt: Int
+    ) {
+        val targetLower = targetText.lowercase()
+        val verifyJs = \"\"\"
+            (function() {
+                var btn = document.getElementById('punchButton');
+                var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
+                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
+                var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+                return JSON.stringify({ btn: btnText, row: firstRow });
+            })();
+        \"\"\".trimIndent()
+
+        webView.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            webView.evaluateJavascript(verifyJs) { rawResult ->
+                val unescaped = try {
+                    if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
+                } catch (_: Exception) {
+                    null
+                }
+                val obj = try {
+                    if (unescaped != null) org.json.JSONObject(unescaped) else null
+                } catch (_: Exception) {
+                    null
+                }
+                val nowBtn = obj?.optString("btn", "") ?: ""
+                val nowRow = obj?.optString("row", "") ?: ""
+
+                val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
+                    nowBtn.lowercase().indexOf(targetLower) == -1
+                val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
+
+                if (buttonFlipped || rowUpdated) {
+                    CookieManager.getInstance().flush()
+                    Toast.makeText(this, "Leimaus vahvistettu ($targetText)", Toast.LENGTH_SHORT).show()
+                    webView.postDelayed({ finishAndRemoveTask() }, 600L)
+                } else if (checkAttempt < 25) {
+                    verifyStampAndClose(targetText, beforeBtn, beforeRow, checkAttempt + 1)
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }, 300L)
     }"""
 
         if old_stamp_fn in main:
@@ -206,6 +353,79 @@ def fix_notification_stamp_button():
             with open(main_path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(main)
             print(f"Päivitetty: {main_path}")
+
+    # 3. SettingsDialogHelper.kt: tarkat hälytykset ja akun virransäästön tila + pikapainikkeet
+    settings_path = "app/src/main/java/fi/numeron/vuorovahti/SettingsDialogHelper.kt"
+    if os.path.exists(settings_path):
+        with open(settings_path, "r", encoding="utf-8") as f:
+            set_content = f.read()
+
+        old_status_end = """        addStatusRow(
+            statusCard,
+            "Seuraava leimausnotifikaatio lähetetään",
+            if (nextNotifMs > System.currentTimeMillis()) formatTimestamp(nextNotifMs, "") else "Ei tulevia ajoitettuja hälytyksiä",
+            if (nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
+        )"""
+
+        new_status_end = """        addStatusRow(
+            statusCard,
+            "Seuraava leimausnotifikaatio lähetetään",
+            if (nextNotifMs > System.currentTimeMillis()) formatTimestamp(nextNotifMs, "") else "Ei tulevia ajoitettuja hälytyksiä",
+            if (nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
+        )
+
+        val exactAlarmAllowed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
+        } else {
+            true
+        }
+        addStatusRow(
+            statusCard,
+            "Tarkat vuorohälytykset",
+            if (exactAlarmAllowed) "Sallittu" else "Rajoitettu – napauta salliaksesi",
+            if (exactAlarmAllowed) null else "Avaa järjestelmän hälytysasetukset"
+        )
+        if (!exactAlarmAllowed && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        addStatusRow(
+            statusCard,
+            "Akun virransäästörajoitukset",
+            if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
+            if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+        )
+        if (!ignoringBatteryOpt) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }"""
+
+        if old_status_end in set_content and "Tarkat vuorohälytykset" not in set_content:
+            set_content = set_content.replace(old_status_end, new_status_end, 1)
+            with open(settings_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(set_content)
+            print(f"Päivitetty: {settings_path}")
 # ==============================================================================
 # === POISTETTAVA KORJAUSOSIO PÄÄTTYY ===
 # ==============================================================================
@@ -213,4 +433,4 @@ def fix_notification_stamp_button():
 
 if __name__ == "__main__":
     bump_version_code()
-    fix_notification_stamp_button()
+    apply_reliability_fixes()
