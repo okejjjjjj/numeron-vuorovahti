@@ -332,6 +332,53 @@ object SettingsDialogHelper {
             if (nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
         )
 
+        val exactAlarmAllowed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
+        } else {
+            true
+        }
+        addStatusRow(
+            statusCard,
+            "Tarkat vuorohälytykset",
+            if (exactAlarmAllowed) "Sallittu" else "Rajoitettu – napauta salliaksesi",
+            if (exactAlarmAllowed) null else "Avaa järjestelmän hälytysasetukset"
+        )
+        if (!exactAlarmAllowed && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        addStatusRow(
+            statusCard,
+            "Akun virransäästörajoitukset",
+            if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
+            if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+        )
+        if (!ignoringBatteryOpt) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
         val authCard = createSectionCard("Kirjautuminen ja yhteys")
 
