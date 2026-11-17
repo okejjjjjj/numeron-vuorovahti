@@ -219,7 +219,7 @@ object CalendarSyncHelper {
             CalendarContract.Events.ALL_DAY
         )
         val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
-                "${CalendarContract.Events.DTSTART} > ? AND " +
+                "${CalendarContract.Events.DTEND} > ? AND " +
                 "${CalendarContract.Events.DELETED} = 0"
         val selectionArgs = arrayOf(calendarId.toString(), nowMs.toString())
 
@@ -282,10 +282,39 @@ object CalendarSyncHelper {
                 continue
             }
 
+            if (shift.isAllDayLeave) {
+                val coveringOwned = unmatchedOwned.firstOrNull { ex ->
+                    ex.isAllDay &&
+                    ex.title.equals(desiredTitle, ignoreCase = true) &&
+                    ex.startMs < newStartMs &&
+                    ex.endMs == newEndMs
+                }
+                if (coveringOwned != null) {
+                    unmatchedOwned.remove(coveringOwned)
+                    continue
+                }
+                val coveringExternal = unmatchedExternal.firstOrNull { ex ->
+                    ex.isAllDay &&
+                    ex.title.equals(desiredTitle, ignoreCase = true) &&
+                    ex.startMs < newStartMs &&
+                    ex.endMs == newEndMs
+                }
+                if (coveringExternal != null) {
+                    unmatchedExternal.remove(coveringExternal)
+                    continue
+                }
+            }
+
             val sameDayOwned = unmatchedOwned.firstOrNull { ex ->
                 ex.isAllDay == shift.isAllDayLeave &&
                 isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
                 (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
+            } ?: unmatchedOwned.firstOrNull { ex ->
+                shift.isAllDayLeave &&
+                ex.isAllDay &&
+                ex.title.equals(desiredTitle, ignoreCase = true) &&
+                ex.startMs < newStartMs &&
+                ex.endMs > newStartMs
             } ?: unmatchedOwned.firstOrNull { ex ->
                 ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
             }
@@ -309,6 +338,11 @@ object CalendarSyncHelper {
                     unmatchedExternal.remove(sameDayExternal)
                 }
 
+                val effectiveStartMs = if (shift.isAllDayLeave && targetMatch.startMs < newStartMs) {
+                    targetMatch.startMs
+                } else {
+                    newStartMs
+                }
                 val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, targetMatch.eventId)
                 val values = ContentValues().apply {
                     put(CalendarContract.Events.TITLE, desiredTitle)
@@ -321,7 +355,7 @@ object CalendarSyncHelper {
                     }
                     put(CalendarContract.Events.ALL_DAY, if (shift.isAllDayLeave) 1 else 0)
                     put(CalendarContract.Events.EVENT_TIMEZONE, if (shift.isAllDayLeave) "UTC" else TimeZone.getDefault().id)
-                    put(CalendarContract.Events.DTSTART, newStartMs)
+                    put(CalendarContract.Events.DTSTART, effectiveStartMs)
                     put(CalendarContract.Events.DTEND, newEndMs)
                 }
                 resolver.update(uri, values, null, null)
@@ -333,7 +367,7 @@ object CalendarSyncHelper {
                         calendarId = calendarId,
                         eventId = targetMatch.eventId,
                         title = desiredTitle,
-                        startMs = newStartMs,
+                        startMs = effectiveStartMs,
                         endMs = newEndMs,
                         isAllDay = shift.isAllDayLeave,
                         prevTitle = targetMatch.title,
@@ -375,6 +409,7 @@ object CalendarSyncHelper {
         }
 
         for (removedEx in unmatchedOwned) {
+            if (removedEx.startMs <= nowMs) continue
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, removedEx.eventId)
             resolver.delete(uri, null, null)
 
@@ -403,7 +438,6 @@ object CalendarSyncHelper {
 
         if (detectedChanges.isNotEmpty()) {
             CalendarChangeTracker.saveChanges(context, detectedChanges)
-            ShiftReminderReceiver.showCalendarChangesNotification(context, detectedChanges)
         }
 
         return detectedChanges
@@ -472,6 +506,7 @@ object CalendarSyncHelper {
         val maxGapMs = 15L * 60_000L
         var earliestNextTriggerMs = Long.MAX_VALUE
         var earliestNextLabel = ""
+        val newReqCodes = mutableSetOf<String>()
 
         for (i in sortedShifts.indices) {
             val current = sortedShifts[i]
@@ -485,7 +520,8 @@ object CalendarSyncHelper {
                 val startTrigger = current.startMs - (minutesBefore * 60_000L)
                 if (startTrigger > now) {
                     val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                    setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
+                    val code = setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
+                    newReqCodes.add(code.toString())
                     if (startTrigger < earliestNextTriggerMs) {
                         earliestNextTriggerMs = startTrigger
                         earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
@@ -497,7 +533,8 @@ object CalendarSyncHelper {
                 val endTrigger = current.endMs - (minutesBefore * 60_000L)
                 if (endTrigger > now) {
                     val endStr = Instant.ofEpochMilli(current.endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                    setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
+                    val code = setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
+                    newReqCodes.add(code.toString())
                     if (endTrigger < earliestNextTriggerMs) {
                         earliestNextTriggerMs = endTrigger
                         earliestNextLabel = "Ulos (${current.displayTitle}, päättyy klo $endStr)"
@@ -506,7 +543,26 @@ object CalendarSyncHelper {
             }
         }
 
+        val oldReqCodes = prefs.getStringSet("scheduled_alarm_req_codes", emptySet()) ?: emptySet()
+        for (oldCodeStr in oldReqCodes) {
+            if (oldCodeStr !in newReqCodes) {
+                val oldCode = oldCodeStr.toIntOrNull() ?: continue
+                val cancelIntent = Intent(context, ShiftReminderReceiver::class.java)
+                val existingPi = PendingIntent.getBroadcast(
+                    context,
+                    oldCode,
+                    cancelIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                )
+                if (existingPi != null) {
+                    alarmManager.cancel(existingPi)
+                    existingPi.cancel()
+                }
+            }
+        }
+
         prefs.edit().apply {
+            putStringSet("scheduled_alarm_req_codes", newReqCodes)
             if (earliestNextTriggerMs < Long.MAX_VALUE) {
                 putLong("next_reminder_ms", earliestNextTriggerMs)
                 putString("next_reminder_label", earliestNextLabel)
@@ -524,7 +580,7 @@ object CalendarSyncHelper {
         title: String,
         timeStr: String,
         isEnding: Boolean
-    ) {
+    ): Int {
         val reqCode = ((triggerMs / 60_000L) + if (isEnding) 1 else 0).toInt()
         val intent = Intent(context, ShiftReminderReceiver::class.java).apply {
             putExtra("SHIFT_TITLE", title)
@@ -547,5 +603,6 @@ object CalendarSyncHelper {
         } catch (_: SecurityException) {
             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
         }
+        return reqCode
     }
 }

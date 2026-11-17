@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.animation.ValueAnimator
 import android.os.Bundle
 import android.view.View
 import android.webkit.CookieManager
@@ -37,8 +36,6 @@ import android.widget.ProgressBar
 import android.widget.FrameLayout
 import android.view.ViewGroup
 import android.view.Gravity
-import android.graphics.Shader
-import android.graphics.RenderEffect
 import android.content.res.ColorStateList
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -587,6 +584,12 @@ class MainActivity : AppCompatActivity() {
 
                 injectDarkTheme(view)
                 CookieManager.getInstance().flush()
+                if (!url.contains("/Login/", ignoreCase = true)) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                }
 
                 when {
                     url.contains("/Login/Login", ignoreCase = true) -> {
@@ -1242,32 +1245,50 @@ class MainActivity : AppCompatActivity() {
         val js = """
             (function() {
                 var btn = document.getElementById('punchButton');
-                if (!btn) return 'NO_BUTTON';
+                if (!btn) return JSON.stringify({ status: 'NO_BUTTON' });
                 var btnText = (btn.innerText || btn.textContent || '').trim();
-                if (!btnText) return 'NO_BUTTON';
+                if (!btnText) return JSON.stringify({ status: 'NO_BUTTON' });
+                var firstRow = '';
+                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
+                if (rowEl) {
+                    firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim();
+                }
                 if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
                     btn.click();
-                    return 'STAMPED_' + btnText;
+                    return JSON.stringify({ status: 'CLICKED', btn: btnText, row: firstRow });
                 } else {
-                    return 'WRONG_DIRECTION_' + btnText;
+                    return JSON.stringify({ status: 'WRONG_DIRECTION', btn: btnText, row: firstRow });
                 }
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(js) { result ->
-            val cleanResult = (result ?: "").replace("\"", "")
+        webView.evaluateJavascript(js) { rawResult ->
+            val unescaped = try {
+                if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
+            } catch (_: Exception) {
+                null
+            }
+            val obj = try {
+                if (unescaped != null) org.json.JSONObject(unescaped) else null
+            } catch (_: Exception) {
+                null
+            }
+            val status = obj?.optString("status", "") ?: ""
+
             when {
-                cleanResult.startsWith("STAMPED_") -> {
+                status == "CLICKED" -> {
                     pendingAction = Action.NONE
-                    Toast.makeText(this, "Leimaus suoritettu ($targetText)", Toast.LENGTH_SHORT).show()
-                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
+                    val beforeBtn = obj?.optString("btn", "") ?: ""
+                    val beforeRow = obj?.optString("row", "") ?: ""
+                    Toast.makeText(this, "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
+                    verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
                 }
-                cleanResult.startsWith("WRONG_DIRECTION_") -> {
+                status == "WRONG_DIRECTION" -> {
                     pendingAction = Action.NONE
                     Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
-                cleanResult == "NO_BUTTON" && attempt < 10 -> {
+                status == "NO_BUTTON" && attempt < 10 -> {
                     webView.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
                 }
                 else -> {
@@ -1277,12 +1298,66 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun verifyStampAndClose(
+        targetText: String,
+        beforeBtn: String,
+        beforeRow: String,
+        checkAttempt: Int
+    ) {
+        val targetLower = targetText.lowercase()
+        val verifyJs = """
+            (function() {
+                var btn = document.getElementById('punchButton');
+                var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
+                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
+                var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
+                return JSON.stringify({ btn: btnText, row: firstRow });
+            })();
+        """.trimIndent()
+
+        webView.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            webView.evaluateJavascript(verifyJs) { rawResult ->
+                val unescaped = try {
+                    if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
+                } catch (_: Exception) {
+                    null
+                }
+                val obj = try {
+                    if (unescaped != null) org.json.JSONObject(unescaped) else null
+                } catch (_: Exception) {
+                    null
+                }
+                val nowBtn = obj?.optString("btn", "") ?: ""
+                val nowRow = obj?.optString("row", "") ?: ""
+
+                val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
+                    nowBtn.lowercase().indexOf(targetLower) == -1
+                val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
+
+                if (buttonFlipped || rowUpdated) {
+                    CookieManager.getInstance().flush()
+                    Toast.makeText(this, "Leimaus vahvistettu ($targetText)", Toast.LENGTH_SHORT).show()
+                    webView.postDelayed({ finishAndRemoveTask() }, 600L)
+                } else if (checkAttempt < 25) {
+                    verifyStampAndClose(targetText, beforeBtn, beforeRow, checkAttempt + 1)
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }, 300L)
+    }
+
     private fun handleCalendarPage() {
         if (pendingAction != Action.SYNC_CALENDAR) return
 
         webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
             if (rawHtml == null || rawHtml == "null") return@evaluateJavascript
-            val unescapedHtml = JSONTokener(rawHtml).nextValue() as String
+            val unescapedHtml = JSONTokener(rawHtml).nextValue() as? String ?: return@evaluateJavascript
             collectedCalendarHtml.add(unescapedHtml)
 
             if (syncStep == 0) {
@@ -1325,10 +1400,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        super.onDestroy()
         try {
             CookieManager.getInstance().flush()
         } catch (_: Exception) {}
+        try {
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            webView.stopLoading()
+            webView.destroy()
+        } catch (_: Exception) {}
         scope.cancel()
+        super.onDestroy()
     }
 }

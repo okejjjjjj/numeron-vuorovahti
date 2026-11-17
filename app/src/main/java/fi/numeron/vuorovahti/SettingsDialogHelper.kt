@@ -651,18 +651,38 @@ object SettingsDialogHelper {
             settings.domStorageEnabled = true
         }
 
-        CookieManager.getInstance().removeAllCookies(null)
+        val cm = CookieManager.getInstance()
+        val previousCookies = cm.getCookie(baseUrl)
+        cm.removeAllCookies(null)
+        cm.flush()
 
         var loginAttempted = false
         var finished = false
+        val timeoutHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        lateinit var timeoutRunnable: Runnable
 
         fun cleanupAndRespond(success: Boolean, msg: String) {
             if (finished) return
             finished = true
+            timeoutHandler.removeCallbacks(timeoutRunnable)
+            if (!success && !previousCookies.isNullOrBlank()) {
+                previousCookies.split(";").forEach { cookie ->
+                    val trimmed = cookie.trim()
+                    if (trimmed.isNotEmpty()) {
+                        cm.setCookie(baseUrl, trimmed)
+                    }
+                }
+                cm.flush()
+            }
             testWebView.stopLoading()
             testWebView.destroy()
             callback(success, msg)
         }
+
+        timeoutRunnable = Runnable {
+            cleanupAndRespond(false, "Aikakatkaisu: Palvelin '$baseUrl' ei vastannut ajoissa.")
+        }
+        timeoutHandler.postDelayed(timeoutRunnable, 15_000L)
 
         testWebView.webViewClient = object : WebViewClient() {
             override fun onReceivedError(

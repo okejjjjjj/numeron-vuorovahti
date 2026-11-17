@@ -91,8 +91,16 @@ object NumeronParser {
 
                 val timeParts = timesText.split("-").map { it.trim() }
                 if (timeParts.size == 2) {
-                    val startTime = LocalTime.parse(timeParts[0], DateTimeFormatter.ofPattern("H:mm"))
-                    val endTime = LocalTime.parse(timeParts[1], DateTimeFormatter.ofPattern("H:mm"))
+                    val startTime = try {
+                        LocalTime.parse(timeParts[0], DateTimeFormatter.ofPattern("H:mm"))
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
+                    val endTime = try {
+                        LocalTime.parse(timeParts[1], DateTimeFormatter.ofPattern("H:mm"))
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
 
                     val startDateTime = LocalDateTime.of(date, startTime)
                     // Ei huomioida menneitä tai meneillään olevia vuoroja

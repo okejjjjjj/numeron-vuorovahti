@@ -241,6 +241,9 @@ object CalendarChangeTracker {
             }
             val remaining = getLastChanges(context).filterNot { it.id == item.id }
             saveChanges(context, remaining)
+            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+                CalendarSyncHelper.scheduleShiftReminders(context, calId)
+            }
             true
         } catch (_: Exception) {
             false
@@ -304,6 +307,9 @@ object CalendarChangeTracker {
             )
             val updatedList = getLastChanges(context).map { if (it.id == item.id) updatedItem else it }
             saveChanges(context, updatedList)
+            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+                CalendarSyncHelper.scheduleShiftReminders(context, calId)
+            }
             true
         } catch (_: Exception) {
             false
@@ -601,7 +607,7 @@ object CalendarChangeTracker {
         }
 
         var selectedEnd = if (item.isAllDay) {
-            Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDateTime()
+            Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDateTime().minusDays(1)
         } else {
             Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
         }
@@ -724,9 +730,9 @@ object CalendarChangeTracker {
             if (allDay) {
                 val sDate = selectedStart.toLocalDate()
                 var eDate = selectedEnd.toLocalDate()
-                if (!eDate.isAfter(sDate)) eDate = sDate.plusDays(1)
+                if (eDate.isBefore(sDate)) eDate = sDate
                 finalStartMs = sDate.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
-                finalEndMs = eDate.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+                finalEndMs = eDate.plusDays(1).atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
             } else {
                 finalStartMs = selectedStart.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 var eDt = selectedEnd

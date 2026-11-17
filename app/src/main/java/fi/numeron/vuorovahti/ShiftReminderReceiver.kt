@@ -49,24 +49,6 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             return
         }
 
-        // 2. Käyttäjä painoi ilmoituksen "Leimaa sisään/ulos" -painiketta
-        if (action == ACTION_QUICK_STAMP) {
-            val isEnding = intent.getBooleanExtra("IS_ENDING", false)
-            val isTest = intent.getBooleanExtra("IS_TEST", false)
-            val notifId = intent.getIntExtra("NOTIF_ID", 1001)
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.cancel(notifId)
-
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("AUTO_STAMP", true)
-                putExtra("IS_ENDING", isEnding)
-                putExtra("IS_TEST", isTest)
-            }
-            context.startActivity(launchIntent)
-            return
-        }
-
         // 3. Käyttäjä painoi kalenterimuutos-ilmoituksesta "Peru kaikki" suoraan ilmoituksesta
         if (action == ACTION_REVERT_ALL_CALENDAR_CHANGES) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -189,7 +171,6 @@ class ShiftReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
-        const val ACTION_QUICK_STAMP = "fi.numeron.vuorovahti.ACTION_QUICK_STAMP"
         const val ACTION_REVERT_ALL_CALENDAR_CHANGES = "fi.numeron.vuorovahti.ACTION_REVERT_ALL_CALENDAR_CHANGES"
         const val NOTIF_ID_CALENDAR_CHANGES = 4001
 
@@ -355,11 +336,8 @@ class BackgroundSyncWorker(
         val currentMonthUrl = "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
         val nextMonthUrl = "$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}"
 
-        data class SyncPayload(val htmlPages: List<String>, val requestsJson: String?)
-
-        val payload = suspendCancellableCoroutine<SyncPayload> { continuation ->
+        val htmlPages = suspendCancellableCoroutine<List<String>> { continuation ->
             val collectedHtml = mutableListOf<String>()
-            var requestsJsonResult: String? = null
             var step = 0
 
             val bgWebView = WebView(appContext).apply {
@@ -372,7 +350,7 @@ class BackgroundSyncWorker(
             val timeoutHandler = Handler(Looper.getMainLooper())
             val timeoutRunnable = Runnable {
                 bgWebView.destroy()
-                if (continuation.isActive) continuation.resume(SyncPayload(collectedHtml, requestsJsonResult))
+                if (continuation.isActive) continuation.resume(collectedHtml)
             }
             timeoutHandler.postDelayed(timeoutRunnable, 35_000L)
 
@@ -406,31 +384,11 @@ class BackgroundSyncWorker(
                                     if (step == 0) {
                                         step = 1
                                         view.loadUrl(nextMonthUrl)
-                                    } else if (trackRequests) {
-                                        val jsFetchRequests = """
-                                            (function() {
-                                                var xhr = new XMLHttpRequest();
-                                                xhr.open('POST', '/PersonRequests/Read?selectedFilter=active', false);
-                                                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-                                                xhr.send('page=1&pageSize=50');
-                                                return xhr.responseText;
-                                            })();
-                                        """.trimIndent()
-                                        view.evaluateJavascript(jsFetchRequests) { rawJson ->
-                                            if (rawJson != null && rawJson != "null") {
-                                                requestsJsonResult = JSONTokener(rawJson).nextValue() as? String
-                                            }
-                                            timeoutHandler.removeCallbacks(timeoutRunnable)
-                                            bgWebView.destroy()
-                                            if (continuation.isActive) {
-                                                continuation.resume(SyncPayload(collectedHtml, requestsJsonResult))
-                                            }
-                                        }
                                     } else {
                                         timeoutHandler.removeCallbacks(timeoutRunnable)
                                         bgWebView.destroy()
                                         if (continuation.isActive) {
-                                            continuation.resume(SyncPayload(collectedHtml, null))
+                                            continuation.resume(collectedHtml)
                                         }
                                     }
                                 }
@@ -442,12 +400,14 @@ class BackgroundSyncWorker(
             bgWebView.loadUrl(currentMonthUrl)
         }
 
-        if (payload.htmlPages.isNotEmpty()) {
+        if (htmlPages.isNotEmpty()) {
             CookieManager.getInstance().flush()
             val changes = withContext(Dispatchers.IO) {
-                val allShifts = payload.htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
+                val allShifts = htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
                 val detectedChanges = CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
-                payload.requestsJson?.let { checkRequestUpdates(it) }
+                if (trackRequests) {
+                    fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
+                }
                 detectedChanges
             }
             if (changes.isNotEmpty()) {
