@@ -12,6 +12,8 @@ import android.graphics.Color
 import android.os.Build
 import android.provider.CalendarContract
 import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -450,55 +452,224 @@ object CalendarSyncHelper {
         return d1 == d2
     }
 
-    fun scheduleShiftReminders(context: Context, calendarId: Long) {
+    fun saveCachedShifts(context: Context, shifts: List<WorkShift>) {
+        val zone = ZoneId.systemDefault()
+        val arr = JSONArray()
+        for (shift in shifts) {
+            val obj = JSONObject().apply {
+                put("title", shift.title)
+                put("startMs", shift.start.atZone(zone).toInstant().toEpochMilli())
+                put("endMs", shift.end.atZone(zone).toInstant().toEpochMilli())
+                put("isAllDayLeave", shift.isAllDayLeave)
+                put("location", shift.location)
+                put("description", shift.description)
+            }
+            arr.put(obj)
+        }
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("cached_work_shifts_json", arr.toString())
+            .apply()
+    }
+
+    fun hasCachedShifts(context: Context): Boolean {
+        val raw = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("cached_work_shifts_json", null)
+        return !raw.isNullOrBlank()
+    }
+
+    private fun loadCachedShifts(context: Context): List<WorkShift>? {
+        val raw = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("cached_work_shifts_json", null) ?: return null
+        return try {
+            val zone = ZoneId.systemDefault()
+            val arr = JSONArray(raw)
+            val list = ArrayList<WorkShift>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val startMs = obj.getLong("startMs")
+                val endMs = obj.getLong("endMs")
+                list.add(
+                    WorkShift(
+                        title = obj.optString("title", "Työvuoro"),
+                        start = Instant.ofEpochMilli(startMs).atZone(zone).toLocalDateTime(),
+                        end = Instant.ofEpochMilli(endMs).atZone(zone).toLocalDateTime(),
+                        isAllDayLeave = obj.optBoolean("isAllDayLeave", false),
+                        location = obj.optString("location", ""),
+                        description = obj.optString("description", "")
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun countFutureSyncedEvents(context: Context, calendarId: Long): Int {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+            return 0
+        }
+        val nowMs = System.currentTimeMillis()
+        val userTag = getUserTag(context)
+        var count = 0
+        val projection = arrayOf(
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION
+        )
+        val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
+                "${CalendarContract.Events.DTEND} > ? AND " +
+                "${CalendarContract.Events.DELETED} = 0"
+        val selectionArgs = arrayOf(calendarId.toString(), nowMs.toString())
+
+        context.contentResolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, selectionArgs, null)?.use { c ->
+            while (c.moveToNext()) {
+                val title = c.getString(0) ?: ""
+                val desc = c.getString(1) ?: ""
+                if (belongsToAnotherUser(desc, userTag)) continue
+                if (belongsToCurrentUser(desc, title, userTag)) {
+                    count++
+                }
+            }
+        }
+        return count
+    }
+
+    fun deleteFutureSyncedEvents(context: Context, calendarId: Long): Int {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
+            return 0
+        }
+        val resolver = context.contentResolver
+        val nowMs = System.currentTimeMillis()
+        val userTag = getUserTag(context)
+        val toDeleteIds = mutableListOf<Long>()
+
+        val projection = arrayOf(
+            CalendarContract.Events._ID,
+            CalendarContract.Events.TITLE,
+            CalendarContract.Events.DESCRIPTION
+        )
+        val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
+                "${CalendarContract.Events.DTEND} > ? AND " +
+                "${CalendarContract.Events.DELETED} = 0"
+        val selectionArgs = arrayOf(calendarId.toString(), nowMs.toString())
+
+        resolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, selectionArgs, null)?.use { c ->
+            while (c.moveToNext()) {
+                val id = c.getLong(0)
+                val title = c.getString(1) ?: ""
+                val desc = c.getString(2) ?: ""
+                if (belongsToAnotherUser(desc, userTag)) continue
+                if (belongsToCurrentUser(desc, title, userTag)) {
+                    toDeleteIds.add(id)
+                }
+            }
+        }
+
+        for (id in toDeleteIds) {
+            val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, id)
+            resolver.delete(uri, null, null)
+        }
+        if (toDeleteIds.isNotEmpty()) {
+            CalendarChangeTracker.saveChanges(context, emptyList())
+        }
+        return toDeleteIds.size
+    }
+
+    fun cancelAllShiftReminders(context: Context) {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val oldReqCodes = prefs.getStringSet("scheduled_alarm_req_codes", emptySet()) ?: emptySet()
+        for (oldCodeStr in oldReqCodes) {
+            val oldCode = oldCodeStr.toIntOrNull() ?: continue
+            val cancelIntent = Intent(context, ShiftReminderReceiver::class.java)
+            val existingPi = PendingIntent.getBroadcast(
+                context,
+                oldCode,
+                cancelIntent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (existingPi != null) {
+                alarmManager.cancel(existingPi)
+                existingPi.cancel()
+            }
+        }
+        prefs.edit()
+            .remove("scheduled_alarm_req_codes")
+            .remove("next_reminder_ms")
+            .remove("next_reminder_label")
+            .apply()
+    }
+
+    fun scheduleShiftReminders(context: Context, calendarId: Long? = getTargetCalendarId(context)) {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("shift_reminders_enabled", true)) {
+            cancelAllShiftReminders(context)
             return
         }
-        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+
         val minutesBefore = prefs.getInt("reminder_minutes", 30)
         val userTag = getUserTag(context)
-
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = System.currentTimeMillis()
         val twoWeeksAhead = now + 14L * 24 * 60 * 60 * 1000L
         val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-
-        val projection = arrayOf(
-            CalendarContract.Events.TITLE,
-            CalendarContract.Events.DESCRIPTION,
-            CalendarContract.Events.DTSTART,
-            CalendarContract.Events.DTEND,
-            CalendarContract.Events.ALL_DAY
-        )
-        val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
-                "${CalendarContract.Events.DESCRIPTION} LIKE ? AND " +
-                "${CalendarContract.Events.DTEND} > ? AND " +
-                "${CalendarContract.Events.DTSTART} < ? AND " +
-                "${CalendarContract.Events.DELETED} = 0"
-        val selectionArgs = arrayOf(calendarId.toString(), "%$EVENT_DESCRIPTION_TAG%", now.toString(), twoWeeksAhead.toString())
+        val zone = ZoneId.systemDefault()
 
         val userShifts = mutableListOf<ReminderEventItem>()
+        val cachedShifts = loadCachedShifts(context)
 
-        context.contentResolver.query(
-            CalendarContract.Events.CONTENT_URI,
-            projection,
-            selection,
-            selectionArgs,
-            "${CalendarContract.Events.DTSTART} ASC"
-        )?.use { cursor ->
-            while (cursor.moveToNext()) {
-                val baseTitle = cursor.getString(0) ?: continue
-                val desc = cursor.getString(1) ?: ""
-                val startMs = cursor.getLong(2)
-                val endMs = cursor.getLong(3)
-                val isAllDay = cursor.getInt(4) == 1
+        if (cachedShifts != null) {
+            for (shift in cachedShifts) {
+                if (shift.isAllDayLeave) continue
+                val startMs = shift.start.atZone(zone).toInstant().toEpochMilli()
+                val endMs = shift.end.atZone(zone).toInstant().toEpochMilli()
+                if (endMs <= now || startMs >= twoWeeksAhead) continue
 
-                if (isAllDay) continue
-                if (!belongsToCurrentUser(desc, baseTitle, userTag)) continue
-
-                val shiftRoleInfo = desc.substringBefore(EVENT_DESCRIPTION_TAG).trim()
+                val baseTitle = formatShiftTitle(shift.title, userTag)
+                val shiftRoleInfo = shift.description.trim()
                 val displayTitle = if (shiftRoleInfo.isNotEmpty()) "$baseTitle ($shiftRoleInfo)" else baseTitle
                 userShifts.add(ReminderEventItem(displayTitle, startMs, endMs))
+            }
+        } else if (calendarId != null &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+        ) {
+            val projection = arrayOf(
+                CalendarContract.Events.TITLE,
+                CalendarContract.Events.DESCRIPTION,
+                CalendarContract.Events.DTSTART,
+                CalendarContract.Events.DTEND,
+                CalendarContract.Events.ALL_DAY
+            )
+            val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
+                    "${CalendarContract.Events.DESCRIPTION} LIKE ? AND " +
+                    "${CalendarContract.Events.DTEND} > ? AND " +
+                    "${CalendarContract.Events.DTSTART} < ? AND " +
+                    "${CalendarContract.Events.DELETED} = 0"
+            val selectionArgs = arrayOf(calendarId.toString(), "%$EVENT_DESCRIPTION_TAG%", now.toString(), twoWeeksAhead.toString())
+
+            context.contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                projection,
+                selection,
+                selectionArgs,
+                "${CalendarContract.Events.DTSTART} ASC"
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val baseTitle = cursor.getString(0) ?: continue
+                    val desc = cursor.getString(1) ?: ""
+                    val startMs = cursor.getLong(2)
+                    val endMs = cursor.getLong(3)
+                    val isAllDay = cursor.getInt(4) == 1
+
+                    if (isAllDay) continue
+                    if (!belongsToCurrentUser(desc, baseTitle, userTag)) continue
+
+                    val shiftRoleInfo = desc.substringBefore(EVENT_DESCRIPTION_TAG).trim()
+                    val displayTitle = if (shiftRoleInfo.isNotEmpty()) "$baseTitle ($shiftRoleInfo)" else baseTitle
+                    userShifts.add(ReminderEventItem(displayTitle, startMs, endMs))
+                }
             }
         }
 

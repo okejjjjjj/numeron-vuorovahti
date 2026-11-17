@@ -8,7 +8,9 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.provider.CalendarContract
+import android.content.res.ColorStateList
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -21,6 +23,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -244,6 +247,71 @@ object SettingsDialogHelper {
             spinner.setPadding(dp(8), dp(6), dp(8), dp(6))
         }
 
+        fun createToggleRow(
+            parent: LinearLayout,
+            title: String,
+            subtitle: String,
+            initialChecked: Boolean,
+            onToggle: ((Boolean) -> Unit)? = null
+        ): Switch {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                background = makeCardBg("#111923", "#2A394A", 8)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dp(6)
+                    bottomMargin = dp(4)
+                }
+            }
+
+            val textCol = LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(10)
+                }
+            }
+            textCol.addView(TextView(context).apply {
+                text = title
+                textSize = 14f
+                setTypeface(null, Typeface.BOLD)
+                setTextColor(Color.parseColor("#F1F5F9"))
+            })
+            textCol.addView(TextView(context).apply {
+                text = subtitle
+                textSize = 12f
+                setTextColor(Color.parseColor("#94A3B8"))
+                setPadding(0, dp(2), 0, 0)
+            })
+
+            val sw = Switch(context).apply {
+                isChecked = initialChecked
+                thumbTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(Color.parseColor("#38BDF8"), Color.parseColor("#94A3B8"))
+                )
+                trackTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(Color.parseColor("#1E3A5F"), Color.parseColor("#233040"))
+                )
+                setOnCheckedChangeListener { _, checked ->
+                    onToggle?.invoke(checked)
+                }
+            }
+
+            row.setOnClickListener {
+                sw.isChecked = !sw.isChecked
+            }
+
+            row.addView(textCol)
+            row.addView(sw)
+            parent.addView(row)
+            return sw
+        }
+
         fun createDarkAdapter(items: List<Any>): ArrayAdapter<Any> {
             return object : ArrayAdapter<Any>(context, android.R.layout.simple_spinner_item, items) {
                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -266,6 +334,11 @@ object SettingsDialogHelper {
 
         // === KORTTI 1: TILA JA AIKATAULUT ===
         val statusCard = createSectionCard("Tila ja aikataulut")
+
+        val initialSyncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+        val initialShiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
+        val initialTrackRequests = prefs.getBoolean("track_requests", true)
+        val anyBackgroundEnabled = initialSyncCalendar || initialShiftReminders || initialTrackRequests
 
         val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
         val nextSyncMs = resolveNextSyncMs(context, prefs.getLong("next_calendar_sync_ms", 0L))
@@ -311,13 +384,13 @@ object SettingsDialogHelper {
 
         addStatusRow(
             statusCard,
-            "Kalenterimerkinnät tarkistettu edellisen kerran",
+            "Työvuorot ja kalenteri tarkistettu",
             formatTimestamp(lastSyncMs, "Ei vielä tarkistettu")
         )
         addStatusRow(
             statusCard,
-            "Seuraava kalenteritarkistus ajoitettu",
-            formatTimestamp(nextSyncMs, "Arkisin klo 09:30 ja 14:30")
+            "Seuraava automaattinen tarkistus",
+            if (!anyBackgroundEnabled) "Pois käytöstä" else formatTimestamp(nextSyncMs, "Arkisin klo 09:30 ja 14:30")
         )
         addStatusRow(
             statusCard,
@@ -328,8 +401,12 @@ object SettingsDialogHelper {
         addStatusRow(
             statusCard,
             "Seuraava leimausnotifikaatio lähetetään",
-            if (nextNotifMs > System.currentTimeMillis()) formatTimestamp(nextNotifMs, "") else "Ei tulevia ajoitettuja hälytyksiä",
-            if (nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
+            when {
+                !initialShiftReminders -> "Leimausmuistutukset pois käytöstä"
+                nextNotifMs > System.currentTimeMillis() -> formatTimestamp(nextNotifMs, "")
+                else -> "Ei tulevia ajoitettuja hälytyksiä"
+            },
+            if (initialShiftReminders && nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
         )
 
         val exactAlarmAllowed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -402,11 +479,19 @@ object SettingsDialogHelper {
         }
         authCard.addView(editUser)
 
+        val existingPassword = SecureCredentialManager.getPassword(context) ?: ""
+        val hasSavedPassword = existingPassword.isNotEmpty()
+
         authCard.addView(createLabel("Salasana"))
         val editPass = EditText(context).apply {
-            hint = "Salasana"
-            setText(SecureCredentialManager.getPassword(context) ?: "")
+            hint = if (hasSavedPassword) {
+                "•••••••• (tallennettu – kirjoita uusi vaihtaaksesi)"
+            } else {
+                "Salasana"
+            }
+            setText("")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
             isSingleLine = true
             styleEditText(this)
         }
@@ -424,7 +509,8 @@ object SettingsDialogHelper {
             setOnClickListener {
                 val normalizedUrl = UrlNormalizer.normalizeOrgUrl(editOrg.text.toString())
                 val user = editUser.text.toString().trim()
-                val pass = editPass.text.toString()
+                val typedPass = editPass.text.toString()
+                val pass = if (typedPass.isNotEmpty()) typedPass else existingPassword
 
                 if (normalizedUrl.isEmpty()) {
                     tvTestStatus.setTextColor(Color.parseColor("#EF4444"))
@@ -458,10 +544,24 @@ object SettingsDialogHelper {
         authCard.addView(btnTestCredentials)
         authCard.addView(tvTestStatus)
 
-        // === KORTTI 3: KALENTERI JA VÄRIKOODIT ===
-        val calCard = createSectionCard("Kalenteri ja värikoodit")
+        // === KORTTI 3: KALENTERISYNRONOINTI JA VÄRIKOODIT ===
+        val calCard = createSectionCard("Kalenterisynkronointi ja värikoodit")
 
-        calCard.addView(createLabel("Kohdekalenteri"))
+        val calDetailsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (initialSyncCalendar) View.VISIBLE else View.GONE
+        }
+
+        val switchSyncCalendar = createToggleRow(
+            parent = calCard,
+            title = "Synkronoi työvuorot Google-kalenteriin",
+            subtitle = "Vie työvuorot ja poissaolot valittuun kalenteriin automaattisesti",
+            initialChecked = initialSyncCalendar
+        ) { enabled ->
+            calDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
+        }
+
+        calDetailsContainer.addView(createLabel("Kohdekalenteri"))
         val calendars = getAvailableCalendars(context)
         val spinnerCalendar = Spinner(context).apply { styleSpinner(this) }
         if (calendars.isNotEmpty()) {
@@ -470,9 +570,9 @@ object SettingsDialogHelper {
             val idx = calendars.indexOfFirst { it.id == savedCalId }
             spinnerCalendar.setSelection(if (idx >= 0) idx else 0)
         }
-        calCard.addView(spinnerCalendar)
+        calDetailsContainer.addView(spinnerCalendar)
 
-        calCard.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
+        calDetailsContainer.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
         val editUserTag = EditText(context).apply {
             hint = "Jätä tyhjäksi omassa kalenterissa"
             setText(prefs.getString("calendar_user_tag", ""))
@@ -480,7 +580,7 @@ object SettingsDialogHelper {
             isSingleLine = true
             styleEditText(this)
         }
-        calCard.addView(editUserTag)
+        calDetailsContainer.addView(editUserTag)
 
         fun createColorSpinner(savedRgb: Int): Spinner {
             val spinner = Spinner(context).apply { styleSpinner(this) }
@@ -490,32 +590,56 @@ object SettingsDialogHelper {
             return spinner
         }
 
-        calCard.addView(createLabel("Aamuvuoron väri"))
+        calDetailsContainer.addView(createLabel("Aamuvuoron väri"))
         val spinnerMorningColor = createColorSpinner(prefs.getInt("color_morning_rgb", DEFAULT_MORNING_RGB))
-        calCard.addView(spinnerMorningColor)
+        calDetailsContainer.addView(spinnerMorningColor)
 
-        calCard.addView(createLabel("Iltavuoron väri"))
+        calDetailsContainer.addView(createLabel("Iltavuoron väri"))
         val spinnerEveningColor = createColorSpinner(prefs.getInt("color_evening_rgb", DEFAULT_EVENING_RGB))
-        calCard.addView(spinnerEveningColor)
+        calDetailsContainer.addView(spinnerEveningColor)
 
-        calCard.addView(createLabel("Yövuoron väri"))
+        calDetailsContainer.addView(createLabel("Yövuoron väri"))
         val spinnerNightColor = createColorSpinner(prefs.getInt("color_night_rgb", DEFAULT_NIGHT_RGB))
-        calCard.addView(spinnerNightColor)
+        calDetailsContainer.addView(spinnerNightColor)
 
-        // === KORTTI 4: MUISTUTUKSET JA TOIMINNOT ===
-        val actionCard = createSectionCard("Muistutukset ja toiminnot")
+        calCard.addView(calDetailsContainer)
 
-        actionCard.addView(createLabel("Muistutus ennen vuoroa (min)"))
+        // === KORTTI 4: MUISTUTUKSET JA ILMOITUKSET ===
+        val actionCard = createSectionCard("Muistutukset ja ilmoitukset")
+
+        val reminderDetailsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (initialShiftReminders) View.VISIBLE else View.GONE
+        }
+
+        val switchShiftReminders = createToggleRow(
+            parent = actionCard,
+            title = "Työvuorojen leimausmuistutukset",
+            subtitle = "Ilmoitus ennen vuoron alkua ja loppua pikaleimauspainikkeella (toimii myös ilman kalenterisynkronointia)",
+            initialChecked = initialShiftReminders
+        ) { enabled ->
+            reminderDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
+        }
+
+        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
             inputType = InputType.TYPE_CLASS_NUMBER
             isSingleLine = true
             styleEditText(this)
         }
-        actionCard.addView(editReminder)
+        reminderDetailsContainer.addView(editReminder)
+        actionCard.addView(reminderDetailsContainer)
+
+        val switchTrackRequests = createToggleRow(
+            parent = actionCard,
+            title = "Ilmoita käsitellyistä toiveista",
+            subtitle = "Lähettää ilmoituksen, kun työvuoro- tai lomatoiveesi hyväksytään tai hylätään",
+            initialChecked = initialTrackRequests
+        )
 
         val btnSync = Button(context).apply {
-            text = "Synkronoi työvuorot kalenteriin nyt"
+            text = "Hae ja päivitä työvuorot nyt"
             styleButton(this, "#1982C4", "#38BDF8", "#FFFFFF")
         }
         actionCard.addView(btnSync)
@@ -610,7 +734,16 @@ object SettingsDialogHelper {
             val nightRgb = (spinnerNightColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_NIGHT_RGB
 
             val savedUser = editUser.text.toString().trim()
-            val savedPass = editPass.text.toString()
+            val typedPass = editPass.text.toString()
+            val savedPass = when {
+                savedUser.isEmpty() -> ""
+                typedPass.isNotEmpty() -> typedPass
+                else -> existingPassword
+            }
+            val newSyncCalendar = switchSyncCalendar.isChecked
+            val newShiftReminders = switchShiftReminders.isChecked
+            val newTrackRequests = switchTrackRequests.isChecked
+
             val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
                 DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
 
@@ -620,6 +753,9 @@ object SettingsDialogHelper {
                 .putString("org_raw_input", rawOrg)
                 .putString("server_url", normalizedUrl)
                 .putBoolean("demo_mode", isDemo)
+                .putBoolean("sync_calendar_enabled", newSyncCalendar)
+                .putBoolean("shift_reminders_enabled", newShiftReminders)
+                .putBoolean("track_requests", newTrackRequests)
                 .putString("calendar_user_tag", userTag)
                 .putInt("reminder_minutes", reminderMins)
                 .putInt("color_morning_rgb", morningRgb)
@@ -630,10 +766,46 @@ object SettingsDialogHelper {
                 }
                 .apply()
 
-            val statusMsg = if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
-            Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
-            dialog.dismiss()
-            onSaved()
+            val turnedOnSync = !initialSyncCalendar && newSyncCalendar
+            val missingCacheForReminders = newShiftReminders && !CalendarSyncHelper.hasCachedShifts(context)
+            val shouldTriggerSync = turnedOnSync || (!initialShiftReminders && missingCacheForReminders)
+
+            fun finishSave(extraMsg: String? = null, forceSync: Boolean = false) {
+                val statusMsg = extraMsg ?: if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
+                Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                onSaved()
+                if ((shouldTriggerSync || forceSync) && !isDemo && savedUser.isNotEmpty() && savedPass.isNotEmpty() && normalizedUrl.isNotEmpty()) {
+                    ShiftReminderReceiver.triggerImmediateSync(context)
+                }
+            }
+
+            if (initialSyncCalendar && !newSyncCalendar) {
+                val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(context)
+                val futureCount = if (targetCalId != null) {
+                    CalendarSyncHelper.countFutureSyncedEvents(context, targetCalId)
+                } else {
+                    0
+                }
+                if (targetCalId != null && futureCount > 0) {
+                    AlertDialog.Builder(context)
+                        .setTitle("Poistetaanko kalenterimerkinnät?")
+                        .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
+                        .setPositiveButton("Poista merkinnät") { _, _ ->
+                            val deletedCount = CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
+                            finishSave("Asetukset tallennettu (poistettu $deletedCount merkintää)", forceSync = missingCacheForReminders)
+                        }
+                        .setNegativeButton("Jätä kalenteriin") { _, _ ->
+                            finishSave("Asetukset tallennettu")
+                        }
+                        .setCancelable(false)
+                        .show()
+                } else {
+                    finishSave()
+                }
+            } else {
+                finishSave()
+            }
         }
 
         dialog.show()

@@ -41,10 +41,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
 
         // 1. Puhelin käynnistyi uudelleen TAI sovellus päivitettiin (MY_PACKAGE_REPLACED)
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            val calId = CalendarSyncHelper.getTargetCalendarId(context)
-            if (calId != null) {
-                CalendarSyncHelper.scheduleShiftReminders(context, calId)
-            }
+            CalendarSyncHelper.scheduleShiftReminders(context)
             ensureBackgroundSyncScheduled(context)
             return
         }
@@ -110,9 +107,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             .apply()
 
         if (!isTest) {
-            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
-                CalendarSyncHelper.scheduleShiftReminders(context, calId)
-            }
+            CalendarSyncHelper.scheduleShiftReminders(context)
         }
 
         val stampIntent = Intent(context, MainActivity::class.java).apply {
@@ -254,6 +249,17 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         }
 
         fun ensureBackgroundSyncScheduled(context: Context) {
+            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+            val shiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
+            val trackRequests = prefs.getBoolean("track_requests", true)
+
+            if (!syncCalendar && !shiftReminders && !trackRequests) {
+                WorkManager.getInstance(context).cancelUniqueWork("NumeronVuorovahtiSync")
+                prefs.edit().remove("next_calendar_sync_ms").apply()
+                return
+            }
+
             val nowMs = System.currentTimeMillis()
             val nextTargetMs = computeNextOfficeHourSyncMs(nowMs)
             val delayMs = (nextTargetMs - nowMs).coerceAtLeast(60_000L)
@@ -273,10 +279,25 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 syncRequest
             )
 
-            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-                .edit()
+            prefs.edit()
                 .putLong("next_calendar_sync_ms", nextTargetMs)
                 .apply()
+        }
+
+        fun triggerImmediateSync(context: Context) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val immediateRequest = androidx.work.OneTimeWorkRequestBuilder<BackgroundSyncWorker>()
+                .setConstraints(constraints)
+                .build()
+
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "NumeronVuorovahtiImmediateSync",
+                androidx.work.ExistingWorkPolicy.REPLACE,
+                immediateRequest
+            )
         }
 
         fun showRequestDecisionNotification(context: Context, title: String, body: String, id: Int) {
@@ -324,20 +345,31 @@ class BackgroundSyncWorker(
         val user = rawUser.replace("\\", "\\\\").replace("'", "\\'")
         val pass = rawPass.replace("\\", "\\\\").replace("'", "\\'")
         val baseUrl = UrlNormalizer.getSavedBaseUrl(appContext)
+        val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+        val shiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
         val trackRequests = prefs.getBoolean("track_requests", true)
+
+        if (!syncCalendar && !shiftReminders && !trackRequests) {
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
+            return@withContext Result.success()
+        }
 
         if (rawUser.isEmpty() || rawPass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
 
-        val calId = CalendarSyncHelper.getTargetCalendarId(appContext)
-            ?: return@withContext Result.failure()
+        val needShifts = syncCalendar || shiftReminders
+        val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(appContext) else null
 
         val now = LocalDate.now()
         val nextMonth = now.plusMonths(1)
         val currentMonthUrl = "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
         val nextMonthUrl = "$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}"
+        val initialUrl = if (needShifts) currentMonthUrl else "$baseUrl/WorktimeStamping"
 
-        val htmlPages = suspendCancellableCoroutine<List<String>> { continuation ->
+        data class WorkerFetchResult(val htmlPages: List<String>, val sessionAuthenticated: Boolean)
+
+        val fetchResult = suspendCancellableCoroutine<WorkerFetchResult> { continuation ->
             val collectedHtml = mutableListOf<String>()
+            var sessionOk = false
             var step = 0
 
             val bgWebView = WebView(appContext).apply {
@@ -350,7 +382,7 @@ class BackgroundSyncWorker(
             val timeoutHandler = Handler(Looper.getMainLooper())
             val timeoutRunnable = Runnable {
                 bgWebView.destroy()
-                if (continuation.isActive) continuation.resume(collectedHtml)
+                if (continuation.isActive) continuation.resume(WorkerFetchResult(collectedHtml, sessionOk))
             }
             timeoutHandler.postDelayed(timeoutRunnable, 35_000L)
 
@@ -373,7 +405,20 @@ class BackgroundSyncWorker(
                             """.trimIndent()
                             view?.evaluateJavascript(jsLogin, null)
                         }
-                        url.contains("/Calendar/Month", ignoreCase = true) -> {
+                        !needShifts && (
+                            url.contains("/WorktimeStamping", ignoreCase = true) ||
+                            url.contains("/InfraDashboard", ignoreCase = true) ||
+                            url.contains("/Calendar", ignoreCase = true)
+                        ) -> {
+                            sessionOk = true
+                            timeoutHandler.removeCallbacks(timeoutRunnable)
+                            bgWebView.destroy()
+                            if (continuation.isActive) {
+                                continuation.resume(WorkerFetchResult(emptyList(), true))
+                            }
+                        }
+                        needShifts && url.contains("/Calendar/Month", ignoreCase = true) -> {
+                            sessionOk = true
                             view?.postDelayed({
                                 view.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
                                     if (rawHtml != null && rawHtml != "null") {
@@ -388,7 +433,7 @@ class BackgroundSyncWorker(
                                         timeoutHandler.removeCallbacks(timeoutRunnable)
                                         bgWebView.destroy()
                                         if (continuation.isActive) {
-                                            continuation.resume(collectedHtml)
+                                            continuation.resume(WorkerFetchResult(collectedHtml, true))
                                         }
                                     }
                                 }
@@ -397,15 +442,28 @@ class BackgroundSyncWorker(
                     }
                 }
             }
-            bgWebView.loadUrl(currentMonthUrl)
+            bgWebView.loadUrl(initialUrl)
         }
 
-        if (htmlPages.isNotEmpty()) {
+        val success = if (needShifts) fetchResult.htmlPages.isNotEmpty() else fetchResult.sessionAuthenticated
+        if (success) {
             CookieManager.getInstance().flush()
             val changes = withContext(Dispatchers.IO) {
-                val allShifts = htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
-                val detectedChanges = CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
-                CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                val detectedChanges = if (needShifts) {
+                    val allShifts = fetchResult.htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
+                    CalendarSyncHelper.saveCachedShifts(appContext, allShifts)
+                    val calChanges = if (syncCalendar && calId != null) {
+                        CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
+                    } else {
+                        prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
+                        emptyList()
+                    }
+                    CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                    calChanges
+                } else {
+                    CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                    emptyList()
+                }
                 if (trackRequests) {
                     fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
                 }

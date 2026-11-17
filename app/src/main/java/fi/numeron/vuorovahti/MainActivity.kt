@@ -93,9 +93,7 @@ class MainActivity : AppCompatActivity() {
         requestNeededPermissions()
         ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
 
-        CalendarSyncHelper.getTargetCalendarId(this)?.let {
-            CalendarSyncHelper.scheduleShiftReminders(this, it)
-        }
+        CalendarSyncHelper.scheduleShiftReminders(this)
 
         webView = findViewById(R.id.webView)
         bannerDemoMode = findViewById(R.id.bannerDemoMode)
@@ -334,9 +332,8 @@ class MainActivity : AppCompatActivity() {
                 onManageChanges = { CalendarChangeTracker.showManageChangesDialog(this) },
                 onTestNotification = { triggerTestReminderNotification() },
                 onSaved = {
-                    CalendarSyncHelper.getTargetCalendarId(this)?.let {
-                        CalendarSyncHelper.scheduleShiftReminders(this, it)
-                    }
+                    CalendarSyncHelper.scheduleShiftReminders(this)
+                    ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
                     navigateToTab(currentTab)
                 }
             )
@@ -372,32 +369,39 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startCalendarSync() {
+        val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+
         if (DemoModeHelper.isDemoEnabled(this)) {
             scope.launch(Dispatchers.IO) {
-                val calId = CalendarSyncHelper.getTargetCalendarId(this@MainActivity)
-                if (calId != null) {
-                    val demoShifts = DemoModeHelper.generateDemoWorkShifts(this@MainActivity)
-                    val changes = CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, demoShifts)
-                    CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
-                    withContext(Dispatchers.Main) {
-                        if (changes.isNotEmpty()) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Kalenterimuutokset: ${CalendarChangeTracker.formatSummary(changes)}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
-                        } else {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Demovuorot ovat jo ajan tasalla kalenterissa",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
+                val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
+                val demoShifts = DemoModeHelper.generateDemoWorkShifts(this@MainActivity)
+                CalendarSyncHelper.saveCachedShifts(this@MainActivity, demoShifts)
+                val changes = if (syncCalendar && calId != null) {
+                    CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, demoShifts)
                 } else {
-                    withContext(Dispatchers.Main) {
+                    prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
+                    emptyList()
+                }
+                CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
+
+                withContext(Dispatchers.Main) {
+                    if (syncCalendar && calId == null) {
                         Toast.makeText(this@MainActivity, "Kalenterioikeus tai kalenteri puuttuu", Toast.LENGTH_LONG).show()
+                    } else if (changes.isNotEmpty()) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Kalenterimuutokset: ${CalendarChangeTracker.formatSummary(changes)}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
+                    } else {
+                        val msg = if (syncCalendar) {
+                            "Demovuorot ovat jo ajan tasalla kalenterissa"
+                        } else {
+                            "Demovuorot ja muistutukset päivitetty (${demoShifts.size} vuoroa)"
+                        }
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -1371,27 +1375,41 @@ class MainActivity : AppCompatActivity() {
                 collectedCalendarHtml.clear()
 
                 scope.launch(Dispatchers.IO) {
-                    val calId = CalendarSyncHelper.getTargetCalendarId(this@MainActivity)
-                    if (calId != null) {
-                        val allShifts = pagesToParse.flatMap { NumeronParser.parseCalendarHtml(it) }
-                        val changes = CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, allShifts)
-                        CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
+                    val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                    val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+                    val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
+                    val allShifts = pagesToParse.flatMap { NumeronParser.parseCalendarHtml(it) }
+                    CalendarSyncHelper.saveCachedShifts(this@MainActivity, allShifts)
 
-                        withContext(Dispatchers.Main) {
-                            if (changes.isNotEmpty()) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                                CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
+                    val changes = if (syncCalendar && calId != null) {
+                        CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, allShifts)
+                    } else {
+                        prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
+                        emptyList()
+                    }
+                    CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
+
+                    withContext(Dispatchers.Main) {
+                        if (syncCalendar && calId == null) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else if (changes.isNotEmpty()) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
+                        } else {
+                            val msg = if (syncCalendar) {
+                                "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
                             } else {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                                "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
                             }
+                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
