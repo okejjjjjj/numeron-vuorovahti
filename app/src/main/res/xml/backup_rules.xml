@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Varmuuskopioidaan sovelluksen SharedPreferences-asetukset (organisaatiotunnus ym.) -->
+    <include domain="sharedpref" path="NumeronPrefs.xml" />
+</full-backup-content>
