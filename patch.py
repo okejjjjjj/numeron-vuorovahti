@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import pathlib
 import sys
+import re
 
 def main():
     main_act_path = pathlib.Path("app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt")
     if not main_act_path.exists():
-        # Kokeillaan myös juurihakemistoa
         alt = pathlib.Path("MainActivity.kt")
         if alt.exists():
             main_act_path = alt
@@ -86,9 +86,7 @@ def main():
     assert old_balance_css in content, "Ei löydetty punching-balance-overview-container CSS-kohtaa"
     content = content.replace(old_balance_css, new_balance_css, 1)
 
-    # 3. Lisätään JS-injektioon:
-    #    - Saldon haku /WorktimeStamping/GetPersonBalance -päätepisteestä ja sijoitus ennen leimausnappia
-    #    - Kalenterin kuukausinäkymään suora "Lisää toive" -pikavalikko päiväsolun napautuksesta
+    # 3. Lisätään JS-injektioon: saldon haku ja kuukausinäkymän pikatoive
     old_js_tail = """                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
                         if (cancelBtn) {
                             var panel = document.getElementById('forgotStampPanel');
@@ -141,7 +139,6 @@ def main():
                             if (!valEl) return;
                             var raw = (data && (data.Balance || data.balance || data.FormattedBalance || data.formattedBalance || data.TotalBalance || data.totalBalance || data.Value || data.value));
                             if (raw === undefined || raw === null) {
-                                // Jos kentän nimi vaihtelee, etsitään ensimmäinen saldoa muistuttava arvo
                                 if (typeof data === 'string' || typeof data === 'number') {
                                     raw = data;
                                 } else if (data && typeof data === 'object') {
@@ -190,7 +187,7 @@ def main():
                         if (!dayEl || !monthHeader) return;
 
                         var dayNum = parseInt((dayEl.textContent || '').trim(), 10);
-                        var parts = (monthHeader.textContent || '').trim().toLowerCase().split(/\s+/);
+                        var parts = (monthHeader.textContent || '').trim().toLowerCase().split(/\\s+/);
                         if (!dayNum || parts.length < 2) return;
 
                         var mNum = monthsFi[parts[0]];
@@ -223,6 +220,19 @@ def main():
     assert content != original, "Tiedostoon ei tullut muutoksia"
     main_act_path.write_text(content, encoding="utf-8")
     print(f"Päivitetty onnistuneesti: {main_act_path}")
+
+    # 4. Nostetaan automaattisesti build.gradle / build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
+    for gradle_path in [pathlib.Path("app/build.gradle"), pathlib.Path("app/build.gradle.kts"), pathlib.Path("build.gradle")]:
+        if gradle_path.exists():
+            g_content = gradle_path.read_text(encoding="utf-8")
+            match = re.search(r'versionCode\s+(\d+)', g_content)
+            if match:
+                old_code = int(match.group(1))
+                new_code = old_code + 1
+                g_content = g_content.replace(f"versionCode {old_code}", f"versionCode {new_code}")
+                gradle_path.write_text(g_content, encoding="utf-8")
+                print(f"Nostettu versionCode arvosta {old_code} arvoon {new_code} ({gradle_path})")
+                break
 
 if __name__ == "__main__":
     main()
