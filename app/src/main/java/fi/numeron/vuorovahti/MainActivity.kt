@@ -792,28 +792,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             /* === 5. TYÖAIKALEIMAUS === */
-            #numeron-balance-card {
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 12px !important;
-                padding: 12px 14px !important;
-                margin-bottom: 14px !important;
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: center !important;
-            }
-            #numeron-balance-card .bal-label {
-                font-size: 12px !important;
-                text-transform: uppercase !important;
-                letter-spacing: 0.05em !important;
-                color: #94A3B8 !important;
-                font-weight: 600 !important;
-            }
-            #numeron-balance-card .bal-value {
-                font-size: 18px !important;
-                font-weight: 700 !important;
-                color: #38BDF8 !important;
-            }
             .punching-balance-overview-container {
                 display: none !important;
             }
@@ -1437,44 +1415,6 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }, true);
-                }
-
-                // === SALDO LEIMAUSSIVUN YLÄOSAAN ENNEN LEIMAUSNAPPIA ===
-                if (window.location.pathname.toLowerCase().indexOf('/worktimestamping') !== -1 && !window._balanceLoaderInstalled) {
-                    window._balanceLoaderInstalled = true;
-                    var punchBtn = document.getElementById('punchButton');
-                    var targetContainer = punchBtn ? (punchBtn.closest('.panel, .whitebox, .stamping-box, .card, form') || punchBtn.parentElement) : null;
-                    if (targetContainer && !document.getElementById('numeron-balance-card')) {
-                        var card = document.createElement('div');
-                        card.id = 'numeron-balance-card';
-                        card.innerHTML = '<span class="bal-label">Työaikasaldo</span><span class="bal-value" id="numeron-balance-val">Haetaan...</span>';
-                        targetContainer.parentNode.insertBefore(card, targetContainer);
-
-                        var tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
-                        var token = tokenInput ? tokenInput.value : '';
-                        fetch('/WorktimeStamping/GetPersonBalance', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                                'X-Requested-With': 'XMLHttpRequest'
-                            },
-                            body: '__RequestVerificationToken=' + encodeURIComponent(token)
-                        })
-                        .then(function(r) { return r.text(); })
-                        .then(function(htmlText) {
-                            var valEl = document.getElementById('numeron-balance-val');
-                            if (!valEl) return;
-                            if (htmlText && htmlText.trim() !== '') {
-                                valEl.innerHTML = htmlText;
-                            } else {
-                                card.style.display = 'none';
-                            }
-                        })
-                        .catch(function() {
-                            var c = document.getElementById('numeron-balance-card');
-                            if (c) c.style.display = 'none';
-                        });
-                    }
                 }
 
                 // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
