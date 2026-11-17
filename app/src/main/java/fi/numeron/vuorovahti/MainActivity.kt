@@ -1460,32 +1460,12 @@ class MainActivity : AppCompatActivity() {
                             },
                             body: '__RequestVerificationToken=' + encodeURIComponent(token)
                         })
-                        .then(function(r) { return r.json(); })
-                        .then(function(data) {
+                        .then(function(r) { return r.text(); })
+                        .then(function(htmlText) {
                             var valEl = document.getElementById('numeron-balance-val');
                             if (!valEl) return;
-                            var raw = (data && (data.Balance || data.balance || data.FormattedBalance || data.formattedBalance || data.TotalBalance || data.totalBalance || data.Value || data.value));
-                            if (raw === undefined || raw === null) {
-                                // Jos kentän nimi vaihtelee, etsitään ensimmäinen saldoa muistuttava arvo
-                                if (typeof data === 'string' || typeof data === 'number') {
-                                    raw = data;
-                                } else if (data && typeof data === 'object') {
-                                    for (var k in data) {
-                                        if (Object.prototype.hasOwnProperty.call(data, k) && k.toLowerCase().indexOf('balance') !== -1 && data[k] !== null) {
-                                            raw = data[k];
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
-                                var txt = String(raw).trim();
-                                valEl.textContent = txt;
-                                if (txt.indexOf('-') === 0) {
-                                    valEl.style.color = '#F87171';
-                                } else {
-                                    valEl.style.color = '#34D399';
-                                }
+                            if (htmlText && htmlText.trim() !== '') {
+                                valEl.innerHTML = htmlText;
                             } else {
                                 card.style.display = 'none';
                             }
