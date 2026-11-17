@@ -16,75 +16,24 @@ def main():
     content = main_act_path.read_text(encoding="utf-8")
     original = content
 
-    # 1. Korjataan saldojen haku fetchillä niin, että käsitellään vastaus HTML:nä (.text()) JSONin sijaan
-    old_fetch_block = """                        fetch('/WorktimeStamping/GetPersonBalance', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                                'X-Requested-With': 'XMLHttpRequest'
-                            },
-                            body: '__RequestVerificationToken=' + encodeURIComponent(token)
-                        })
-                        .then(function(r) { return r.json(); })
-                        .then(function(data) {
-                            var valEl = document.getElementById('numeron-balance-val');
-                            if (!valEl) return;
-                            var raw = (data && (data.Balance || data.balance || data.FormattedBalance || data.formattedBalance || data.TotalBalance || data.totalBalance || data.Value || data.value));
-                            if (raw === undefined || raw === null) {
-                                // Jos kentän nimi vaihtelee, etsitään ensimmäinen saldoa muistuttava arvo
-                                if (typeof data === 'string' || typeof data === 'number') {
-                                    raw = data;
-                                } else if (data && typeof data === 'object') {
-                                    for (var k in data) {
-                                        if (Object.prototype.hasOwnProperty.call(data, k) && k.toLowerCase().indexOf('balance') !== -1 && data[k] !== null) {
-                                            raw = data[k];
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
-                                var txt = String(raw).trim();
-                                valEl.textContent = txt;
-                                if (txt.indexOf('-') === 0) {
-                                    valEl.style.color = '#F87171';
-                                } else {
-                                    valEl.style.color = '#34D399';
-                                }
-                            } else {
-                                card.style.display = 'none';
-                            }
-                        })"""
+    # 1. Poistetaan #numeron-balance-card CSS-lohkot joustavasti regexillä
+    content = re.sub(r'\s*#numeron-balance-card\s*\{[^}]*\}', '', content)
+    content = re.sub(r'\s*#numeron-balance-card\s+\.bal-[a-z]+\s*\{[^}]*\}', '', content, flags=re.IGNORECASE)
 
-    new_fetch_block = """                        fetch('/WorktimeStamping/GetPersonBalance', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                                'X-Requested-With': 'XMLHttpRequest'
-                            },
-                            body: '__RequestVerificationToken=' + encodeURIComponent(token)
-                        })
-                        .then(function(r) { return r.text(); })
-                        .then(function(htmlText) {
-                            var valEl = document.getElementById('numeron-balance-val');
-                            if (!valEl) return;
-                            if (htmlText && htmlText.trim() !== '') {
-                                valEl.innerHTML = htmlText;
-                            } else {
-                                card.style.display = 'none';
-                            }
-                        })"""
+    # 2. Poistetaan saldon JS-latauslohko injektiosta kokonaan
+    js_pattern = re.compile(r'// === SALDO LEIMAUSSIVUN YLÄOSAAN.*?(?=// === SUORA|\Z)', re.DOTALL)
+    content = js_pattern.sub('', content)
 
-    if old_fetch_block in content:
-        content = content.replace(old_fetch_block, new_fetch_block, 1)
+    # 3. Varmistetaan että mahdolliset DOM-viittaukset eivät aiheuta ongelmia
+    content = re.sub(r"document\.getElementById\('numeron-balance-card'\)", "false", content)
 
     if content != original:
         main_act_path.write_text(content, encoding="utf-8")
-        print(f"Päivitetty onnistuneesti: {main_act_path}")
+        print(f"Päivitetty onnistuneesti (saldokysely poistettu): {main_act_path}")
     else:
-        print("Ei muutoksia tehtävänä tai korjattavaa lohkoa ei löytynyt sellaisenaan.")
+        print("Ei muutoksia tehtävänä tai saldokyselyä ei löytynyt.")
 
-    # 2. Nostetaan automaattisesti build.gradle / build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
+    # 4. Nostetaan automaattisesti build.gradle / build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
     for gradle_path in [pathlib.Path("app/build.gradle"), pathlib.Path("app/build.gradle.kts"), pathlib.Path("build.gradle")]:
         if gradle_path.exists():
             g_content = gradle_path.read_text(encoding="utf-8")
