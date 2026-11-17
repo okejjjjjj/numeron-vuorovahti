@@ -88,8 +88,10 @@ class SupportBillingHelper(
             .setProductList(productList)
             .build()
 
-        billingClient.queryProductDetailsAsync(params) { billingResult, productDetailsList ->
+        // Play Billing Library 8.0.0 palauttaa QueryProductDetailsResult-olion
+        billingClient.queryProductDetailsAsync(params) { billingResult, queryProductDetailsResult ->
             if (isDestroyed) return@queryProductDetailsAsync
+            val productDetailsList = queryProductDetailsResult.productDetailsList
             if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && productDetailsList.isNotEmpty()) {
                 val sorted = productDetailsList.sortedBy {
                     it.oneTimePurchaseOfferDetails?.priceAmountMicros ?: 0L
@@ -226,10 +228,12 @@ def main():
         print("Virhe: SettingsDialogHelper.kt-tiedostoa ei löytynyt.", file=sys.stderr)
         sys.exit(1)
 
+    # 1. Päivitetään SupportBillingHelper.kt Billing Library 8.0.0 -yhteensopivaksi
     billing_helper_path = settings_path.parent / "SupportBillingHelper.kt"
     billing_helper_path.write_text(BILLING_HELPER_KT, encoding="utf-8")
-    print(f"Luotu/päivitetty: {billing_helper_path}")
+    print(f"Päivitetty Billing 8.0.0 -yhteensopivaksi: {billing_helper_path}")
 
+    # 2. Varmistetaan että SettingsDialogHelper.kt sisältää tukikortin
     s_content = settings_path.read_text(encoding="utf-8")
     s_original = s_content
 
@@ -327,39 +331,53 @@ def main():
 
     if s_content != s_original:
         settings_path.write_text(s_content, encoding="utf-8")
-        print(f"Päivitetty onnistuneesti: {settings_path}")
-    else:
-        print("SettingsDialogHelper.kt oli jo päivitetty tai ankkurikohtaa ei löytynyt.")
+        print(f"Päivitetty: {settings_path}")
 
+    # 3. Päivitetään build.gradle.kts: Billing 8.0.0, compileSdk >= 35 ja versionCode + 1
     gradle_path = find_file([
         "app/build.gradle.kts",
         "app/build.gradle",
         "build.gradle.kts",
         "build.gradle.kts.txt"
     ])
-    if gradle_path:
-        g_content = gradle_path.read_text(encoding="utf-8")
-        g_original = g_content
+    if not gradle_path:
+        print("Virhe: build.gradle.kts-tiedostoa ei löytynyt.", file=sys.stderr)
+        sys.exit(1)
 
-        billing_dep = '    implementation("com.android.billingclient:billing-ktx:7.1.1")'
-        if "com.android.billingclient:billing" not in g_content:
-            g_content = re.sub(
-                r'(dependencies\s*\{[\s\S]*?)(\n\})',
-                r'\1\n' + billing_dep + r'\2',
-                g_content,
-                count=1
-            )
+    g_content = gradle_path.read_text(encoding="utf-8")
+    g_original = g_content
 
-        match = re.search(r'versionCode\s*=\s*(\d+)', g_content)
-        if match:
-            old_code = int(match.group(1))
-            new_code = old_code + 1
-            g_content = g_content.replace(f"versionCode = {old_code}", f"versionCode = {new_code}", 1)
-            print(f"Nostettu versionCode: {old_code} -> {new_code} ({gradle_path})")
+    billing_dep = '    implementation("com.android.billingclient:billing:8.0.0")'
+    if re.search(r'com\.android\.billingclient:billing(?:-ktx)?:[0-9.]+', g_content):
+        g_content = re.sub(
+            r'implementation\(["\']com\.android\.billingclient:billing(?:-ktx)?:[0-9.]+["\']\)',
+            'implementation("com.android.billingclient:billing:8.0.0")',
+            g_content
+        )
+    else:
+        g_content = re.sub(
+            r'(dependencies\s*\{[\s\S]*?)(\n\})',
+            r'\1\n' + billing_dep + r'\2',
+            g_content,
+            count=1
+        )
 
-        if g_content != g_original:
-            gradle_path.write_text(g_content, encoding="utf-8")
-            print(f"Päivitetty riippuvuudet: {gradle_path}")
+    sdk_match = re.search(r'compileSdk\s*=\s*(\d+)', g_content)
+    if sdk_match and int(sdk_match.group(1)) < 35:
+        old_sdk = sdk_match.group(1)
+        g_content = g_content.replace(f"compileSdk = {old_sdk}", "compileSdk = 35", 1)
+        print(f"Päivitetty compileSdk: {old_sdk} -> 35 ({gradle_path})")
+
+    vc_match = re.search(r'versionCode\s*=\s*(\d+)', g_content)
+    if vc_match:
+        old_code = int(vc_match.group(1))
+        new_code = old_code + 1
+        g_content = g_content.replace(f"versionCode = {old_code}", f"versionCode = {new_code}", 1)
+        print(f"Nostettu versionCode: {old_code} -> {new_code} ({gradle_path})")
+
+    if g_content != g_original:
+        gradle_path.write_text(g_content, encoding="utf-8")
+        print(f"Päivitetty: {gradle_path}")
 
 if __name__ == "__main__":
     main()
