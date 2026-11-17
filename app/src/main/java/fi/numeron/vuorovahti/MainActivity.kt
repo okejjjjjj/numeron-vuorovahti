@@ -432,6 +432,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
+        val notifId = intent?.getIntExtra("NOTIF_ID", -1) ?: -1
+        if (notifId > 0) {
+            intent?.removeExtra("NOTIF_ID")
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.cancel(notifId)
+        }
+
         if (intent?.getBooleanExtra("AUTO_STAMP", false) == true) {
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
             val isTest = intent.getBooleanExtra("IS_TEST", false)
@@ -574,6 +581,9 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/Calendar", ignoreCase = true) -> {
                         setActiveTab(btnNavShifts)
                         handleCalendarPage()
+                    }
+                    pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT -> {
+                        webView.loadUrl("${getBaseUrl()}/WorktimeStamping")
                     }
                 }
 
@@ -1201,18 +1211,19 @@ class MainActivity : AppCompatActivity() {
 
 
 
-    private fun handleStampingPage() {
+    private fun handleStampingPage(attempt: Int = 0) {
         if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
 
         val targetText = if (pendingAction == Action.STAMP_IN) "Sisään" else "Ulos"
-        pendingAction = Action.NONE
+        val targetLower = targetText.lowercase()
 
         val js = """
             (function() {
                 var btn = document.getElementById('punchButton');
                 if (!btn) return 'NO_BUTTON';
-                var btnText = btn.innerText.trim();
-                if (btnText.indexOf('$targetText') !== -1) {
+                var btnText = (btn.innerText || btn.textContent || '').trim();
+                if (!btnText) return 'NO_BUTTON';
+                if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
                     btn.click();
                     return 'STAMPED_' + btnText;
                 } else {
@@ -1222,15 +1233,23 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
 
         webView.evaluateJavascript(js) { result ->
-            val cleanResult = result.replace("\"", "")
+            val cleanResult = (result ?: "").replace("\"", "")
             when {
                 cleanResult.startsWith("STAMPED_") -> {
+                    pendingAction = Action.NONE
                     Toast.makeText(this, "Leimaus suoritettu ($targetText)", Toast.LENGTH_SHORT).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
                 cleanResult.startsWith("WRONG_DIRECTION_") -> {
+                    pendingAction = Action.NONE
                     Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
+                }
+                cleanResult == "NO_BUTTON" && attempt < 10 -> {
+                    webView.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
+                }
+                else -> {
+                    pendingAction = Action.NONE
                 }
             }
         }

@@ -133,13 +133,14 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             }
         }
 
-        val stampIntent = Intent(context, ShiftReminderReceiver::class.java).apply {
-            action = ACTION_QUICK_STAMP
+        val stampIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("AUTO_STAMP", true)
             putExtra("IS_ENDING", isEnding)
             putExtra("IS_TEST", isTest)
             putExtra("NOTIF_ID", notifId)
         }
-        val stampPi = PendingIntent.getBroadcast(
+        val stampPi = PendingIntent.getActivity(
             context,
             notifId,
             stampIntent,
