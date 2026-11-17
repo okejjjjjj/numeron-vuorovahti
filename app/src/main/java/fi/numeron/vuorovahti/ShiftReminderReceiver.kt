@@ -405,6 +405,7 @@ class BackgroundSyncWorker(
             val changes = withContext(Dispatchers.IO) {
                 val allShifts = htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
                 val detectedChanges = CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
+                CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
                 if (trackRequests) {
                     fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
                 }
@@ -413,17 +414,43 @@ class BackgroundSyncWorker(
             if (changes.isNotEmpty()) {
                 ShiftReminderReceiver.showCalendarChangesNotification(appContext, changes)
             }
-            CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
-            val nowMs = System.currentTimeMillis()
             prefs.edit()
-                .putLong("last_calendar_sync_ms", nowMs)
-                .putLong("last_valid_session_ms", nowMs)
+                .putLong("last_valid_session_ms", System.currentTimeMillis())
                 .apply()
             ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
             Result.success()
         } else {
             ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
-            Result.success()
+            Result.retry()
+        }
+    }
+
+    private fun fetchRequestsJson(baseUrl: String): String? {
+        return try {
+            val cookies = CookieManager.getInstance().getCookie(baseUrl)
+            if (cookies.isNullOrBlank()) return null
+            val conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Cookie", cookies)
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                doOutput = true
+                connectTimeout = 15000
+                readTimeout = 15000
+            }
+            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                writer.write("page=1&pageSize=50")
+                writer.flush()
+            }
+            val text = if (conn.responseCode == 200) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else {
+                null
+            }
+            conn.disconnect()
+            if (text != null && text.trim().startsWith("{")) text else null
+        } catch (_: Exception) {
+            null
         }
     }
 
