@@ -1,543 +1,228 @@
 #!/usr/bin/env python3
-import os
-import re
+import pathlib
+import sys
 
+def main():
+    main_act_path = pathlib.Path("app/src/main/java/fi/numeron/vuorovahti/MainActivity.kt")
+    if not main_act_path.exists():
+        # Kokeillaan myös juurihakemistoa
+        alt = pathlib.Path("MainActivity.kt")
+        if alt.exists():
+            main_act_path = alt
+        else:
+            print(f"Virhe: Tiedostoa {main_act_path} ei löytynyt.", file=sys.stderr)
+            sys.exit(1)
 
-# ==============================================================================
-# PYSYVÄ OSIO: Versionumeron automaattinen nosto (+1)
-# ==============================================================================
-def bump_version_code():
-    gradle_path = "app/build.gradle.kts"
-    if not os.path.exists(gradle_path):
-        print(f"Ohitetaan: {gradle_path} ei löytynyt.")
-        return
+    content = main_act_path.read_text(encoding="utf-8")
+    original = content
 
-    with open(gradle_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    def increment(match):
-        old_code = int(match.group(1))
-        new_code = old_code + 1
-        print(f"Päivitetään versionCode: {old_code} -> {new_code}")
-        return f"versionCode = {new_code}"
-
-    updated, count = re.subn(r"versionCode\s*=\s*(\d+)", increment, content, count=1)
-    if count > 0:
-        with open(gradle_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(updated)
-
-
-# ==============================================================================
-# === POISTETTAVA KORJAUSOSIO ALKAA (Poista kun muutokset on ajettu) ===
-# ==============================================================================
-def replace_idempotent(content: str, old: str, new: str, label: str) -> str:
-    if new in content:
-        return content
-    if old not in content:
-        raise RuntimeError(f"Hakulohkoa ei löytynyt ({label})")
-    return content.replace(old, new, 1)
-
-
-def update_calendar_change_tracker():
-    path = "app/src/main/java/fi/numeron/vuorovahti/CalendarChangeTracker.kt"
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    orig = content
-
-    old_model = """data class CalendarChangeItem(
-    val id: String,
-    val type: ChangeType,
-    val calendarId: Long,
-    val eventId: Long?, // Nykyisen kalenteritapahtuman ID (ADDED / MODIFIED)
-    val title: String,
-    val startMs: Long,
-    val endMs: Long,
-    val isAllDay: Boolean,
-    // Edeltävät arvot kumoamista varten (MODIFIED / REMOVED)
-    val prevTitle: String? = null,
-    val prevStartMs: Long? = null,
-    val prevEndMs: Long? = null,
-    val prevIsAllDay: Boolean = false,
-    val timestampMs: Long = System.currentTimeMillis()
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("id", id)
-        put("type", type.name)
-        put("calendarId", calendarId)
-        put("eventId", eventId ?: -1L)
-        put("title", title)
-        put("startMs", startMs)
-        put("endMs", endMs)
-        put("isAllDay", isAllDay)
-        if (prevTitle != null) put("prevTitle", prevTitle)
-        if (prevStartMs != null) put("prevStartMs", prevStartMs)
-        if (prevEndMs != null) put("prevEndMs", prevEndMs)
-        put("prevIsAllDay", prevIsAllDay)
-        put("timestampMs", timestampMs)
-    }
-
-    companion object {
-        fun fromJson(obj: JSONObject): CalendarChangeItem {
-            val evId = obj.optLong("eventId", -1L)
-            return CalendarChangeItem(
-                id = obj.getString("id"),
-                type = ChangeType.valueOf(obj.getString("type")),
-                calendarId = obj.getLong("calendarId"),
-                eventId = if (evId > 0) evId else null,
-                title = obj.getString("title"),
-                startMs = obj.getLong("startMs"),
-                endMs = obj.getLong("endMs"),
-                isAllDay = obj.getBoolean("isAllDay"),
-                prevTitle = if (obj.has("prevTitle")) obj.getString("prevTitle") else null,
-                prevStartMs = if (obj.has("prevStartMs")) obj.getLong("prevStartMs") else null,
-                prevEndMs = if (obj.has("prevEndMs")) obj.getLong("prevEndMs") else null,
-                prevIsAllDay = obj.optBoolean("prevIsAllDay", false),
-                timestampMs = obj.optLong("timestampMs", System.currentTimeMillis())
-            )
-        }
-    }
-}"""
-
-    new_model = """data class CalendarChangeItem(
-    val id: String,
-    val type: ChangeType,
-    val calendarId: Long,
-    val eventId: Long?, // Nykyisen kalenteritapahtuman ID (ADDED / MODIFIED)
-    val title: String,
-    val startMs: Long,
-    val endMs: Long,
-    val isAllDay: Boolean,
-    val location: String = "",
-    val description: String = "",
-    // Edeltävät arvot kumoamista ja vertailua varten (MODIFIED / REMOVED)
-    val prevTitle: String? = null,
-    val prevStartMs: Long? = null,
-    val prevEndMs: Long? = null,
-    val prevIsAllDay: Boolean = false,
-    val prevLocation: String? = null,
-    val prevDescription: String? = null,
-    val timestampMs: Long = System.currentTimeMillis()
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("id", id)
-        put("type", type.name)
-        put("calendarId", calendarId)
-        put("eventId", eventId ?: -1L)
-        put("title", title)
-        put("startMs", startMs)
-        put("endMs", endMs)
-        put("isAllDay", isAllDay)
-        put("location", location)
-        put("description", description)
-        if (prevTitle != null) put("prevTitle", prevTitle)
-        if (prevStartMs != null) put("prevStartMs", prevStartMs)
-        if (prevEndMs != null) put("prevEndMs", prevEndMs)
-        put("prevIsAllDay", prevIsAllDay)
-        if (prevLocation != null) put("prevLocation", prevLocation)
-        if (prevDescription != null) put("prevDescription", prevDescription)
-        put("timestampMs", timestampMs)
-    }
-
-    companion object {
-        fun fromJson(obj: JSONObject): CalendarChangeItem {
-            val evId = obj.optLong("eventId", -1L)
-            return CalendarChangeItem(
-                id = obj.getString("id"),
-                type = ChangeType.valueOf(obj.getString("type")),
-                calendarId = obj.getLong("calendarId"),
-                eventId = if (evId > 0) evId else null,
-                title = obj.getString("title"),
-                startMs = obj.getLong("startMs"),
-                endMs = obj.getLong("endMs"),
-                isAllDay = obj.getBoolean("isAllDay"),
-                location = obj.optString("location", ""),
-                description = obj.optString("description", ""),
-                prevTitle = if (obj.has("prevTitle")) obj.getString("prevTitle") else null,
-                prevStartMs = if (obj.has("prevStartMs")) obj.getLong("prevStartMs") else null,
-                prevEndMs = if (obj.has("prevEndMs")) obj.getLong("prevEndMs") else null,
-                prevIsAllDay = obj.optBoolean("prevIsAllDay", false),
-                prevLocation = if (obj.has("prevLocation")) obj.getString("prevLocation") else null,
-                prevDescription = if (obj.has("prevDescription")) obj.getString("prevDescription") else null,
-                timestampMs = obj.optLong("timestampMs", System.currentTimeMillis())
-            )
-        }
-    }
-}"""
-
-    content = replace_idempotent(content, old_model, new_model, "CalendarChangeItem model")
-
-    old_format = """    fun formatChangeDisplay(item: CalendarChangeItem): String {
-        val tag = when (item.type) {
-            ChangeType.ADDED -> "[LISÄTTY]"
-            ChangeType.MODIFIED -> "[MUOKATTU]"
-            ChangeType.REMOVED -> "[POISTETTU]"
-        }
-        val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
-        val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-        val whenStr = if (item.isAllDay) {
-            val sDate = Instant.ofEpochMilli(item.startMs).atZone(ZoneOffset.UTC).toLocalDate()
-            val eDate = Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
-            if (eDate.isAfter(sDate)) {
-                "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
-            } else {
-                "${sDate.format(dateFmt)} (koko päivä)"
-            }
-        } else {
-            val sDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            val eDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
-        }
-        return "$tag ${item.title}\\n$whenStr"
-    }"""
-
-    new_format = """    private fun formatRange(startMs: Long, endMs: Long, isAllDay: Boolean): String {
-        val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
-        val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-        return if (isAllDay) {
-            val sDate = Instant.ofEpochMilli(startMs).atZone(ZoneOffset.UTC).toLocalDate()
-            val eDate = Instant.ofEpochMilli(endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
-            if (eDate.isAfter(sDate)) {
-                "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
-            } else {
-                "${sDate.format(dateFmt)} (koko päivä)"
-            }
-        } else {
-            val sDt = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            val eDt = Instant.ofEpochMilli(endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            if (sDt.toLocalDate() == eDt.toLocalDate()) {
-                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
-            } else {
-                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)} – ${eDt.format(dateFmt)} klo ${eDt.format(timeFmt)}"
-            }
-        }
-    }
-
-    private fun extractUserNote(desc: String): String {
-        return desc.substringBefore(CalendarSyncHelper.EVENT_DESCRIPTION_TAG).trim()
-    }
-
-    fun buildModificationDiffLines(item: CalendarChangeItem): List<String> {
-        if (item.type != ChangeType.MODIFIED) return emptyList()
-        val diffs = mutableListOf<String>()
-
-        val oldTitle = item.prevTitle?.trim()
-        if (!oldTitle.isNullOrEmpty() && oldTitle != item.title.trim()) {
-            diffs.add("Otsikko: $oldTitle → ${item.title}")
-        }
-
-        val prevStart = item.prevStartMs
-        val prevEnd = item.prevEndMs
-        if (prevStart != null && prevEnd != null &&
-            (prevStart != item.startMs || prevEnd != item.endMs || item.prevIsAllDay != item.isAllDay)
-        ) {
-            val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
-            val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-            if (!item.prevIsAllDay && !item.isAllDay) {
-                val oldStartDt = Instant.ofEpochMilli(prevStart).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                val oldEndDt = Instant.ofEpochMilli(prevEnd).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                val newStartDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-                val newEndDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-
-                if (oldStartDt.toLocalDate() == newStartDt.toLocalDate() &&
-                    oldEndDt.toLocalDate() == newEndDt.toLocalDate()
-                ) {
-                    val oldTime = "klo ${oldStartDt.format(timeFmt)}–${oldEndDt.format(timeFmt)}"
-                    val newTime = "klo ${newStartDt.format(timeFmt)}–${newEndDt.format(timeFmt)}"
-                    diffs.add("Kellonaika (${newStartDt.format(dateFmt)}): $oldTime → $newTime")
-                } else {
-                    val oldFull = formatRange(prevStart, prevEnd, false)
-                    val newFull = formatRange(item.startMs, item.endMs, false)
-                    diffs.add("Ajankohta: $oldFull → $newFull")
-                }
-            } else {
-                val oldFull = formatRange(prevStart, prevEnd, item.prevIsAllDay)
-                val newFull = formatRange(item.startMs, item.endMs, item.isAllDay)
-                diffs.add("Ajankohta: $oldFull → $newFull")
-            }
-        }
-
-        val oldLoc = item.prevLocation?.trim()
-        val newLoc = item.location.trim()
-        if (oldLoc != null && oldLoc != newLoc) {
-            val fromStr = oldLoc.ifEmpty { "(tyhjä)" }
-            val toStr = newLoc.ifEmpty { "(tyhjä)" }
-            diffs.add("Sijainti: $fromStr → $toStr")
-        }
-
-        val prevDescRaw = item.prevDescription
-        if (prevDescRaw != null) {
-            val oldNote = extractUserNote(prevDescRaw)
-            val newNote = extractUserNote(item.description)
-            if (oldNote != newNote) {
-                val fromStr = oldNote.ifEmpty { "(tyhjä)" }
-                val toStr = newNote.ifEmpty { "(tyhjä)" }
-                diffs.add("Lisätiedot: $fromStr → $toStr")
-            }
-        }
-
-        return diffs
-    }
-
-    fun formatNotificationLine(item: CalendarChangeItem): String {
-        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
-        return when (item.type) {
-            ChangeType.ADDED -> "+ ${item.title} ($whenStr)"
-            ChangeType.REMOVED -> "- ${item.title} ($whenStr)"
-            ChangeType.MODIFIED -> {
-                val diffs = buildModificationDiffLines(item)
-                if (diffs.isNotEmpty()) {
-                    "~ ${item.title}: ${diffs.joinToString("; ")}"
-                } else {
-                    "~ ${item.title} ($whenStr)"
-                }
-            }
-        }
-    }
-
-    fun formatChangeDisplay(item: CalendarChangeItem): String {
-        val tag = when (item.type) {
-            ChangeType.ADDED -> "[LISÄTTY]"
-            ChangeType.MODIFIED -> "[MUOKATTU]"
-            ChangeType.REMOVED -> "[POISTETTU]"
-        }
-        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
-        if (item.type == ChangeType.MODIFIED) {
-            val diffs = buildModificationDiffLines(item)
-            if (diffs.isNotEmpty()) {
-                return "$tag ${item.title}\\n$whenStr\\n${diffs.joinToString("\\n")}"
-            }
-        }
-        return "$tag ${item.title}\\n$whenStr"
-    }"""
-
-    content = replace_idempotent(content, old_format, new_format, "formatChangeDisplay diff output")
-
-    old_revert_mod = """                        val values = ContentValues().apply {
-                            put(CalendarContract.Events.TITLE, prevTitle)
-                            put(CalendarContract.Events.DTSTART, prevStart)
-                            put(CalendarContract.Events.DTEND, prevEnd)
-                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
-                            put(
-                                CalendarContract.Events.EVENT_TIMEZONE,
-                                if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
-                            )
-                        }"""
-
-    new_revert_mod = """                        val values = ContentValues().apply {
-                            put(CalendarContract.Events.TITLE, prevTitle)
-                            if (item.prevLocation != null) {
-                                put(CalendarContract.Events.EVENT_LOCATION, item.prevLocation)
-                            }
-                            if (item.prevDescription != null) {
-                                put(CalendarContract.Events.DESCRIPTION, item.prevDescription)
-                            }
-                            put(CalendarContract.Events.DTSTART, prevStart)
-                            put(CalendarContract.Events.DTEND, prevEnd)
-                            put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
-                            put(
-                                CalendarContract.Events.EVENT_TIMEZONE,
-                                if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
-                            )
-                        }"""
-
-    content = replace_idempotent(content, old_revert_mod, new_revert_mod, "revertSingleChange location & description")
-
-    if content != orig:
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-        print(f"Päivitetty: {path}")
-    else:
-        print(f"Jo ajan tasalla: {path}")
-
-
-def update_calendar_sync_helper():
-    path = "app/src/main/java/fi/numeron/vuorovahti/CalendarSyncHelper.kt"
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    orig = content
-
-    old_update_block = """                resolver.update(uri, values, null, null)
-
-                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.MODIFIED,
-                        calendarId = calendarId,
-                        eventId = targetMatch.eventId,
-                        title = desiredTitle,
-                        startMs = effectiveStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave,
-                        prevTitle = targetMatch.title,
-                        prevStartMs = targetMatch.startMs,
-                        prevEndMs = targetMatch.endMs,
-                        prevIsAllDay = targetMatch.isAllDay
-                    )
+    # 1. Estetään amplitude.com-analytiikkapyynnöt shouldInterceptRequest-metodissa
+    old_block_list = """                val blockedCssPatterns = listOf(
+                    "/content/css/cssvisma",
+                    "/content/css/login.css",
+                    "/content/css/calendar.css",
+                    "/content/css/buttons.css",
+                    "/bundles/cssworktimestamping",
+                    "/content/css/worktimestamping.css",
+                    "/content/css/listlayout.css",
+                    "fonts.googleapis.com"
                 )"""
 
-    new_update_block = """                resolver.update(uri, values, null, null)
-
-                val contentChanged =
-                    targetMatch.title != desiredTitle ||
-                    targetMatch.location != shift.location ||
-                    targetMatch.description != fullDescription ||
-                    targetMatch.startMs != effectiveStartMs ||
-                    targetMatch.endMs != newEndMs ||
-                    targetMatch.isAllDay != shift.isAllDayLeave
-
-                if (contentChanged) {
-                    detectedChanges.add(
-                        CalendarChangeItem(
-                            id = UUID.randomUUID().toString(),
-                            type = ChangeType.MODIFIED,
-                            calendarId = calendarId,
-                            eventId = targetMatch.eventId,
-                            title = desiredTitle,
-                            startMs = effectiveStartMs,
-                            endMs = newEndMs,
-                            isAllDay = shift.isAllDayLeave,
-                            location = shift.location,
-                            description = fullDescription,
-                            prevTitle = targetMatch.title,
-                            prevStartMs = targetMatch.startMs,
-                            prevEndMs = targetMatch.endMs,
-                            prevIsAllDay = targetMatch.isAllDay,
-                            prevLocation = targetMatch.location,
-                            prevDescription = targetMatch.description
-                        )
+    new_block_list = """                if (url.contains("amplitude.com")) {
+                    return WebResourceResponse(
+                        "application/javascript",
+                        "UTF-8",
+                        ByteArrayInputStream(ByteArray(0))
                     )
-                }"""
-
-    content = replace_idempotent(content, old_update_block, new_update_block, "MODIFIED CalendarChangeItem details")
-
-    old_add_block = """                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.ADDED,
-                        calendarId = calendarId,
-                        eventId = newEventId,
-                        title = desiredTitle,
-                        startMs = newStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave
-                    )
-                )"""
-
-    new_add_block = """                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.ADDED,
-                        calendarId = calendarId,
-                        eventId = newEventId,
-                        title = desiredTitle,
-                        startMs = newStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave,
-                        location = shift.location,
-                        description = fullDescription
-                    )
-                )"""
-
-    content = replace_idempotent(content, old_add_block, new_add_block, "ADDED CalendarChangeItem details")
-
-    old_rem_block = """            detectedChanges.add(
-                CalendarChangeItem(
-                    id = UUID.randomUUID().toString(),
-                    type = ChangeType.REMOVED,
-                    calendarId = calendarId,
-                    eventId = null,
-                    title = removedEx.title,
-                    startMs = removedEx.startMs,
-                    endMs = removedEx.endMs,
-                    isAllDay = removedEx.isAllDay,
-                    prevTitle = removedEx.title,
-                    prevStartMs = removedEx.startMs,
-                    prevEndMs = removedEx.endMs,
-                    prevIsAllDay = removedEx.isAllDay
-                )
-            )"""
-
-    new_rem_block = """            detectedChanges.add(
-                CalendarChangeItem(
-                    id = UUID.randomUUID().toString(),
-                    type = ChangeType.REMOVED,
-                    calendarId = calendarId,
-                    eventId = null,
-                    title = removedEx.title,
-                    startMs = removedEx.startMs,
-                    endMs = removedEx.endMs,
-                    isAllDay = removedEx.isAllDay,
-                    location = removedEx.location,
-                    description = removedEx.description,
-                    prevTitle = removedEx.title,
-                    prevStartMs = removedEx.startMs,
-                    prevEndMs = removedEx.endMs,
-                    prevIsAllDay = removedEx.isAllDay,
-                    prevLocation = removedEx.location,
-                    prevDescription = removedEx.description
-                )
-            )"""
-
-    content = replace_idempotent(content, old_rem_block, new_rem_block, "REMOVED CalendarChangeItem details")
-
-    if content != orig:
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-        print(f"Päivitetty: {path}")
-    else:
-        print(f"Jo ajan tasalla: {path}")
-
-
-def update_shift_reminder_receiver():
-    path = "app/src/main/java/fi/numeron/vuorovahti/ShiftReminderReceiver.kt"
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    orig = content
-
-    old_notif = """            val summary = CalendarChangeTracker.formatSummary(changes)
-            val detailsLines = changes.take(5).joinToString("\\n") {
-                val prefix = when (it.type) {
-                    ChangeType.ADDED -> "+ "
-                    ChangeType.MODIFIED -> "~ "
-                    ChangeType.REMOVED -> "- "
                 }
-                "$prefix${it.title}"
+
+                val blockedCssPatterns = listOf(
+                    "/content/css/cssvisma",
+                    "/content/css/login.css",
+                    "/content/css/calendar.css",
+                    "/content/css/buttons.css",
+                    "/bundles/cssworktimestamping",
+                    "/content/css/worktimestamping.css",
+                    "/content/css/listlayout.css",
+                    "fonts.googleapis.com"
+                )"""
+
+    assert old_block_list in content, "Ei löydetty blockedCssPatterns-kohtaa"
+    content = content.replace(old_block_list, new_block_list, 1)
+
+    # 2. Näytetään saldo leimaussivun yläosassa ennen leimausnappia (ei lukitusrajaa)
+    old_balance_css = """            /* === 5. TYÖAIKALEIMAUS === */
+            .punching-balance-overview-container {
+                display: none !important;
             }"""
 
-    new_notif = """            val summary = CalendarChangeTracker.formatSummary(changes)
-            val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
-            if (changes.size > 6) {
-                shownItems.add("...ja ${changes.size - 6} muuta muutosta")
+    new_balance_css = """            /* === 5. TYÖAIKALEIMAUS === */
+            #numeron-balance-card {
+                background-color: #182332 !important;
+                border: 1px solid #2A394A !important;
+                border-radius: 12px !important;
+                padding: 12px 14px !important;
+                margin-bottom: 14px !important;
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
             }
-            val detailsLines = shownItems.joinToString("\\n")
-            val collapsedText = shownItems.firstOrNull()
-                ?: "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia\""""
+            #numeron-balance-card .bal-label {
+                font-size: 12px !important;
+                text-transform: uppercase !important;
+                letter-spacing: 0.05em !important;
+                color: #94A3B8 !important;
+                font-weight: 600 !important;
+            }
+            #numeron-balance-card .bal-value {
+                font-size: 18px !important;
+                font-weight: 700 !important;
+                color: #38BDF8 !important;
+            }
+            .punching-balance-overview-container {
+                display: none !important;
+            }"""
 
-    content = replace_idempotent(content, old_notif, new_notif, "ShiftReminderReceiver notification details")
+    assert old_balance_css in content, "Ei löydetty punching-balance-overview-container CSS-kohtaa"
+    content = content.replace(old_balance_css, new_balance_css, 1)
 
-    old_builder = """                .setContentTitle("Google-kalenteria päivitetty ($summary)")
-                .setContentText("Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia")
-                .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))"""
+    # 3. Lisätään JS-injektioon:
+    #    - Saldon haku /WorktimeStamping/GetPersonBalance -päätepisteestä ja sijoitus ennen leimausnappia
+    #    - Kalenterin kuukausinäkymään suora "Lisää toive" -pikavalikko päiväsolun napautuksesta
+    old_js_tail = """                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
+                        if (cancelBtn) {
+                            var panel = document.getElementById('forgotStampPanel');
+                            if (panel) {
+                                panel.classList.remove('force-open');
+                                panel.classList.add('minimized');
+                                panel.style.top = '100%';
+                            }
+                        }
+                    }, true);
+                }
+            })();"""
 
-    new_builder = """                .setContentTitle("Google-kalenteria päivitetty ($summary)")
-                .setContentText(collapsedText)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))"""
+    new_js_tail = """                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
+                        if (cancelBtn) {
+                            var panel = document.getElementById('forgotStampPanel');
+                            if (panel) {
+                                panel.classList.remove('force-open');
+                                panel.classList.add('minimized');
+                                panel.style.top = '100%';
+                            }
+                        }
+                    }, true);
+                }
 
-    content = replace_idempotent(content, old_builder, new_builder, "ShiftReminderReceiver NotificationCompat text")
+                // === SALDO LEIMAUSSIVUN YLÄOSAAN ENNEN LEIMAUSNAPPIA ===
+                if (window.location.pathname.toLowerCase().indexOf('/worktimestamping') !== -1 && !window._balanceLoaderInstalled) {
+                    window._balanceLoaderInstalled = true;
+                    var punchBtn = document.getElementById('punchButton');
+                    var targetContainer = punchBtn ? (punchBtn.closest('.panel, .whitebox, .stamping-box, .card, form') || punchBtn.parentElement) : null;
+                    if (targetContainer && !document.getElementById('numeron-balance-card')) {
+                        var card = document.createElement('div');
+                        card.id = 'numeron-balance-card';
+                        card.innerHTML = '<span class="bal-label">Työaikasaldo</span><span class="bal-value" id="numeron-balance-val">Haetaan...</span>';
+                        targetContainer.parentNode.insertBefore(card, targetContainer);
 
-    if content != orig:
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(content)
-        print(f"Päivitetty: {path}")
-    else:
-        print(f"Jo ajan tasalla: {path}")
-# ==============================================================================
-# === POISTETTAVA KORJAUSOSIO PÄÄTTYY ===
-# ==============================================================================
+                        var tokenInput = document.querySelector('input[name="__RequestVerificationToken"]');
+                        var token = tokenInput ? tokenInput.value : '';
+                        fetch('/WorktimeStamping/GetPersonBalance', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                                'X-Requested-With': 'XMLHttpRequest'
+                            },
+                            body: '__RequestVerificationToken=' + encodeURIComponent(token)
+                        })
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
+                            var valEl = document.getElementById('numeron-balance-val');
+                            if (!valEl) return;
+                            var raw = (data && (data.Balance || data.balance || data.FormattedBalance || data.formattedBalance || data.TotalBalance || data.totalBalance || data.Value || data.value));
+                            if (raw === undefined || raw === null) {
+                                // Jos kentän nimi vaihtelee, etsitään ensimmäinen saldoa muistuttava arvo
+                                if (typeof data === 'string' || typeof data === 'number') {
+                                    raw = data;
+                                } else if (data && typeof data === 'object') {
+                                    for (var k in data) {
+                                        if (Object.prototype.hasOwnProperty.call(data, k) && k.toLowerCase().indexOf('balance') !== -1 && data[k] !== null) {
+                                            raw = data[k];
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (raw !== undefined && raw !== null && String(raw).trim() !== '') {
+                                var txt = String(raw).trim();
+                                valEl.textContent = txt;
+                                if (txt.indexOf('-') === 0) {
+                                    valEl.style.color = '#F87171';
+                                } else {
+                                    valEl.style.color = '#34D399';
+                                }
+                            } else {
+                                card.style.display = 'none';
+                            }
+                        })
+                        .catch(function() {
+                            var c = document.getElementById('numeron-balance-card');
+                            if (c) c.style.display = 'none';
+                        });
+                    }
+                }
 
+                // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
+                if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1 && !window._quickRequestInstalled) {
+                    window._quickRequestInstalled = true;
+                    var monthsFi = {
+                        'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
+                        'toukokuu': 5, 'kesäkuu': 6, 'heinäkuu': 7, 'elokuu': 8,
+                        'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12
+                    };
+                    document.addEventListener('click', function(e) {
+                        if (e.target && e.target.closest('a, button')) return;
+                        var cell = e.target && e.target.closest('table.month-table td.month-day');
+                        if (!cell || cell.classList.contains('day-different-month')) return;
+
+                        var dayEl = cell.querySelector('.dayNum');
+                        var monthHeader = document.getElementById('monthText');
+                        if (!dayEl || !monthHeader) return;
+
+                        var dayNum = parseInt((dayEl.textContent || '').trim(), 10);
+                        var parts = (monthHeader.textContent || '').trim().toLowerCase().split(/\s+/);
+                        if (!dayNum || parts.length < 2) return;
+
+                        var mNum = monthsFi[parts[0]];
+                        var yNum = parseInt(parts[1], 10);
+                        if (!mNum || !yNum) return;
+
+                        var isoDate = yNum + '-' + String(mNum).padStart(2, '0') + '-' + String(dayNum).padStart(2, '0');
+                        var fiDate = String(dayNum).padStart(2, '0') + '.' + String(mNum).padStart(2, '0') + '.' + yNum;
+
+                        var existing = document.getElementById('numeron-quick-req-bar');
+                        if (existing) existing.remove();
+
+                        var bar = document.createElement('div');
+                        bar.id = 'numeron-quick-req-bar';
+                        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:1100;background:#182332;border:1px solid #38BDF8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,0.6);';
+                        bar.innerHTML = '<span style="color:#F1F5F9;font-size:14px;font-weight:600;">' + fiDate + '</span>' +
+                            '<div style="display:flex;gap:8px;">' +
+                            '<button id="numeron-qr-close" type="button" style="background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;padding:8px 12px;font-size:13px;">Sulje</button>' +
+                            '<a href="/PersonRequests/Edit?calendarView=Month&returnValue=' + isoDate + '" style="background:#1982C4;color:#FFFFFF !important;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;text-decoration:none;">+ Lisää toive</a>' +
+                            '</div>';
+                        document.body.appendChild(bar);
+                        document.getElementById('numeron-qr-close').onclick = function() { bar.remove(); };
+                    }, false);
+                }
+            })();"""
+
+    assert old_js_tail in content, "Ei löydetty injectDarkTheme JS-loppukohtaa"
+    content = content.replace(old_js_tail, new_js_tail, 1)
+
+    assert content != original, "Tiedostoon ei tullut muutoksia"
+    main_act_path.write_text(content, encoding="utf-8")
+    print(f"Päivitetty onnistuneesti: {main_act_path}")
 
 if __name__ == "__main__":
-    bump_version_code()
-    update_calendar_change_tracker()
-    update_calendar_sync_helper()
-    update_shift_reminder_receiver()
+    main()
