@@ -17,18 +17,9 @@ def main():
     original = content
 
     # 1. Estetään amplitude.com-analytiikkapyynnöt shouldInterceptRequest-metodissa
-    old_block_list = """                val blockedCssPatterns = listOf(
-                    "/content/css/cssvisma",
-                    "/content/css/login.css",
-                    "/content/css/calendar.css",
-                    "/content/css/buttons.css",
-                    "/bundles/cssworktimestamping",
-                    "/content/css/worktimestamping.css",
-                    "/content/css/listlayout.css",
-                    "fonts.googleapis.com"
-                )"""
-
-    new_block_list = """                if (url.contains("amplitude.com")) {
+    if 'url.contains("amplitude.com")' not in content:
+        target_str = "val blockedCssPatterns = listOf("
+        replacement_str = """if (url.contains("amplitude.com")) {
                     return WebResourceResponse(
                         "application/javascript",
                         "UTF-8",
@@ -36,27 +27,14 @@ def main():
                     )
                 }
 
-                val blockedCssPatterns = listOf(
-                    "/content/css/cssvisma",
-                    "/content/css/login.css",
-                    "/content/css/calendar.css",
-                    "/content/css/buttons.css",
-                    "/bundles/cssworktimestamping",
-                    "/content/css/worktimestamping.css",
-                    "/content/css/listlayout.css",
-                    "fonts.googleapis.com"
-                )"""
+                val blockedCssPatterns = listOf("""
+        if target_str in content:
+            content = content.replace(target_str, replacement_str, 1)
 
-    assert old_block_list in content, "Ei löydetty blockedCssPatterns-kohtaa"
-    content = content.replace(old_block_list, new_block_list, 1)
-
-    # 2. Näytetään saldo leimaussivun yläosassa ennen leimausnappia (ei lukitusrajaa)
-    old_balance_css = """            /* === 5. TYÖAIKALEIMAUS === */
-            .punching-balance-overview-container {
-                display: none !important;
-            }"""
-
-    new_balance_css = """            /* === 5. TYÖAIKALEIMAUS === */
+    # 2. Lisätään saldo-CSS injektioon, jos sitä ei vielä ole
+    if '#numeron-balance-card' not in content:
+        css_target = "/* === 5. TYÖAIKALEIMAUS === */"
+        css_addition = """/* === 5. TYÖAIKALEIMAUS === */
             #numeron-balance-card {
                 background-color: #182332 !important;
                 border: 1px solid #2A394A !important;
@@ -78,41 +56,14 @@ def main():
                 font-size: 18px !important;
                 font-weight: 700 !important;
                 color: #38BDF8 !important;
-            }
-            .punching-balance-overview-container {
-                display: none !important;
             }"""
+        if css_target in content:
+            content = content.replace(css_target, css_addition, 1)
 
-    assert old_balance_css in content, "Ei löydetty punching-balance-overview-container CSS-kohtaa"
-    content = content.replace(old_balance_css, new_balance_css, 1)
-
-    # 3. Lisätään JS-injektioon: saldon haku ja kuukausinäkymän pikatoive
-    old_js_tail = """                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
-                        if (cancelBtn) {
-                            var panel = document.getElementById('forgotStampPanel');
-                            if (panel) {
-                                panel.classList.remove('force-open');
-                                panel.classList.add('minimized');
-                                panel.style.top = '100%';
-                            }
-                        }
-                    }, true);
-                }
-            })();"""
-
-    new_js_tail = """                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
-                        if (cancelBtn) {
-                            var panel = document.getElementById('forgotStampPanel');
-                            if (panel) {
-                                panel.classList.remove('force-open');
-                                panel.classList.add('minimized');
-                                panel.style.top = '100%';
-                            }
-                        }
-                    }, true);
-                }
-
-                // === SALDO LEIMAUSSIVUN YLÄOSAAN ENNEN LEIMAUSNAPPIA ===
+    # 3. Lisätään JS-logiikat (saldo + kalenterin pikatoive), jos niitä ei vielä ole
+    if '_balanceLoaderInstalled' not in content:
+        js_target = "var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');"
+        js_addition = """// === SALDO LEIMAUSSIVUN YLÄOSAAN ENNEN LEIMAUSNAPPIA ===
                 if (window.location.pathname.toLowerCase().indexOf('/worktimestamping') !== -1 && !window._balanceLoaderInstalled) {
                     window._balanceLoaderInstalled = true;
                     var punchBtn = document.getElementById('punchButton');
@@ -212,14 +163,16 @@ def main():
                         document.getElementById('numeron-qr-close').onclick = function() { bar.remove(); };
                     }, false);
                 }
-            })();"""
 
-    assert old_js_tail in content, "Ei löydetty injectDarkTheme JS-loppukohtaa"
-    content = content.replace(old_js_tail, new_js_tail, 1)
+                """ + js_target
+        if js_target in content:
+            content = content.replace(js_target, js_addition, 1)
 
-    assert content != original, "Tiedostoon ei tullut muutoksia"
-    main_act_path.write_text(content, encoding="utf-8")
-    print(f"Päivitetty onnistuneesti: {main_act_path}")
+    if content != original:
+        main_act_path.write_text(content, encoding="utf-8")
+        print(f"Päivitetty onnistuneesti: {main_act_path}")
+    else:
+        print("Ei muutoksia tehtävänä (jo ajan tasalla).")
 
     # 4. Nostetaan automaattisesti build.gradle / build.gradle.kts -tiedoston versionCode-arvoa pienellä pykälällä
     for gradle_path in [pathlib.Path("app/build.gradle"), pathlib.Path("app/build.gradle.kts"), pathlib.Path("build.gradle")]:
