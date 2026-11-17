@@ -656,6 +656,74 @@ object SettingsDialogHelper {
         }
         actionCard.addView(btnTestNotif)
 
+        // === KORTTI 5: VAPAAEHTOINEN TUKI (GOOGLE PLAY BILLING) ===
+        val supportCard = createSectionCard("Tue sovelluksen kehitystä")
+
+        supportCard.addView(TextView(context).apply {
+            text = "Vuorovahti on maksuton ja itsenäinen harrastusprojekti. Kaikki ominaisuudet ovat aina kaikkien käytössä. Halutessasi voit tukea kehitystä vapaaehtoisella kertamaksulla:"
+            textSize = 12.5f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setPadding(0, 0, 0, dp(8))
+        })
+
+        val tvSupportStatus = TextView(context).apply {
+            text = "Haetaan tukivaihtoehtoja Google Playsta..."
+            textSize = 12f
+            setTextColor(Color.parseColor("#94A3B8"))
+            setPadding(0, dp(2), 0, dp(4))
+        }
+        supportCard.addView(tvSupportStatus)
+
+        val tipButtonsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        supportCard.addView(tipButtonsContainer)
+
+        lateinit var billingHelper: SupportBillingHelper
+
+        val btnFallbackSupport = Button(context).apply {
+            text = "☕ Tarjoa kehittäjälle kahvit"
+            styleButton(this, "#1E3A5F", "#0284C7", "#E0F2FE")
+            setOnClickListener {
+                tvSupportStatus.setTextColor(Color.parseColor("#38BDF8"))
+                tvSupportStatus.text = "Yhdistetään Google Playhin..."
+                billingHelper.startConnection()
+            }
+        }
+        tipButtonsContainer.addView(btnFallbackSupport)
+
+        billingHelper = SupportBillingHelper(
+            context = context,
+            onProductsLoaded = { products ->
+                tvSupportStatus.setTextColor(Color.parseColor("#94A3B8"))
+                tvSupportStatus.text = "Valitse sopiva kertatuki (Google Play):"
+                tipButtonsContainer.removeAllViews()
+
+                val icons = listOf("☕", "🥐", "🍲")
+                products.forEachIndexed { index, product ->
+                    val price = product.oneTimePurchaseOfferDetails?.formattedPrice ?: ""
+                    val title = product.name.ifBlank { "Tue kehitystä" }
+                    val icon = icons.getOrElse(index) { "☕" }
+                    val btnTier = Button(context).apply {
+                        text = if (price.isNotEmpty()) "$icon $title — $price" else "$icon $title"
+                        styleButton(this, "#1E3A5F", "#0284C7", "#E0F2FE")
+                        setOnClickListener {
+                            billingHelper.launchPurchase(product)
+                        }
+                    }
+                    tipButtonsContainer.addView(btnTier)
+                }
+            },
+            onStatusMessage = { msg, isSuccess ->
+                tvSupportStatus.setTextColor(
+                    Color.parseColor(if (isSuccess) "#10B981" else "#94A3B8")
+                )
+                tvSupportStatus.text = msg
+            }
+        )
+        billingHelper.startConnection()
+
+
         // Alapalkki: Peruuta ja Tallenna
         val bottomDivider = View(context).apply {
             setBackgroundColor(Color.parseColor("#2A394A"))
@@ -818,6 +886,7 @@ object SettingsDialogHelper {
             }
         }
 
+        dialog.setOnDismissListener { billingHelper.destroy() }
         dialog.show()
     }
 

@@ -19,7 +19,7 @@ android {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 36
-        versionCode = 76
+        versionCode = 77
         versionName = "3.0"
     }
 
@@ -51,4 +51,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
 }
