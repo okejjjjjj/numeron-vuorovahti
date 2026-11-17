@@ -181,14 +181,13 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             }
 
             val summary = CalendarChangeTracker.formatSummary(changes)
-            val detailsLines = changes.take(5).joinToString("\n") {
-                val prefix = when (it.type) {
-                    ChangeType.ADDED -> "+ "
-                    ChangeType.MODIFIED -> "~ "
-                    ChangeType.REMOVED -> "- "
-                }
-                "$prefix${it.title}"
+            val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
+            if (changes.size > 6) {
+                shownItems.add("...ja ${changes.size - 6} muuta muutosta")
             }
+            val detailsLines = shownItems.joinToString("\n")
+            val collapsedText = shownItems.firstOrNull()
+                ?: "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia"
 
             // Avaa sovelluksessa suoraan muutosten muokkaus- ja perumisikkunan
             val manageIntent = Intent(context, MainActivity::class.java).apply {
@@ -216,7 +215,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
                 .setContentTitle("Google-kalenteria päivitetty ($summary)")
-                .setContentText("Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia")
+                .setContentText(collapsedText)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)

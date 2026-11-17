@@ -362,22 +362,36 @@ object CalendarSyncHelper {
                 }
                 resolver.update(uri, values, null, null)
 
-                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.MODIFIED,
-                        calendarId = calendarId,
-                        eventId = targetMatch.eventId,
-                        title = desiredTitle,
-                        startMs = effectiveStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave,
-                        prevTitle = targetMatch.title,
-                        prevStartMs = targetMatch.startMs,
-                        prevEndMs = targetMatch.endMs,
-                        prevIsAllDay = targetMatch.isAllDay
+                val contentChanged =
+                    targetMatch.title != desiredTitle ||
+                    targetMatch.location != shift.location ||
+                    targetMatch.description != fullDescription ||
+                    targetMatch.startMs != effectiveStartMs ||
+                    targetMatch.endMs != newEndMs ||
+                    targetMatch.isAllDay != shift.isAllDayLeave
+
+                if (contentChanged) {
+                    detectedChanges.add(
+                        CalendarChangeItem(
+                            id = UUID.randomUUID().toString(),
+                            type = ChangeType.MODIFIED,
+                            calendarId = calendarId,
+                            eventId = targetMatch.eventId,
+                            title = desiredTitle,
+                            startMs = effectiveStartMs,
+                            endMs = newEndMs,
+                            isAllDay = shift.isAllDayLeave,
+                            location = shift.location,
+                            description = fullDescription,
+                            prevTitle = targetMatch.title,
+                            prevStartMs = targetMatch.startMs,
+                            prevEndMs = targetMatch.endMs,
+                            prevIsAllDay = targetMatch.isAllDay,
+                            prevLocation = targetMatch.location,
+                            prevDescription = targetMatch.description
+                        )
                     )
-                )
+                }
             } else {
                 val values = ContentValues().apply {
                     put(CalendarContract.Events.CALENDAR_ID, calendarId)
@@ -404,7 +418,9 @@ object CalendarSyncHelper {
                         title = desiredTitle,
                         startMs = newStartMs,
                         endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave
+                        isAllDay = shift.isAllDayLeave,
+                        location = shift.location,
+                        description = fullDescription
                     )
                 )
             }
@@ -425,10 +441,14 @@ object CalendarSyncHelper {
                     startMs = removedEx.startMs,
                     endMs = removedEx.endMs,
                     isAllDay = removedEx.isAllDay,
+                    location = removedEx.location,
+                    description = removedEx.description,
                     prevTitle = removedEx.title,
                     prevStartMs = removedEx.startMs,
                     prevEndMs = removedEx.endMs,
-                    prevIsAllDay = removedEx.isAllDay
+                    prevIsAllDay = removedEx.isAllDay,
+                    prevLocation = removedEx.location,
+                    prevDescription = removedEx.description
                 )
             )
         }

@@ -41,11 +41,15 @@ data class CalendarChangeItem(
     val startMs: Long,
     val endMs: Long,
     val isAllDay: Boolean,
-    // Edeltävät arvot kumoamista varten (MODIFIED / REMOVED)
+    val location: String = "",
+    val description: String = "",
+    // Edeltävät arvot kumoamista ja vertailua varten (MODIFIED / REMOVED)
     val prevTitle: String? = null,
     val prevStartMs: Long? = null,
     val prevEndMs: Long? = null,
     val prevIsAllDay: Boolean = false,
+    val prevLocation: String? = null,
+    val prevDescription: String? = null,
     val timestampMs: Long = System.currentTimeMillis()
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
@@ -57,10 +61,14 @@ data class CalendarChangeItem(
         put("startMs", startMs)
         put("endMs", endMs)
         put("isAllDay", isAllDay)
+        put("location", location)
+        put("description", description)
         if (prevTitle != null) put("prevTitle", prevTitle)
         if (prevStartMs != null) put("prevStartMs", prevStartMs)
         if (prevEndMs != null) put("prevEndMs", prevEndMs)
         put("prevIsAllDay", prevIsAllDay)
+        if (prevLocation != null) put("prevLocation", prevLocation)
+        if (prevDescription != null) put("prevDescription", prevDescription)
         put("timestampMs", timestampMs)
     }
 
@@ -76,10 +84,14 @@ data class CalendarChangeItem(
                 startMs = obj.getLong("startMs"),
                 endMs = obj.getLong("endMs"),
                 isAllDay = obj.getBoolean("isAllDay"),
+                location = obj.optString("location", ""),
+                description = obj.optString("description", ""),
                 prevTitle = if (obj.has("prevTitle")) obj.getString("prevTitle") else null,
                 prevStartMs = if (obj.has("prevStartMs")) obj.getLong("prevStartMs") else null,
                 prevEndMs = if (obj.has("prevEndMs")) obj.getLong("prevEndMs") else null,
                 prevIsAllDay = obj.optBoolean("prevIsAllDay", false),
+                prevLocation = if (obj.has("prevLocation")) obj.getString("prevLocation") else null,
+                prevDescription = if (obj.has("prevDescription")) obj.getString("prevDescription") else null,
                 timestampMs = obj.optLong("timestampMs", System.currentTimeMillis())
             )
         }
@@ -135,26 +147,122 @@ object CalendarChangeTracker {
         return parts.joinToString(", ")
     }
 
-    fun formatChangeDisplay(item: CalendarChangeItem): String {
-        val tag = when (item.type) {
-            ChangeType.ADDED -> "[LISÄTTY]"
-            ChangeType.MODIFIED -> "[MUOKATTU]"
-            ChangeType.REMOVED -> "[POISTETTU]"
-        }
+    private fun formatRange(startMs: Long, endMs: Long, isAllDay: Boolean): String {
         val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
         val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
-        val whenStr = if (item.isAllDay) {
-            val sDate = Instant.ofEpochMilli(item.startMs).atZone(ZoneOffset.UTC).toLocalDate()
-            val eDate = Instant.ofEpochMilli(item.endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
+        return if (isAllDay) {
+            val sDate = Instant.ofEpochMilli(startMs).atZone(ZoneOffset.UTC).toLocalDate()
+            val eDate = Instant.ofEpochMilli(endMs).atZone(ZoneOffset.UTC).toLocalDate().minusDays(1)
             if (eDate.isAfter(sDate)) {
                 "${sDate.format(dateFmt)} – ${eDate.format(dateFmt)} (koko päivä)"
             } else {
                 "${sDate.format(dateFmt)} (koko päivä)"
             }
         } else {
-            val sDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            val eDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
-            "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
+            val sDt = Instant.ofEpochMilli(startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            val eDt = Instant.ofEpochMilli(endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+            if (sDt.toLocalDate() == eDt.toLocalDate()) {
+                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)}–${eDt.format(timeFmt)}"
+            } else {
+                "${sDt.format(dateFmt)} klo ${sDt.format(timeFmt)} – ${eDt.format(dateFmt)} klo ${eDt.format(timeFmt)}"
+            }
+        }
+    }
+
+    private fun extractUserNote(desc: String): String {
+        return desc.substringBefore(CalendarSyncHelper.EVENT_DESCRIPTION_TAG).trim()
+    }
+
+    fun buildModificationDiffLines(item: CalendarChangeItem): List<String> {
+        if (item.type != ChangeType.MODIFIED) return emptyList()
+        val diffs = mutableListOf<String>()
+
+        val oldTitle = item.prevTitle?.trim()
+        if (!oldTitle.isNullOrEmpty() && oldTitle != item.title.trim()) {
+            diffs.add("Otsikko: $oldTitle → ${item.title}")
+        }
+
+        val prevStart = item.prevStartMs
+        val prevEnd = item.prevEndMs
+        if (prevStart != null && prevEnd != null &&
+            (prevStart != item.startMs || prevEnd != item.endMs || item.prevIsAllDay != item.isAllDay)
+        ) {
+            val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            val timeFmt = DateTimeFormatter.ofPattern("HH:mm")
+            if (!item.prevIsAllDay && !item.isAllDay) {
+                val oldStartDt = Instant.ofEpochMilli(prevStart).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val oldEndDt = Instant.ofEpochMilli(prevEnd).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val newStartDt = Instant.ofEpochMilli(item.startMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+                val newEndDt = Instant.ofEpochMilli(item.endMs).atZone(ZoneId.systemDefault()).toLocalDateTime()
+
+                if (oldStartDt.toLocalDate() == newStartDt.toLocalDate() &&
+                    oldEndDt.toLocalDate() == newEndDt.toLocalDate()
+                ) {
+                    val oldTime = "klo ${oldStartDt.format(timeFmt)}–${oldEndDt.format(timeFmt)}"
+                    val newTime = "klo ${newStartDt.format(timeFmt)}–${newEndDt.format(timeFmt)}"
+                    diffs.add("Kellonaika (${newStartDt.format(dateFmt)}): $oldTime → $newTime")
+                } else {
+                    val oldFull = formatRange(prevStart, prevEnd, false)
+                    val newFull = formatRange(item.startMs, item.endMs, false)
+                    diffs.add("Ajankohta: $oldFull → $newFull")
+                }
+            } else {
+                val oldFull = formatRange(prevStart, prevEnd, item.prevIsAllDay)
+                val newFull = formatRange(item.startMs, item.endMs, item.isAllDay)
+                diffs.add("Ajankohta: $oldFull → $newFull")
+            }
+        }
+
+        val oldLoc = item.prevLocation?.trim()
+        val newLoc = item.location.trim()
+        if (oldLoc != null && oldLoc != newLoc) {
+            val fromStr = oldLoc.ifEmpty { "(tyhjä)" }
+            val toStr = newLoc.ifEmpty { "(tyhjä)" }
+            diffs.add("Sijainti: $fromStr → $toStr")
+        }
+
+        val prevDescRaw = item.prevDescription
+        if (prevDescRaw != null) {
+            val oldNote = extractUserNote(prevDescRaw)
+            val newNote = extractUserNote(item.description)
+            if (oldNote != newNote) {
+                val fromStr = oldNote.ifEmpty { "(tyhjä)" }
+                val toStr = newNote.ifEmpty { "(tyhjä)" }
+                diffs.add("Lisätiedot: $fromStr → $toStr")
+            }
+        }
+
+        return diffs
+    }
+
+    fun formatNotificationLine(item: CalendarChangeItem): String {
+        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
+        return when (item.type) {
+            ChangeType.ADDED -> "+ ${item.title} ($whenStr)"
+            ChangeType.REMOVED -> "- ${item.title} ($whenStr)"
+            ChangeType.MODIFIED -> {
+                val diffs = buildModificationDiffLines(item)
+                if (diffs.isNotEmpty()) {
+                    "~ ${item.title}: ${diffs.joinToString("; ")}"
+                } else {
+                    "~ ${item.title} ($whenStr)"
+                }
+            }
+        }
+    }
+
+    fun formatChangeDisplay(item: CalendarChangeItem): String {
+        val tag = when (item.type) {
+            ChangeType.ADDED -> "[LISÄTTY]"
+            ChangeType.MODIFIED -> "[MUOKATTU]"
+            ChangeType.REMOVED -> "[POISTETTU]"
+        }
+        val whenStr = formatRange(item.startMs, item.endMs, item.isAllDay)
+        if (item.type == ChangeType.MODIFIED) {
+            val diffs = buildModificationDiffLines(item)
+            if (diffs.isNotEmpty()) {
+                return "$tag ${item.title}\n$whenStr\n${diffs.joinToString("\n")}"
+            }
         }
         return "$tag ${item.title}\n$whenStr"
     }
@@ -190,6 +298,12 @@ object CalendarChangeTracker {
                     if (!prevTitle.isNullOrEmpty() && prevStart != null && prevEnd != null && prevStart > 0L && prevEnd > 0L) {
                         val values = ContentValues().apply {
                             put(CalendarContract.Events.TITLE, prevTitle)
+                            if (item.prevLocation != null) {
+                                put(CalendarContract.Events.EVENT_LOCATION, item.prevLocation)
+                            }
+                            if (item.prevDescription != null) {
+                                put(CalendarContract.Events.DESCRIPTION, item.prevDescription)
+                            }
                             put(CalendarContract.Events.DTSTART, prevStart)
                             put(CalendarContract.Events.DTEND, prevEnd)
                             put(CalendarContract.Events.ALL_DAY, if (item.prevIsAllDay) 1 else 0)
