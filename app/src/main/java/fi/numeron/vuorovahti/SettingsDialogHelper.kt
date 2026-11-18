@@ -25,7 +25,6 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
-import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.work.WorkManager
 import java.time.Instant
@@ -355,16 +354,59 @@ object SettingsDialogHelper {
             }
         }
 
+        fun launchSystemSettingsIntent(intent: android.content.Intent): Boolean {
+            return try {
+                if (context !is android.app.Activity) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         fun openExactAlarmSettings() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                try {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                            android.net.Uri.parse("package:${context.packageName}")
-                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+                val opened = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        pkgUri
                     )
-                } catch (_: Exception) {
+                )
+                if (!opened) {
+                    launchSystemSettingsIntent(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            pkgUri
+                        )
+                    )
+                }
+            }
+        }
+
+        fun openBatteryOptimizationSettings() {
+            val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+            val openedDirect = launchSystemSettingsIntent(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    pkgUri
+                )
+            )
+            if (!openedDirect) {
+                val openedList = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                    )
+                )
+                if (!openedList) {
+                    launchSystemSettingsIntent(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            pkgUri
+                        )
+                    )
                 }
             }
         }
@@ -898,9 +940,7 @@ object SettingsDialogHelper {
             val missingCacheForReminders = newShiftReminders && !CalendarSyncHelper.hasCachedShifts(context)
             val shouldTriggerSync = turnedOnSync || (!initialShiftReminders && missingCacheForReminders)
 
-            fun finishSave(extraMsg: String? = null, forceSync: Boolean = false) {
-                val statusMsg = extraMsg ?: if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
-                Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
+            fun finishSave(forceSync: Boolean = false) {
                 dialog.dismiss()
                 onSaved()
                 if ((shouldTriggerSync || forceSync) && !isDemo && savedUser.isNotEmpty() && savedPass.isNotEmpty() && normalizedUrl.isNotEmpty()) {
@@ -920,11 +960,11 @@ object SettingsDialogHelper {
                         .setTitle("Poistetaanko kalenterimerkinnät?")
                         .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
                         .setPositiveButton("Poista merkinnät") { _, _ ->
-                            val deletedCount = CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
-                            finishSave("Asetukset tallennettu (poistettu $deletedCount merkintää)", forceSync = missingCacheForReminders)
+                            CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
+                            finishSave(forceSync = missingCacheForReminders)
                         }
                         .setNegativeButton("Jätä kalenteriin") { _, _ ->
-                            finishSave("Asetukset tallennettu")
+                            finishSave()
                         }
                         .setCancelable(false)
                         .show()
@@ -965,7 +1005,8 @@ object SettingsDialogHelper {
             if (nowIgnoringBattery) {
                 batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
                 batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
-                batteryOptSubTv.visibility = View.GONE
+                batteryOptSubTv.text = "Napauta avataksesi virransäästöasetukset"
+                batteryOptSubTv.visibility = View.VISIBLE
             } else {
                 batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
                 batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
