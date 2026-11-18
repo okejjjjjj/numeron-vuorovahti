@@ -1033,12 +1033,13 @@ import kotlinx.coroutines.withContext'''
         "SettingsDialogHelper: ei-blokkaava WorkManager-aikataulun luku",
         already_marker="val (nextSyncValueTv, _)",
     )
-    old_sync_var = r'''        val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
+        old_sync_var = r'''        val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
         val nextSyncMs = resolveNextSyncMs(context, prefs.getLong("next_calendar_sync_ms", 0L))
-        val lastReminderMs = prefs.getLong("last_reminder_sent_ms", 0L)'''
+        val lastNotifMs = prefs.getLong("last_reminder_sent_ms", 0L)'''
     new_sync_var = r'''        val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
-        val lastReminderMs = prefs.getLong("last_reminder_sent_ms", 0L)'''
+        val lastNotifMs = prefs.getLong("last_reminder_sent_ms", 0L)'''
     text, c3 = replace_exact(text, old_sync_var, new_sync_var, "SettingsDialogHelper: poista synkroninen resolveNextSyncMs-kutsu")
+
     old_test_fn = r'''    private fun testLoginWithHiddenWebView(
         context: Context,
         baseUrl: String,
