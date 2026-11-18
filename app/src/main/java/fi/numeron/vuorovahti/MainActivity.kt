@@ -1437,22 +1437,7 @@ class MainActivity : AppCompatActivity() {
                     document.head.appendChild(style);
                 }
                 style.innerHTML = '$safeCss';
-                // === LISÄTTÄVÄT PÄIVÄNTOIVOTUKSET TYÖVUOROILLE ===
-                (function addShiftGreeting() {
-                    var container = document.querySelector('.punching-shift-container');
-                    if (!container || document.getElementById('numeron-login-greeting')) return;
-                    var hour = new Date().getHours();
-                    var greeting = "Hyvää työpäivää!";
-                    if (hour < 10) greeting = "Hyvää huomenta, mukavaa työvirettä!";
-                    else if (hour >= 14 && hour < 20) greeting = "Hyvää iltapäivää, jaksuja vuoroon!";
-                    else if (hour >= 20 || hour < 4) greeting = "Hyvää iltaa ja tsemppiä vuoroon!";
 
-                    var greetDiv = document.createElement('div');
-                    greetDiv.id = 'numeron-login-greeting';
-                    greetDiv.style.cssText = 'font-size:13px;color:#38BDF8;font-weight:600;margin-bottom:8px;padding:6px 10px;background:#111923;border:1px solid #2A394A;border-radius:8px;';
-                    greetDiv.textContent = '✨ ' + greeting;
-                    container.insertBefore(greetDiv, container.firstChild);
-                })();
                 // === TÄNÄÄN-OSION MUOTOILU KOLMELLE RIVILLE ===
                 (function formatTodayShiftBox() {
                     function capFirst(str) {
@@ -1663,6 +1648,25 @@ class MainActivity : AppCompatActivity() {
                 }
             })();
         """.trimIndent()
+        
+                // === PÄIVÄNTOIVOTUS KIRJAUTUMISNÄKYMÄÄN ===
+                if (window.location.pathname.toLowerCase().indexOf('/login') !== -1) {
+                    var blurBox = document.querySelector('.blurbox h1') || document.querySelector('.whitebox');
+                    if (blurBox && !document.getElementById('numeron-login-greeting')) {
+                        var hour = new Date().getHours();
+                        var greeting = "Hyvää päivää!";
+                        if (hour < 10) greeting = "Hyvää huomenta!";
+                        else if (hour >= 14 && hour < 20) greeting = "Hyvää iltapäivää!";
+                        else if (hour >= 20 || hour < 4) greeting = "Hyvää iltaa!";
+
+                        var greetDiv = document.createElement('div');
+                        greetDiv.id = 'numeron-login-greeting';
+                        greetDiv.style.cssText = 'text-align:center;font-size:16px;color:#38BDF8;font-weight:600;margin-bottom:14px;padding:8px;background:#182332;border:1px solid #2A394A;border-radius:10px;';
+                        greetDiv.textContent = '✨ ' + greeting + ' Tervetuloa Vuorovahtiin';
+                        blurBox.parentNode.insertBefore(greetDiv, blurBox);
+                    }
+                }
+    
         view?.evaluateJavascript(js, null)
     }
 
