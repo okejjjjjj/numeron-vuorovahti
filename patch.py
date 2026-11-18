@@ -123,7 +123,7 @@ def patch_main_activity(path: pathlib.Path) -> bool:
     }"""
 
     if "ACTION_REQUEST_SCHEDULE_EXACT_ALARM" not in content:
-        print(f"[INFO] Ensikäynnistyksen hälytyslupakehotus on jo poistettu: {path}")
+        print(f"[INFO] MainActivity.kt on jo ajan tasalla: {path}")
         return False
 
     if old_block not in content:
@@ -142,14 +142,220 @@ def patch_main_activity(path: pathlib.Path) -> bool:
 
 def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
     content, newline = read_normalized(path)
+    original = content
+    updated = content
 
-    if "fun openExactAlarmSettings()" in content or "exactAlarmNoticeBox" in content:
-        print(f"[INFO] Tarkkojen hälytysten valinnainen asetuslinkitys on jo lisätty: {path}")
-        return False
+    # 1. Poista turha Toast-import, tallennuksen Toast-ilmoitus ja käyttämättömät viestiparametrit
+    updated = updated.replace("import android.widget.Toast\n", "")
 
-    replacements = [
-        (
-            """        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null) {
+    old_finish_save_block = """            fun finishSave(extraMsg: String? = null, forceSync: Boolean = false) {
+                val statusMsg = extraMsg ?: if (isDemo) "Demotila aktiivinen" else "Tallennettu ($normalizedUrl)"
+                Toast.makeText(context, statusMsg, Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                onSaved()
+                if ((shouldTriggerSync || forceSync) && !isDemo && savedUser.isNotEmpty() && savedPass.isNotEmpty() && normalizedUrl.isNotEmpty()) {
+                    ShiftReminderReceiver.triggerImmediateSync(context)
+                }
+            }
+
+            if (initialSyncCalendar && !newSyncCalendar) {
+                val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(context)
+                val futureCount = if (targetCalId != null) {
+                    CalendarSyncHelper.countFutureSyncedEvents(context, targetCalId)
+                } else {
+                    0
+                }
+                if (targetCalId != null && futureCount > 0) {
+                    AlertDialog.Builder(context)
+                        .setTitle("Poistetaanko kalenterimerkinnät?")
+                        .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
+                        .setPositiveButton("Poista merkinnät") { _, _ ->
+                            val deletedCount = CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
+                            finishSave("Asetukset tallennettu (poistettu $deletedCount merkintää)", forceSync = missingCacheForReminders)
+                        }
+                        .setNegativeButton("Jätä kalenteriin") { _, _ ->
+                            finishSave("Asetukset tallennettu")
+                        }
+                        .setCancelable(false)
+                        .show()
+                } else {
+                    finishSave()
+                }
+            } else {
+                finishSave()
+            }"""
+
+    prev_finish_save_block = """            fun finishSave(extraMsg: String? = null, forceSync: Boolean = false) {
+                dialog.dismiss()
+                onSaved()
+                if ((shouldTriggerSync || forceSync) && !isDemo && savedUser.isNotEmpty() && savedPass.isNotEmpty() && normalizedUrl.isNotEmpty()) {
+                    ShiftReminderReceiver.triggerImmediateSync(context)
+                }
+            }
+
+            if (initialSyncCalendar && !newSyncCalendar) {
+                val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(context)
+                val futureCount = if (targetCalId != null) {
+                    CalendarSyncHelper.countFutureSyncedEvents(context, targetCalId)
+                } else {
+                    0
+                }
+                if (targetCalId != null && futureCount > 0) {
+                    AlertDialog.Builder(context)
+                        .setTitle("Poistetaanko kalenterimerkinnät?")
+                        .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
+                        .setPositiveButton("Poista merkinnät") { _, _ ->
+                            val deletedCount = CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
+                            finishSave("Asetukset tallennettu (poistettu $deletedCount merkintää)", forceSync = missingCacheForReminders)
+                        }
+                        .setNegativeButton("Jätä kalenteriin") { _, _ ->
+                            finishSave("Asetukset tallennettu")
+                        }
+                        .setCancelable(false)
+                        .show()
+                } else {
+                    finishSave()
+                }
+            } else {
+                finishSave()
+            }"""
+
+    clean_finish_save_block = """            fun finishSave(forceSync: Boolean = false) {
+                dialog.dismiss()
+                onSaved()
+                if ((shouldTriggerSync || forceSync) && !isDemo && savedUser.isNotEmpty() && savedPass.isNotEmpty() && normalizedUrl.isNotEmpty()) {
+                    ShiftReminderReceiver.triggerImmediateSync(context)
+                }
+            }
+
+            if (initialSyncCalendar && !newSyncCalendar) {
+                val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(context)
+                val futureCount = if (targetCalId != null) {
+                    CalendarSyncHelper.countFutureSyncedEvents(context, targetCalId)
+                } else {
+                    0
+                }
+                if (targetCalId != null && futureCount > 0) {
+                    AlertDialog.Builder(context)
+                        .setTitle("Poistetaanko kalenterimerkinnät?")
+                        .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
+                        .setPositiveButton("Poista merkinnät") { _, _ ->
+                            CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
+                            finishSave(forceSync = missingCacheForReminders)
+                        }
+                        .setNegativeButton("Jätä kalenteriin") { _, _ ->
+                            finishSave()
+                        }
+                        .setCancelable(false)
+                        .show()
+                } else {
+                    finishSave()
+                }
+            } else {
+                finishSave()
+            }"""
+
+    if old_finish_save_block in updated:
+        updated = updated.replace(old_finish_save_block, clean_finish_save_block, 1)
+    elif prev_finish_save_block in updated:
+        updated = updated.replace(prev_finish_save_block, clean_finish_save_block, 1)
+    elif "Toast.makeText" in updated:
+        updated = re.sub(
+            r'^[ \t]*Toast\.makeText\([^\n]*\)\.show\(\)[ \t]*\n?',
+            "",
+            updated,
+            flags=re.MULTILINE,
+        )
+
+    # 2. Päivitä järjestelmäasetusten avausapufunktiot (sis. varareitit akun virransäästöasetuksiin)
+    new_helpers = """        fun canScheduleExactAlarmsCompat(): Boolean {
+            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
+            } else {
+                true
+            }
+        }
+
+        fun launchSystemSettingsIntent(intent: android.content.Intent): Boolean {
+            return try {
+                if (context !is android.app.Activity) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        fun openExactAlarmSettings() {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+                val opened = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                        pkgUri
+                    )
+                )
+                if (!opened) {
+                    launchSystemSettingsIntent(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            pkgUri
+                        )
+                    )
+                }
+            }
+        }
+
+        fun openBatteryOptimizationSettings() {
+            val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+            val openedDirect = launchSystemSettingsIntent(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    pkgUri
+                )
+            )
+            if (!openedDirect) {
+                val openedList = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                    )
+                )
+                if (!openedList) {
+                    launchSystemSettingsIntent(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            pkgUri
+                        )
+                    )
+                }
+            }
+        }"""
+
+    prev_helpers = """        fun canScheduleExactAlarmsCompat(): Boolean {
+            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
+            } else {
+                true
+            }
+        }
+
+        fun openExactAlarmSettings() {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }"""
+
+    unpatched_add_status_row = """        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null) {
             val box = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 background = makeCardBg("#111923", "#233040", 8)
@@ -182,30 +388,9 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
                 })
             }
             parent.addView(box)
-        }""",
-            """        fun canScheduleExactAlarmsCompat(): Boolean {
-            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
-            } else {
-                true
-            }
-        }
+        }"""
 
-        fun openExactAlarmSettings() {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                try {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                            android.net.Uri.parse("package:${context.packageName}")
-                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                } catch (_: Exception) {
-                }
-            }
-        }
-
-        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null): Pair<TextView, TextView> {
+    patched_add_status_row = """        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null): Pair<TextView, TextView> {
             val box = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 background = makeCardBg("#111923", "#233040", 8)
@@ -240,10 +425,26 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
             box.addView(subTv)
             parent.addView(box)
             return Pair(valueTv, subTv)
-        }""",
-        ),
-        (
-            """        addStatusRow(
+        }"""
+
+    if "fun openBatteryOptimizationSettings()" not in updated:
+        if prev_helpers in updated:
+            updated = updated.replace(prev_helpers, new_helpers, 1)
+        elif unpatched_add_status_row in updated:
+            updated = updated.replace(
+                unpatched_add_status_row,
+                new_helpers + "\n\n" + patched_add_status_row,
+                1,
+            )
+        else:
+            print(
+                f"[VIRHE] Status-apufunktioiden ankkuria ei löytynyt tiedostosta {path}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # 3. Päivitä Kortti 1 (tarkat vuorohälytykset + akun virransäästörajoitusten napautus)
+    old_unpatched_card1 = """        addStatusRow(
             statusCard,
             "Seuraava leimausnotifikaatio lähetetään",
             when {
@@ -286,8 +487,44 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
             "Akun virransäästörajoitukset",
             if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
             if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
-        )""",
-            """        val (nextNotifValueTv, nextNotifSubTv) = addStatusRow(
+        )
+        if (!ignoringBatteryOpt) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }"""
+
+    old_prev_patched_card1 = """        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        val (batteryOptValueTv, batteryOptSubTv) = addStatusRow(
+            statusCard,
+            "Akun virransäästörajoitukset",
+            if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
+            if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+        )
+        if (!ignoringBatteryOpt) {
+            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }"""
+
+    new_card1_full = """        val (nextNotifValueTv, nextNotifSubTv) = addStatusRow(
             statusCard,
             "Seuraava leimausnotifikaatio lähetetään",
             when {
@@ -321,11 +558,39 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
             statusCard,
             "Akun virransäästörajoitukset",
             if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
-            if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
-        )""",
-        ),
-        (
-            """        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
+            if (ignoringBatteryOpt) "Napauta avataksesi virransäästöasetukset" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+        )
+        statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+            openBatteryOptimizationSettings()
+        }"""
+
+    new_card1_battery_only = """        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        val (batteryOptValueTv, batteryOptSubTv) = addStatusRow(
+            statusCard,
+            "Akun virransäästörajoitukset",
+            if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
+            if (ignoringBatteryOpt) "Napauta avataksesi virransäästöasetukset" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+        )
+        statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+            openBatteryOptimizationSettings()
+        }"""
+
+    if "openBatteryOptimizationSettings()" not in updated:
+        if old_unpatched_card1 in updated:
+            updated = updated.replace(old_unpatched_card1, new_card1_full, 1)
+        elif old_prev_patched_card1 in updated:
+            updated = updated.replace(old_prev_patched_card1, new_card1_battery_only, 1)
+        else:
+            print(
+                f"[VIRHE] Akun virransäästörajoitusten lohkoa ei löytynyt tiedostosta {path}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    # 4. Lisää valinnainen tarkkojen hälytysten huomautuslaatikko Korttiin 4 (jos puuttuu)
+    if "exactAlarmNoticeBox" not in updated:
+        old_card4 = """        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
             inputType = InputType.TYPE_CLASS_NUMBER
@@ -333,8 +598,9 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
             styleEditText(this)
         }
         reminderDetailsContainer.addView(editReminder)
-        actionCard.addView(reminderDetailsContainer)""",
-            """        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
+        actionCard.addView(reminderDetailsContainer)"""
+
+        new_card4 = """        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
             inputType = InputType.TYPE_CLASS_NUMBER
@@ -376,12 +642,50 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
         })
         reminderDetailsContainer.addView(exactAlarmNoticeBox)
 
-        actionCard.addView(reminderDetailsContainer)""",
-        ),
-        (
-            """        dialog.setOnDismissListener { billingHelper.destroy() }
-        dialog.show()""",
-            """        var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat()
+        actionCard.addView(reminderDetailsContainer)"""
+
+        if old_card4 not in updated:
+            print(
+                f"[VIRHE] Muistutuskortin ankkuria ei löytynyt tiedostosta {path}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        updated = updated.replace(old_card4, new_card4, 1)
+
+    # 5. Lisää tai päivitä refreshSystemPermissionStates()
+    old_battery_refresh = """            val nowIgnoringBattery = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            if (nowIgnoringBattery) {
+                batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
+                batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
+                batteryOptSubTv.visibility = View.GONE
+            } else {
+                batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
+                batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
+                batteryOptSubTv.text = "Varmistaa tausta-ajojen toiminnan lepotilassa"
+                batteryOptSubTv.visibility = View.VISIBLE
+            }"""
+
+    new_battery_refresh = """            val nowIgnoringBattery = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            if (nowIgnoringBattery) {
+                batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
+                batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
+                batteryOptSubTv.text = "Napauta avataksesi virransäästöasetukset"
+                batteryOptSubTv.visibility = View.VISIBLE
+            } else {
+                batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
+                batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
+                batteryOptSubTv.text = "Varmistaa tausta-ajojen toiminnan lepotilassa"
+                batteryOptSubTv.visibility = View.VISIBLE
+            }"""
+
+    if "fun refreshSystemPermissionStates()" in updated:
+        if old_battery_refresh in updated:
+            updated = updated.replace(old_battery_refresh, new_battery_refresh, 1)
+    else:
+        old_dialog_show = """        dialog.setOnDismissListener { billingHelper.destroy() }
+        dialog.show()"""
+
+        new_dialog_show = """        var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat()
 
         fun refreshSystemPermissionStates() {
             val nowExactAllowed = canScheduleExactAlarmsCompat()
@@ -410,7 +714,8 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
             if (nowIgnoringBattery) {
                 batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
                 batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
-                batteryOptSubTv.visibility = View.GONE
+                batteryOptSubTv.text = "Napauta avataksesi virransäästöasetukset"
+                batteryOptSubTv.visibility = View.VISIBLE
             } else {
                 batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
                 batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
@@ -447,23 +752,23 @@ def patch_settings_dialog_helper(path: pathlib.Path) -> bool:
         }
 
         dialog.setOnDismissListener { billingHelper.destroy() }
-        dialog.show()""",
-        ),
-    ]
+        dialog.show()"""
 
-    updated = content
-    for idx, (old, new) in enumerate(replacements, start=1):
-        if old not in updated:
+        if old_dialog_show not in updated:
             print(
-                f"[VIRHE] Ankkurikohtaa #{idx} ei löytynyt tiedostosta {path}. Muutoksia ei tallennettu.",
+                f"[VIRHE] Dialogin näyttökohdan ankkuria ei löytynyt tiedostosta {path}.",
                 file=sys.stderr,
             )
             sys.exit(1)
-        updated = updated.replace(old, new, 1)
+        updated = updated.replace(old_dialog_show, new_dialog_show, 1)
+
+    if updated == original:
+        print(f"[INFO] SettingsDialogHelper.kt on jo ajan tasalla: {path}")
+        return False
 
     verify_kotlin_delimiters(path, updated)
     write_preserved(path, updated, newline)
-    print(f"[OK] Päivitetty tarkkojen hälytysten asetukset ja automaattinen tilapäivitys: {path}")
+    print(f"[OK] Poistettu turhat Toastit ja korjattu virransäästöasetusten avaus: {path}")
     return True
 
 
