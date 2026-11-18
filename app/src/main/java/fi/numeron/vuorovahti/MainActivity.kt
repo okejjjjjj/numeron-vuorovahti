@@ -55,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var pendingAction: Action = Action.NONE
+    private var inFlightStampAction: Action = Action.NONE
+    private var lastSessionRecoveryMs: Long = 0L
     private var currentTab: Tab = Tab.STAMP
     private var syncStep = 0
     private val collectedCalendarHtml = mutableListOf<String>()
@@ -293,8 +295,10 @@ class MainActivity : AppCompatActivity() {
                 val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
                 val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
+                val isAutoStamping = (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT)
+                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 25L * 60 * 1000L
 
-                if (existingCookies.isNullOrBlank() || sessionAgeMs > 11L * 60 * 60 * 1000L) {
+                if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
                     scope.launch {
                         val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
                         if (ok) {
@@ -312,16 +316,19 @@ class MainActivity : AppCompatActivity() {
     private fun setupBottomBar() {
         btnNavStamp.setOnClickListener {
             pendingAction = Action.NONE
+            inFlightStampAction = Action.NONE
             navigateToTab(Tab.STAMP)
         }
 
         btnNavRequests.setOnClickListener {
             pendingAction = Action.NONE
+            inFlightStampAction = Action.NONE
             navigateToTab(Tab.REQUESTS)
         }
 
         btnNavShifts.setOnClickListener {
             pendingAction = Action.NONE
+            inFlightStampAction = Action.NONE
             navigateToTab(Tab.SHIFTS)
         }
 
@@ -519,6 +526,18 @@ class MainActivity : AppCompatActivity() {
                 onManageChangesRequested = { runOnUiThread { CalendarChangeTracker.showManageChangesDialog(this) } }
             ),
             "DemoBridge"
+        )
+
+        webView.addJavascriptInterface(
+            object {
+                @android.webkit.JavascriptInterface
+                fun onSessionExpired() {
+                    runOnUiThread {
+                        handleWebSessionExpired()
+                    }
+                }
+            },
+            "SessionBridge"
         )
 
         CookieManager.getInstance().setAcceptCookie(true)
@@ -1382,11 +1401,29 @@ class MainActivity : AppCompatActivity() {
                 if (!window._sessionWatchInstalled) {
                     window._sessionWatchInstalled = true;
                     setInterval(function() {
-                        var modal = document.getElementById('session-expired-modal');
-                        if (modal && (modal.classList.contains('in') || modal.classList.contains('show') || modal.style.display === 'block')) {
-                            window.location.href = '/Login/Login';
+                        if (window._sessionExpiredHandled) return;
+                        var expired = false;
+                        var candidates = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
+                        for (var i = 0; i < candidates.length; i++) {
+                            var m = candidates[i];
+                            var style = window.getComputedStyle(m);
+                            var isVisible = (m.offsetParent !== null) || (style && style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0);
+                            if (!isVisible) continue;
+                            var txt = (m.innerText || m.textContent || '').toLowerCase();
+                            if (m.id === 'session-expired-modal' || m.id === 'sessionExpiredModal' || txt.indexOf('istunto vanhentunut') !== -1 || txt.indexOf('session expired') !== -1) {
+                                expired = true;
+                                break;
+                            }
                         }
-                    }, 300);
+                        if (expired) {
+                            window._sessionExpiredHandled = true;
+                            if (window.SessionBridge && typeof window.SessionBridge.onSessionExpired === 'function') {
+                                window.SessionBridge.onSessionExpired();
+                            } else {
+                                window.location.href = '/Login/Login';
+                            }
+                        }
+                    }, 250);
                 }
                 if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
@@ -1501,6 +1538,47 @@ class MainActivity : AppCompatActivity() {
 
 
 
+
+    private fun handleWebSessionExpired() {
+        val now = System.currentTimeMillis()
+        if (now - lastSessionRecoveryMs < 3000L) return
+        lastSessionRecoveryMs = now
+
+        if (inFlightStampAction == Action.STAMP_IN || inFlightStampAction == Action.STAMP_OUT) {
+            pendingAction = inFlightStampAction
+            inFlightStampAction = Action.NONE
+            Toast.makeText(this, "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()
+        }
+
+        getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putLong("last_valid_session_ms", 0L)
+            .apply()
+
+        val baseUrl = getBaseUrl()
+        if (baseUrl.isEmpty()) return
+
+        startSnapshotTransition {
+            scope.launch {
+                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                if (ok) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                    val targetUrl = if (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT) {
+                        "$baseUrl/WorktimeStamping"
+                    } else {
+                        webView.url ?: "$baseUrl/WorktimeStamping"
+                    }
+                    webView.loadUrl(targetUrl)
+                } else {
+                    webView.loadUrl("$baseUrl/Login/Login")
+                }
+            }
+        }
+    }
+
     private fun handleStampingPage(attempt: Int = 0) {
         if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
 
@@ -1542,6 +1620,7 @@ class MainActivity : AppCompatActivity() {
 
             when {
                 status == "CLICKED" -> {
+                    inFlightStampAction = pendingAction
                     pendingAction = Action.NONE
                     val beforeBtn = obj?.optString("btn", "") ?: ""
                     val beforeRow = obj?.optString("row", "") ?: ""
@@ -1550,6 +1629,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 status == "WRONG_DIRECTION" -> {
                     pendingAction = Action.NONE
+                    inFlightStampAction = Action.NONE
                     Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
@@ -1572,11 +1652,28 @@ class MainActivity : AppCompatActivity() {
         val targetLower = targetText.lowercase()
         val verifyJs = """
             (function() {
+                var expired = false;
+                var modals = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
+                for (var i = 0; i < modals.length; i++) {
+                    var m = modals[i];
+                    var st = window.getComputedStyle(m);
+                    var vis = (m.offsetParent !== null) || (st && st.display !== 'none' && st.visibility !== 'hidden');
+                    if (vis) {
+                        var t = (m.innerText || m.textContent || '').toLowerCase();
+                        if (m.id === 'session-expired-modal' || m.id === 'sessionExpiredModal' || t.indexOf('istunto vanhentunut') !== -1 || t.indexOf('session expired') !== -1) {
+                            expired = true;
+                            break;
+                        }
+                    }
+                }
+                if (window.location.pathname.toLowerCase().indexOf('/login') !== -1) {
+                    expired = true;
+                }
                 var btn = document.getElementById('punchButton');
                 var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
                 var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
                 var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-                return JSON.stringify({ btn: btnText, row: firstRow });
+                return JSON.stringify({ btn: btnText, row: firstRow, expired: expired });
             })();
         """.trimIndent()
 
@@ -1595,12 +1692,19 @@ class MainActivity : AppCompatActivity() {
                 }
                 val nowBtn = obj?.optString("btn", "") ?: ""
                 val nowRow = obj?.optString("row", "") ?: ""
+                val sessionExpired = obj?.optBoolean("expired", false) ?: false
+
+                if (sessionExpired) {
+                    handleWebSessionExpired()
+                    return@evaluateJavascript
+                }
 
                 val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
                     nowBtn.lowercase().indexOf(targetLower) == -1
                 val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
 
                 if (buttonFlipped || rowUpdated) {
+                    inFlightStampAction = Action.NONE
                     CookieManager.getInstance().flush()
                     Toast.makeText(this, "Leimaus vahvistettu ($targetText)", Toast.LENGTH_SHORT).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 600L)
