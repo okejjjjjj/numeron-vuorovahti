@@ -202,25 +202,72 @@ class QuickStampActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private fun buildGreeting(isEnding: Boolean): String {
+        private fun buildGreeting(isEnding: Boolean): String {
         val hour = LocalTime.now().hour
-        return if (isEnding) {
+        val options = if (isEnding) {
             when (hour) {
-                in 5..10 -> "Hyvää huomenta, kiitos työvuorosta!"
-                in 11..16 -> "Hyvää loppupäivää, kiitos työvuorosta!"
-                in 17..21 -> "Hyvää iltaa, kiitos työvuorosta!"
-                else -> "Hyvää yötä, kiitos työvuorosta!"
+                in 5..10 -> listOf(
+                    "Hyvää huomenta, kiitos yövuorosta!",
+                    "Aamu valkenee – hyvää lepoa vuoron päälle!",
+                    "Kiitos yövuorosta, nyt ansaituille unille!",
+                    "Hyvää huomenta ja rentouttavaa vapaata!"
+                )
+                in 11..16 -> listOf(
+                    "Kiitos työvuorosta, mukavaa loppupäivää!",
+                    "Vuoro paketissa – nauti loppupäivästä!",
+                    "Hyvää loppupäivää, kiitos panoksestasi!",
+                    "Työt tehty tältä erää, rentoa loppupäivää!"
+                )
+                in 17..21 -> listOf(
+                    "Hyvää iltaa, kiitos työvuorosta!",
+                    "Iltavuoro takana – mukavaa iltaa!",
+                    "Kiitos tästä vuorosta, rentouttavaa iltaa!",
+                    "Vuoro pulkassa, rauhallista iltaa!"
+                )
+                else -> listOf(
+                    "Hyvää yötä, kiitos työvuorosta!",
+                    "Kiitos myöhäisestä vuorosta, hyvää yötä!",
+                    "Työpäivä taputeltu – rauhallista yötä!",
+                    "Hyvää yötä ja mukavaa palautumista!"
+                )
             }
         } else {
             when (hour) {
-                in 4..9 -> "Hyvää huomenta ja mukavaa työvuoroa!"
-                in 10..13 -> "Hyvää päivää ja mukavaa työvuoroa!"
-                in 14..17 -> "Hyvää iltapäivää ja mukavaa työvuoroa!"
-                in 18..21 -> "Hyvää iltaa ja tsemppiä vuoroon!"
-                else -> "Hyvää yötä ja tsemppiä yövuoroon!"
+                in 4..9 -> listOf(
+                    "Hyvää huomenta ja mukavaa työvuoroa!",
+                    "Huomenta! Virkeää mieltä ja sujuvaa vuoroa!",
+                    "Hyvää huomenta, tästä se työpäivä lähtee!",
+                    "Mukavaa aamuvuoroa ja hyvää työvirettä!"
+                )
+                in 10..13 -> listOf(
+                    "Hyvää päivää ja mukavaa työvuoroa!",
+                    "Mukavaa työpäivää, hommat rullaamaan!",
+                    "Hyvää päivää ja sujuvaa vuoroa!",
+                    "Tsemppiä päivän vuoroon!"
+                )
+                in 14..17 -> listOf(
+                    "Hyvää iltapäivää ja mukavaa iltavuoroa!",
+                    "Tsemppiä iltavuoroon ja hyvää työvirettä!",
+                    "Hyvää iltapäivää, sujuvaa vuoroa!",
+                    "Mukavaa ja sujuvaa iltavuoroa!"
+                )
+                in 18..21 -> listOf(
+                    "Hyvää iltaa ja tsemppiä vuoroon!",
+                    "Rauhallista ja sujuvaa iltaa vuoroon!",
+                    "Hyvää iltaa, hyvää virettä työvuoroon!",
+                    "Tsemppiä alkavaan vuoroon!"
+                )
+                else -> listOf(
+                    "Hyvää yötä ja tsemppiä yövuoroon!",
+                    "Rauhallista yövuoroa ja hyvää virettä!",
+                    "Tsemppiä yövuoroon, kyllä se siitä rullaa!",
+                    "Sujuvaa ja rauhallista yötä töihin!"
+                )
             }
         }
+        return options.random()
     }
+
 
     private fun resetToLoadingUi() {
         progressBar.visibility = View.VISIBLE
