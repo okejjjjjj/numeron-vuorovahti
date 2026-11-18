@@ -946,7 +946,10 @@ class MainActivity : AppCompatActivity() {
                 background-color: rgba(0, 0, 0, 0.65) !important;
                 z-index: 1040 !important;
             }
-
+            #waitPunch, .fog-of-war-punch, #wait, .container .fog-of-war {
+                display: none !important;
+            }
+            
             /* === 6. TOIVEET & KENDO UI === */
             label[for="filterOptions"] {
                 color: #F1F5F9 !important;
