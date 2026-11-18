@@ -222,7 +222,9 @@ object DemoModeHelper {
                 .putString("demo_stamp_history", newHistory)
                 .apply()
 
-            Toast.makeText(context, "Demoleimaus suoritettu: $actionLabel ($nowTime)", Toast.LENGTH_SHORT).show()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "Demoleimaus suoritettu: $actionLabel ($nowTime)", Toast.LENGTH_SHORT).show()
+            }
             onReloadNeeded()
         }
 
@@ -234,7 +236,9 @@ object DemoModeHelper {
             val newList = "$dateStr | $type | Odottaa käsittelyä\n$oldList"
             prefs.edit().putString("demo_requests", newList).apply()
 
-            Toast.makeText(context, "Demotoive lisätty: $type", Toast.LENGTH_SHORT).show()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                Toast.makeText(context, "Demotoive lisätty: $type", Toast.LENGTH_SHORT).show()
+            }
             onReloadNeeded()
         }
 

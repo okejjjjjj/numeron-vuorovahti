@@ -49,5 +49,10 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".ShiftReminderReceiver$InternalReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
     </application>
 </manifest>

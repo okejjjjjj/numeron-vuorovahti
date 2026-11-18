@@ -38,37 +38,50 @@ class ShiftReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-
-        // 1. Puhelin käynnistyi uudelleen TAI sovellus päivitettiin (MY_PACKAGE_REPLACED)
         if (action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             CalendarSyncHelper.scheduleShiftReminders(context)
             ensureBackgroundSyncScheduled(context)
-            return
         }
+    }
 
-        // 3. Käyttäjä painoi kalenterimuutos-ilmoituksesta "Peru kaikki" suoraan ilmoituksesta
-        if (action == ACTION_REVERT_ALL_CALENDAR_CHANGES) {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            nm.cancel(NOTIF_ID_CALENDAR_CHANGES)
-            val count = CalendarChangeTracker.revertAllChanges(context)
-            Toast.makeText(context, "Peruttu $count kalenterimuutosta", Toast.LENGTH_LONG).show()
-            return
-        }
+    class InternalReceiver : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.action
 
-        // 4. Ajastettu tai testattu työvuorohälytys laukesi
-        val title = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"
-        val timeStr = intent.getStringExtra("SHIFT_TIME") ?: ""
-        val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+            if (action == ACTION_REVERT_ALL_CALENDAR_CHANGES) {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(NOTIF_ID_CALENDAR_CHANGES)
+                val appCtx = context.applicationContext
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val count = CalendarChangeTracker.revertAllChanges(appCtx)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(appCtx, "Peruttu $count kalenterimuutosta", Toast.LENGTH_LONG).show()
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                return
+            }
 
-        showReminderNotification(context, title, timeStr, isEnding)
+            if (action != ACTION_SHIFT_REMINDER) return
 
-        val appCtx = context.applicationContext
-        val pendingResult = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                BackgroundAuthHelper.ensureAuthenticatedSession(appCtx)
-            } finally {
-                pendingResult.finish()
+            val title = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"
+            val timeStr = intent.getStringExtra("SHIFT_TIME") ?: ""
+            val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+
+            ShiftReminderReceiver().showReminderNotification(context, title, timeStr, isEnding)
+
+            val appCtx = context.applicationContext
+            val pendingResult = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    BackgroundAuthHelper.ensureAuthenticatedSession(appCtx)
+                } finally {
+                    pendingResult.finish()
+                }
             }
         }
     }
@@ -166,6 +179,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        const val ACTION_SHIFT_REMINDER = "fi.numeron.vuorovahti.ACTION_SHIFT_REMINDER"
         const val ACTION_REVERT_ALL_CALENDAR_CHANGES = "fi.numeron.vuorovahti.ACTION_REVERT_ALL_CALENDAR_CHANGES"
         const val NOTIF_ID_CALENDAR_CHANGES = 4001
 
@@ -202,7 +216,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             )
 
             // Suora pikatoiminto ilmoituksesta: Peru kaikki muutokset
-            val revertAllIntent = Intent(context, ShiftReminderReceiver::class.java).apply {
+            val revertAllIntent = Intent(context, InternalReceiver::class.java).apply {
                 action = ACTION_REVERT_ALL_CALENDAR_CHANGES
             }
             val revertAllPi = PendingIntent.getBroadcast(
@@ -312,7 +326,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 putExtra("OPEN_REQUESTS", true)
             }
             val pi = PendingIntent.getActivity(
-                context, id, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                context, 3000 + id, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notif = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -332,8 +346,7 @@ class BackgroundSyncWorker(
     params: WorkerParameters
 ) : CoroutineWorker(appContext, params) {
 
-    @SuppressLint("SetJavaScriptEnabled")
-    override suspend fun doWork(): Result = withContext(Dispatchers.Main) {
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (DemoModeHelper.isDemoEnabled(appContext)) {
             return@withContext Result.success()
         }
@@ -341,8 +354,6 @@ class BackgroundSyncWorker(
         val prefs = appContext.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val rawUser = SecureCredentialManager.getUsername(appContext) ?: ""
         val rawPass = SecureCredentialManager.getPassword(appContext) ?: ""
-        val user = rawUser.replace("\\", "\\\\").replace("'", "\\'")
-        val pass = rawPass.replace("\\", "\\\\").replace("'", "\\'")
         val baseUrl = UrlNormalizer.getSavedBaseUrl(appContext)
         val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
         val shiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
@@ -353,7 +364,9 @@ class BackgroundSyncWorker(
             return@withContext Result.success()
         }
 
-        if (rawUser.isEmpty() || rawPass.isEmpty() || baseUrl.isEmpty()) return@withContext Result.failure()
+        if (rawUser.isEmpty() || rawPass.isEmpty() || baseUrl.isEmpty()) {
+            return@withContext Result.failure()
+        }
 
         val needShifts = syncCalendar || shiftReminders
         val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(appContext) else null
@@ -362,114 +375,48 @@ class BackgroundSyncWorker(
         val nextMonth = now.plusMonths(1)
         val currentMonthUrl = "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
         val nextMonthUrl = "$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}"
-        val initialUrl = if (needShifts) currentMonthUrl else "$baseUrl/WorktimeStamping"
 
-        data class WorkerFetchResult(val htmlPages: List<String>, val sessionAuthenticated: Boolean)
-
-        val fetchResult = suspendCancellableCoroutine<WorkerFetchResult> { continuation ->
-            val collectedHtml = mutableListOf<String>()
-            var sessionOk = false
-            var step = 0
-
-            val bgWebView = WebView(appContext).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-            }
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(bgWebView, true)
-
-            val timeoutHandler = Handler(Looper.getMainLooper())
-            val timeoutRunnable = Runnable {
-                bgWebView.destroy()
-                if (continuation.isActive) continuation.resume(WorkerFetchResult(collectedHtml, sessionOk))
-            }
-            timeoutHandler.postDelayed(timeoutRunnable, 35_000L)
-
-            bgWebView.webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    if (url == null) return
-                    when {
-                        url.contains("/Login/Login", ignoreCase = true) -> {
-                            val jsLogin = """
-                                (function() {
-                                    var u = document.getElementById('Username');
-                                    var p = document.getElementById('Password');
-                                    var f = document.getElementById('LoginForm');
-                                    if (u && p && f && u.value === '') {
-                                        u.value = '$user';
-                                        p.value = '$pass';
-                                        f.submit();
-                                    }
-                                })();
-                            """.trimIndent()
-                            view?.evaluateJavascript(jsLogin, null)
-                        }
-                        !needShifts && (
-                            url.contains("/WorktimeStamping", ignoreCase = true) ||
-                            url.contains("/InfraDashboard", ignoreCase = true) ||
-                            url.contains("/Calendar", ignoreCase = true)
-                        ) -> {
-                            sessionOk = true
-                            timeoutHandler.removeCallbacks(timeoutRunnable)
-                            bgWebView.destroy()
-                            if (continuation.isActive) {
-                                continuation.resume(WorkerFetchResult(emptyList(), true))
-                            }
-                        }
-                        needShifts && url.contains("/Calendar/Month", ignoreCase = true) -> {
-                            sessionOk = true
-                            view?.postDelayed({
-                                view.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
-                                    if (rawHtml != null && rawHtml != "null") {
-                                        val unescaped = JSONTokener(rawHtml).nextValue() as? String
-                                        if (unescaped != null) collectedHtml.add(unescaped)
-                                    }
-
-                                    if (step == 0) {
-                                        step = 1
-                                        view.loadUrl(nextMonthUrl)
-                                    } else {
-                                        timeoutHandler.removeCallbacks(timeoutRunnable)
-                                        bgWebView.destroy()
-                                        if (continuation.isActive) {
-                                            continuation.resume(WorkerFetchResult(collectedHtml, true))
-                                        }
-                                    }
-                                }
-                            }, 1200L)
-                        }
-                    }
+        val parsedShifts: List<WorkShift>? = if (needShifts) {
+            val pages = BackgroundAuthHelper.fetchAuthenticatedPages(
+                appContext,
+                listOf(currentMonthUrl, nextMonthUrl)
+            )
+            if (pages == null || pages.size < 2) {
+                null
+            } else {
+                val parsed = pages.map { NumeronParser.parseCalendarHtml(it) }
+                if (parsed.any { it == null }) {
+                    null
+                } else {
+                    NumeronParser.mergeConsecutiveLeaves(parsed.filterNotNull().flatten())
                 }
             }
-            bgWebView.loadUrl(initialUrl)
+        } else {
+            if (BackgroundAuthHelper.ensureAuthenticatedSession(appContext)) emptyList() else null
         }
 
-        val success = if (needShifts) fetchResult.htmlPages.isNotEmpty() else fetchResult.sessionAuthenticated
-        if (success) {
-            CookieManager.getInstance().flush()
-            val changes = withContext(Dispatchers.IO) {
-                val detectedChanges = if (needShifts) {
-                    val allShifts = fetchResult.htmlPages.flatMap { NumeronParser.parseCalendarHtml(it) }
-                    CalendarSyncHelper.saveCachedShifts(appContext, allShifts)
-                    val calChanges = if (syncCalendar && calId != null) {
-                        CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, allShifts)
-                    } else {
-                        prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
-                        emptyList()
-                    }
-                    CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
-                    calChanges
+        if (parsedShifts != null) {
+            val detectedChanges = if (needShifts) {
+                CalendarSyncHelper.saveCachedShifts(appContext, parsedShifts)
+                val calChanges = if (syncCalendar && calId != null) {
+                    CalendarSyncHelper.syncShiftsToCalendar(appContext, calId, parsedShifts)
                 } else {
-                    CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                    prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
                     emptyList()
                 }
-                if (trackRequests) {
-                    fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
-                }
-                detectedChanges
+                CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                calChanges
+            } else {
+                CalendarSyncHelper.scheduleShiftReminders(appContext, calId)
+                emptyList()
             }
-            if (changes.isNotEmpty()) {
-                ShiftReminderReceiver.showCalendarChangesNotification(appContext, changes)
+
+            if (trackRequests) {
+                fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
+            }
+
+            if (detectedChanges.isNotEmpty()) {
+                ShiftReminderReceiver.showCalendarChangesNotification(appContext, detectedChanges)
             }
             prefs.edit()
                 .putLong("last_valid_session_ms", System.currentTimeMillis())
@@ -477,7 +424,6 @@ class BackgroundSyncWorker(
             ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
             Result.success()
         } else {
-            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
             Result.retry()
         }
     }

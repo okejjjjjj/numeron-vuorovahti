@@ -128,6 +128,18 @@ object CalendarChangeTracker {
         return result
     }
 
+    fun mergeChanges(context: Context, newChanges: List<CalendarChangeItem>) {
+        if (newChanges.isEmpty()) return
+        val existing = getLastChanges(context).toMutableList()
+        for (item in newChanges) {
+            if (item.eventId != null) {
+                existing.removeAll { it.eventId == item.eventId }
+            }
+            existing.add(item)
+        }
+        saveChanges(context, existing)
+    }
+
     fun clearChanges(context: Context) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
@@ -341,6 +353,8 @@ object CalendarChangeTracker {
                         val values = ContentValues().apply {
                             put(CalendarContract.Events.CALENDAR_ID, targetCalId)
                             put(CalendarContract.Events.TITLE, item.title)
+                            put(CalendarContract.Events.EVENT_LOCATION, item.location)
+                            put(CalendarContract.Events.DESCRIPTION, item.description)
                             put(CalendarContract.Events.DTSTART, item.startMs)
                             put(CalendarContract.Events.DTEND, item.endMs)
                             put(CalendarContract.Events.ALL_DAY, if (item.isAllDay) 1 else 0)
@@ -353,26 +367,38 @@ object CalendarChangeTracker {
                     }
                 }
             }
-            val remaining = getLastChanges(context).filterNot { it.id == item.id }
-            saveChanges(context, remaining)
-            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
-                CalendarSyncHelper.scheduleShiftReminders(context, calId)
-            }
             true
         } catch (_: Exception) {
             false
         }
     }
 
+    fun revertSingleChangeAndSave(context: Context, item: CalendarChangeItem): Boolean {
+        if (!revertSingleChange(context, item)) return false
+        val remaining = getLastChanges(context).filterNot { it.id == item.id }
+        saveChanges(context, remaining)
+        CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+            CalendarSyncHelper.scheduleShiftReminders(context, calId)
+        }
+        return true
+    }
+
     fun revertAllChanges(context: Context): Int {
         val current = getLastChanges(context).toList()
-        var count = 0
+        val succeededIds = mutableSetOf<String>()
         for (item in current) {
             if (revertSingleChange(context, item)) {
-                count++
+                succeededIds.add(item.id)
             }
         }
-        return count
+        if (succeededIds.isNotEmpty()) {
+            val remaining = current.filterNot { it.id in succeededIds }
+            saveChanges(context, remaining)
+            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+                CalendarSyncHelper.scheduleShiftReminders(context, calId)
+            }
+        }
+        return succeededIds.size
     }
 
     fun updateSingleEvent(
@@ -585,7 +611,7 @@ object CalendarChangeTracker {
                 }
 
                 btnRevert.setOnClickListener {
-                    if (revertSingleChange(context, item)) {
+                    if (revertSingleChangeAndSave(context, item)) {
                         Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
                         dialogRef?.dismiss()
                         onChanged?.invoke()
@@ -777,6 +803,16 @@ object CalendarChangeTracker {
         val btnEndTime = Button(context).apply {
             text = "Loppuaika: ${selectedEnd.format(timeFmt)}"
             stylePickerBtn(this)
+        }
+
+        fun updateTimeButtonsVisibility(isAllDayChecked: Boolean) {
+            val vis = if (isAllDayChecked) View.GONE else View.VISIBLE
+            btnStartTime.visibility = vis
+            btnEndTime.visibility = vis
+        }
+        updateTimeButtonsVisibility(item.isAllDay)
+        chkAllDay.setOnCheckedChangeListener { _, isChecked ->
+            updateTimeButtonsVisibility(isChecked)
         }
 
         btnStartDate.setOnClickListener {

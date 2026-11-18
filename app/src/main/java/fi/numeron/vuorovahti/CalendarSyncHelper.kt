@@ -459,7 +459,7 @@ object CalendarSyncHelper {
             .apply()
 
         if (detectedChanges.isNotEmpty()) {
-            CalendarChangeTracker.saveChanges(context, detectedChanges)
+            CalendarChangeTracker.mergeChanges(context, detectedChanges)
         }
 
         return detectedChanges
@@ -603,7 +603,9 @@ object CalendarSyncHelper {
         val oldReqCodes = prefs.getStringSet("scheduled_alarm_req_codes", emptySet()) ?: emptySet()
         for (oldCodeStr in oldReqCodes) {
             val oldCode = oldCodeStr.toIntOrNull() ?: continue
-            val cancelIntent = Intent(context, ShiftReminderReceiver::class.java)
+            val cancelIntent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+                action = ShiftReminderReceiver.ACTION_SHIFT_REMINDER
+            }
             val existingPi = PendingIntent.getBroadcast(
                 context,
                 oldCode,
@@ -738,7 +740,9 @@ object CalendarSyncHelper {
         for (oldCodeStr in oldReqCodes) {
             if (oldCodeStr !in newReqCodes) {
                 val oldCode = oldCodeStr.toIntOrNull() ?: continue
-                val cancelIntent = Intent(context, ShiftReminderReceiver::class.java)
+                val cancelIntent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+                    action = ShiftReminderReceiver.ACTION_SHIFT_REMINDER
+                }
                 val existingPi = PendingIntent.getBroadcast(
                     context,
                     oldCode,
@@ -772,8 +776,9 @@ object CalendarSyncHelper {
         timeStr: String,
         isEnding: Boolean
     ): Int {
-        val reqCode = ((triggerMs / 60_000L) + if (isEnding) 1 else 0).toInt()
-        val intent = Intent(context, ShiftReminderReceiver::class.java).apply {
+        val reqCode = ((triggerMs / 60_000L).toInt() * 2) + (if (isEnding) 1 else 0)
+        val intent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+            action = ShiftReminderReceiver.ACTION_SHIFT_REMINDER
             putExtra("SHIFT_TITLE", title)
             putExtra("SHIFT_TIME", timeStr)
             putExtra("IS_ENDING", isEnding)

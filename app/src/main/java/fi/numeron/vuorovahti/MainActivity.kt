@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
 
             if (webView.width > 0 && webView.height > 0 && webView.alpha > 0.5f) {
                 try {
-                    val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.ARGB_8888)
+                    val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.RGB_565)
                     val canvas = Canvas(bitmap)
                     webView.draw(canvas)
                     snapshotView?.setImageBitmap(bitmap)
@@ -535,10 +535,26 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString() ?: return false
+                val uri = request?.url ?: return false
+                val url = uri.toString()
                 if (url.startsWith("http://") || url.startsWith("https://")) {
-                    startSnapshotTransition()
-                    return false
+                    val allowedHost = try {
+                        android.net.Uri.parse(getBaseUrl()).host
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val reqHost = uri.host
+                    val isInternal = reqHost.equals("demo.local", ignoreCase = true) ||
+                        (!allowedHost.isNullOrBlank() && reqHost.equals(allowedHost, ignoreCase = true))
+                    if (isInternal) {
+                        startSnapshotTransition()
+                        return false
+                    }
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    } catch (_: Exception) {
+                    }
+                    return true
                 }
                 return super.shouldOverrideUrlLoading(view, request)
             }
@@ -1412,9 +1428,9 @@ class MainActivity : AppCompatActivity() {
                 if (!style) {
                     style = document.createElement('style');
                     style.id = 'custom-dark-theme';
-                    document.head.appendChild(style);
+                    (document.head || document.documentElement).appendChild(style);
+                    style.textContent = '$safeCss';
                 }
-                style.innerHTML = '$safeCss';
 
                 // === TÄNÄÄN-OSION MUOTOILU KOLMELLE RIVILLE ===
                 (function formatTodayShiftBox() {
@@ -1527,7 +1543,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (!window._sessionWatchInstalled) {
                     window._sessionWatchInstalled = true;
-                    setInterval(function() {
+                    function checkSessionModal() {
                         if (window._sessionExpiredHandled) return;
                         var expired = false;
                         var candidates = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
@@ -1550,7 +1566,12 @@ class MainActivity : AppCompatActivity() {
                                 window.location.href = '/Login/Login';
                             }
                         }
-                    }, 250);
+                    }
+                    checkSessionModal();
+                    if (document.body && typeof MutationObserver !== 'undefined') {
+                        var sessionObs = new MutationObserver(checkSessionModal);
+                        sessionObs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
+                    }
                 }
                 if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
@@ -1631,9 +1652,11 @@ class MainActivity : AppCompatActivity() {
     }
 
             private fun handleAutoLogin() {
-        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
-        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
-        if (user.isEmpty() || pass.isEmpty()) return
+        val rawUser = SecureCredentialManager.getUsername(this) ?: ""
+        val rawPass = SecureCredentialManager.getPassword(this) ?: ""
+        if (rawUser.isEmpty() || rawPass.isEmpty()) return
+        val userJson = org.json.JSONObject.quote(rawUser)
+        val passJson = org.json.JSONObject.quote(rawPass)
 
         val js = """
             (function() {
@@ -1646,8 +1669,8 @@ class MainActivity : AppCompatActivity() {
                 var p = document.getElementById('Password');
                 var f = document.getElementById('LoginForm');
                 if (u && p && f) {
-                    u.value = '$user';
-                    p.value = '$pass';
+                    u.value = $userJson;
+                    p.value = $passJson;
                     u.dispatchEvent(new Event('input', { bubbles: true }));
                     p.dispatchEvent(new Event('input', { bubbles: true }));
                     f.submit();
@@ -1864,10 +1887,21 @@ class MainActivity : AppCompatActivity() {
                 collectedCalendarHtml.clear()
 
                 scope.launch(Dispatchers.IO) {
+                    val parsedPages = pagesToParse.map { NumeronParser.parseCalendarHtml(it) }
+                    if (parsedPages.any { it == null }) {
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                        return@launch
+                    }
                     val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                     val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
                     val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
-                    val allShifts = pagesToParse.flatMap { NumeronParser.parseCalendarHtml(it) }
+                    val allShifts = NumeronParser.mergeConsecutiveLeaves(parsedPages.filterNotNull().flatten())
                     CalendarSyncHelper.saveCachedShifts(this@MainActivity, allShifts)
 
                     val changes = if (syncCalendar && calId != null) {

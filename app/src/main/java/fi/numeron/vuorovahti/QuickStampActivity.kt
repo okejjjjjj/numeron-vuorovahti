@@ -578,8 +578,8 @@ class QuickStampActivity : AppCompatActivity() {
 
     private fun submitAutoLogin(view: WebView?, attempt: Int = 0) {
         if (view == null || isCompleted) return
-        val user = (SecureCredentialManager.getUsername(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
-        val pass = (SecureCredentialManager.getPassword(this) ?: "").replace("\\", "\\\\").replace("'", "\\'")
+        val userJson = JSONObject.quote(SecureCredentialManager.getUsername(this) ?: "")
+        val passJson = JSONObject.quote(SecureCredentialManager.getPassword(this) ?: "")
 
         val js = """
             (function() {
@@ -587,8 +587,8 @@ class QuickStampActivity : AppCompatActivity() {
                 var p = document.getElementById('Password');
                 var f = document.getElementById('LoginForm');
                 if (u && p && f) {
-                    u.value = '$user';
-                    p.value = '$pass';
+                    u.value = $userJson;
+                    p.value = $passJson;
                     u.dispatchEvent(new Event('input', { bubbles: true }));
                     p.dispatchEvent(new Event('input', { bubbles: true }));
                     f.submit();

@@ -14,9 +14,10 @@ import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
@@ -340,7 +341,6 @@ object SettingsDialogHelper {
         val anyBackgroundEnabled = initialSyncCalendar || initialShiftReminders || initialTrackRequests
 
         val lastSyncMs = prefs.getLong("last_calendar_sync_ms", 0L)
-        val nextSyncMs = resolveNextSyncMs(context, prefs.getLong("next_calendar_sync_ms", 0L))
         val lastNotifMs = prefs.getLong("last_reminder_sent_ms", 0L)
         val lastNotifLabel = prefs.getString("last_reminder_sent_label", "") ?: ""
         val nextNotifMs = prefs.getLong("next_reminder_ms", 0L)
@@ -453,11 +453,27 @@ object SettingsDialogHelper {
             "Työvuorot ja kalenteri tarkistettu",
             formatTimestamp(lastSyncMs, "Ei vielä tarkistettu")
         )
-        addStatusRow(
+        val (nextSyncValueTv, _) = addStatusRow(
             statusCard,
             "Seuraava automaattinen tarkistus",
-            if (!anyBackgroundEnabled) "Pois käytöstä" else formatTimestamp(nextSyncMs, "Arkisin klo 09:30 ja 14:30")
+            if (!anyBackgroundEnabled) "Pois käytöstä" else formatTimestamp(prefs.getLong("next_calendar_sync_ms", 0L), "Arkisin klo 09:30 ja 14:30")
         )
+        if (anyBackgroundEnabled) {
+            try {
+                val future = WorkManager.getInstance(context).getWorkInfosForUniqueWork("NumeronVuorovahtiSync")
+                future.addListener({
+                    try {
+                        val infos = future.get()
+                        val nextRun = infos.firstOrNull { !it.state.isFinished }?.nextScheduleTimeMillis ?: 0L
+                        if (nextRun > System.currentTimeMillis() && nextRun < Long.MAX_VALUE) {
+                            nextSyncValueTv.text = formatTimestamp(nextRun, "Arkisin klo 09:30 ja 14:30")
+                        }
+                    } catch (_: Exception) {
+                    }
+                }, ContextCompat.getMainExecutor(context))
+            } catch (_: Exception) {
+            }
+        }
         addStatusRow(
             statusCard,
             "Edellinen leimausnotifikaatio lähetetty",
@@ -1047,116 +1063,17 @@ object SettingsDialogHelper {
     }
 
     private fun testLoginWithHiddenWebView(
-        context: Context,
+        @Suppress("UNUSED_PARAMETER") context: Context,
         baseUrl: String,
         username: String,
         password: String,
         callback: (Boolean, String) -> Unit
     ) {
-        val testWebView = WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-        }
-
-        val cm = CookieManager.getInstance()
-        val previousCookies = cm.getCookie(baseUrl)
-        cm.removeAllCookies(null)
-        cm.flush()
-
-        var loginAttempted = false
-        var finished = false
-        val timeoutHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        lateinit var timeoutRunnable: Runnable
-
-        fun cleanupAndRespond(success: Boolean, msg: String) {
-            if (finished) return
-            finished = true
-            timeoutHandler.removeCallbacks(timeoutRunnable)
-            if (!success && !previousCookies.isNullOrBlank()) {
-                previousCookies.split(";").forEach { cookie ->
-                    val trimmed = cookie.trim()
-                    if (trimmed.isNotEmpty()) {
-                        cm.setCookie(baseUrl, trimmed)
-                    }
-                }
-                cm.flush()
-            }
-            testWebView.stopLoading()
-            testWebView.destroy()
-            callback(success, msg)
-        }
-
-        timeoutRunnable = Runnable {
-            cleanupAndRespond(false, "Aikakatkaisu: Palvelin '$baseUrl' ei vastannut ajoissa.")
-        }
-        timeoutHandler.postDelayed(timeoutRunnable, 15_000L)
-
-        testWebView.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(
-                view: WebView?,
-                errorCode: Int,
-                description: String?,
-                failingUrl: String?
-            ) {
-                cleanupAndRespond(
-                    false,
-                    "Yhteysvirhe: Organisaatiota '$baseUrl' ei löytynyt tai verkkoyhteys puuttuu."
-                )
-            }
-
-            override fun onPageFinished(view: WebView?, url: String?) {
-                if (url == null || finished) return
-
-                if (url.contains("/Login/Login", ignoreCase = true)) {
-                    if (!loginAttempted) {
-                        loginAttempted = true
-                        val safeUser = username.replace("\\", "\\\\").replace("'", "\\'")
-                        val safePass = password.replace("\\", "\\\\").replace("'", "\\'")
-                        val js = """
-                            (function() {
-                                var u = document.getElementById('Username');
-                                var p = document.getElementById('Password');
-                                var f = document.getElementById('LoginForm');
-                                if (u && p && f) {
-                                    u.value = '$safeUser';
-                                    p.value = '$safePass';
-                                    f.submit();
-                                    return 'SUBMITTED';
-                                }
-                                return 'NO_FORM';
-                            })();
-                        """.trimIndent()
-                        view?.evaluateJavascript(js) { res ->
-                            if (res?.contains("NO_FORM") == true) {
-                                cleanupAndRespond(false, "Virhe: Kirjautumislomaketta ei tunnistettu sivulta.")
-                            }
-                        }
-                    } else {
-                        val errJs = """
-                            (function() {
-                                var err = document.querySelector('.validation-summary-errors, .alert-danger');
-                                return err ? err.innerText.trim() : '';
-                            })();
-                        """.trimIndent()
-                        view?.evaluateJavascript(errJs) { errText ->
-                            val cleanErr = errText?.replace("\"", "")?.trim() ?: ""
-                            if (cleanErr.isNotEmpty()) {
-                                cleanupAndRespond(false, "Kirjautuminen epäonnistui: $cleanErr")
-                            } else {
-                                cleanupAndRespond(false, "Virheellinen käyttäjätunnus tai salasana.")
-                            }
-                        }
-                    }
-                } else if (
-                    url.contains("/WorktimeStamping", ignoreCase = true) ||
-                    url.contains("/InfraDashboard", ignoreCase = true) ||
-                    url.contains("/Calendar", ignoreCase = true)
-                ) {
-                    cleanupAndRespond(true, "Yhteys ja tunnukset toimivat! ($baseUrl)")
-                }
+        CoroutineScope(Dispatchers.IO).launch {
+            val (success, msg) = BackgroundAuthHelper.testCredentials(baseUrl, username, password)
+            withContext(Dispatchers.Main) {
+                callback(success, msg)
             }
         }
-
-        testWebView.loadUrl("$baseUrl/Login/Login")
     }
 }

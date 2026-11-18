@@ -18,25 +18,33 @@ object UrlNormalizer {
      * - "https://oma.yritys.fi/wfm" -> "https://oma.yritys.fi/wfm" (jos oma domain)
      */
     fun normalizeOrgUrl(rawInput: String?): String {
-        val cleaned = rawInput?.trim()?.lowercase() ?: ""
-        if (cleaned.isEmpty()) return ""
-        if (cleaned == "demo") return "demo"
+        val trimmed = rawInput?.trim() ?: ""
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.equals("demo", ignoreCase = true)) return "demo"
 
-        // Jos käyttäjä syötti täyden custom-domainin (joka ei ole numeronwfm.com), säilytetään se
-        if ((cleaned.startsWith("http://") || cleaned.startsWith("https://")) && !cleaned.contains("numeronwfm.com")) {
-            return cleaned.trimEnd('/')
+        val lower = trimmed.lowercase()
+        val isNumeronHost = lower.contains("numeronwfm.com") || lower.contains("numeronwfm.fi")
+
+        // Jos käyttäjä syötti oman custom-domainin protokollalla, säilytetään polun kirjainkoko
+        if ((lower.startsWith("http://") || lower.startsWith("https://")) && !isNumeronHost) {
+            return trimmed.trimEnd('/')
+        }
+
+        // Jos käyttäjä syötti oman domainin ilman protokollaa (esim. wfm.yritys.fi)
+        if (!isNumeronHost && !trimmed.contains(" ") && trimmed.substringBefore("/").contains(".")) {
+            return "https://${trimmed.trimEnd('/')}"
         }
 
         // Poistetaan protokolla, polut ja pääteosa, jotta jäljelle jää pelkkä organisaatiotunnus
-        val orgSlug = cleaned
+        val orgSlug = lower
             .removePrefix("https://")
             .removePrefix("http://")
             .substringBefore("/")
             .substringBefore("?")
             .removeSuffix(".numeronwfm.com")
             .removeSuffix(".numeronwfm.fi")
-            .replace("\\s+".toRegex(), "") // Poistaa välilyönnit (esim. "Siun sote" -> "siunsote")
-            .replace("[^a-z0-9-]".toRegex(), "") // Poistaa erikoismerkit
+            .replace("\\s+".toRegex(), "")
+            .replace("[^a-z0-9-]".toRegex(), "")
 
         if (orgSlug.isEmpty()) return ""
 

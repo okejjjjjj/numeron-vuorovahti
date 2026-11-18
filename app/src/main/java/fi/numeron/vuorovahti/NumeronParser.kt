@@ -63,20 +63,21 @@ object NumeronParser {
         }
     }
 
-    fun parseCalendarHtml(html: String): List<WorkShift> {
+    fun parseCalendarHtml(html: String): List<WorkShift>? {
         val doc = Jsoup.parse(html)
         val shifts = mutableListOf<WorkShift>()
 
-        val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return emptyList()
-        val parts = monthHeader.split(" ")
-        if (parts.size < 2) return emptyList()
+        val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return null
+        val parts = monthHeader.split(Regex("\s+"))
+        if (parts.size < 2) return null
 
-        val currentMonth = finnishMonths[parts[0]] ?: return emptyList()
-        val currentYear = parts[1].toIntOrNull() ?: return emptyList()
+        val currentMonth = finnishMonths[parts[0]] ?: return null
+        val currentYear = parts[1].toIntOrNull() ?: return null
         val now = LocalDateTime.now()
         val today = now.toLocalDate()
 
         val dayCells = doc.select("table.month-table td.month-day")
+        if (dayCells.isEmpty()) return null
         for (cell in dayCells) {
             if (cell.hasClass("past-day") || cell.hasClass("day-different-month")) continue
 
@@ -147,10 +148,10 @@ object NumeronParser {
             }
         }
 
-        return mergeConsecutiveLeaves(shifts)
+        return shifts
     }
 
-    private fun mergeConsecutiveLeaves(rawShifts: List<WorkShift>): List<WorkShift> {
+    fun mergeConsecutiveLeaves(rawShifts: List<WorkShift>): List<WorkShift> {
         val workShifts = rawShifts.filter { !it.isAllDayLeave }.toMutableList()
         val leaves = rawShifts.filter { it.isAllDayLeave }.sortedBy { it.start }
 

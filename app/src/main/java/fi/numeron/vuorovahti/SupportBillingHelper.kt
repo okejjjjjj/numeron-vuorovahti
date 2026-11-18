@@ -33,6 +33,8 @@ class SupportBillingHelper(
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    @Volatile
     private var isDestroyed = false
 
     private val billingClient: BillingClient = BillingClient.newBuilder(context)
@@ -48,6 +50,9 @@ class SupportBillingHelper(
         if (isDestroyed) return
         if (billingClient.isReady) {
             queryTipProducts()
+            return
+        }
+        if (billingClient.connectionState == BillingClient.ConnectionState.CONNECTING) {
             return
         }
 
@@ -136,6 +141,10 @@ class SupportBillingHelper(
             }
             BillingClient.BillingResponseCode.USER_CANCELED -> {
                 // Käyttäjä peruutti maksun – ei näytetä virheilmoitusta
+            }
+            BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                consumeUnfinishedPurchases()
+                postStatus("Keskeneräinen tuki vahvistetaan – voit tukea uudelleen hetken kuluttua.", true)
             }
             else -> {
                 postStatus(
