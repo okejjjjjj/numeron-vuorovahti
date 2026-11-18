@@ -68,7 +68,7 @@ object NumeronParser {
         val shifts = mutableListOf<WorkShift>()
 
         val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return null
-        val parts = monthHeader.split(Regex("\s+"))
+        val parts = monthHeader.split(Regex("\\s+"))
         if (parts.size < 2) return null
 
         val currentMonth = finnishMonths[parts[0]] ?: return null
