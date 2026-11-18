@@ -51,6 +51,7 @@ class QuickStampActivity : AppCompatActivity() {
     private lateinit var statusBadge: TextView
     private lateinit var titleText: TextView
     private lateinit var statusText: TextView
+    private lateinit var greetingText: TextView
     private var hiddenWebView: WebView? = null
 
     private var isCompleted = false
@@ -167,6 +168,29 @@ class QuickStampActivity : AppCompatActivity() {
         }
         card.addView(statusText)
 
+        val greetingBg = GradientDrawable().apply {
+            setColor(Color.parseColor("#111923"))
+            setStroke(dp(1), Color.parseColor("#2A394A"))
+            cornerRadius = dp(10).toFloat()
+        }
+
+        greetingText = TextView(this).apply {
+            text = buildGreeting(isEnding = false)
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+            background = greetingBg
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(14)
+            }
+        }
+        card.addView(greetingText)
+
         val webHolder = FrameLayout(this).apply {
             visibility = View.INVISIBLE
             alpha = 0f
@@ -178,9 +202,30 @@ class QuickStampActivity : AppCompatActivity() {
         setContentView(root)
     }
 
+    private fun buildGreeting(isEnding: Boolean): String {
+        val hour = LocalTime.now().hour
+        return if (isEnding) {
+            when (hour) {
+                in 5..10 -> "Hyvää huomenta, kiitos työvuorosta!"
+                in 11..16 -> "Hyvää loppupäivää, kiitos työvuorosta!"
+                in 17..21 -> "Hyvää iltaa, kiitos työvuorosta!"
+                else -> "Hyvää yötä, kiitos työvuorosta!"
+            }
+        } else {
+            when (hour) {
+                in 4..9 -> "Hyvää huomenta ja mukavaa työvuoroa!"
+                in 10..13 -> "Hyvää päivää ja mukavaa työvuoroa!"
+                in 14..17 -> "Hyvää iltapäivää ja mukavaa työvuoroa!"
+                in 18..21 -> "Hyvää iltaa ja tsemppiä vuoroon!"
+                else -> "Hyvää yötä ja tsemppiä yövuoroon!"
+            }
+        }
+    }
+
     private fun resetToLoadingUi() {
         progressBar.visibility = View.VISIBLE
         statusBadge.visibility = View.GONE
+        greetingText.visibility = View.VISIBLE
     }
 
     private fun showFinalState(
@@ -205,6 +250,10 @@ class QuickStampActivity : AppCompatActivity() {
         statusBadge.text = badgeText
         statusBadge.setTextColor(Color.parseColor(badgeTextHex))
         statusBadge.visibility = View.VISIBLE
+
+        if (badgeText == "!" && badgeFillHex != "#1E3A5F") {
+            greetingText.visibility = View.GONE
+        }
 
         titleText.text = title
         statusText.text = subtitle
@@ -256,6 +305,9 @@ class QuickStampActivity : AppCompatActivity() {
         val isTest = incoming?.getBooleanExtra("IS_TEST", false) ?: false
         val targetText = if (isEnding) "Ulos" else "Sisään"
         val actionTitle = if (isEnding) "Leimataan ulos" else "Leimataan sisään"
+
+        greetingText.text = buildGreeting(isEnding)
+        greetingText.visibility = View.VISIBLE
 
         titleText.text = actionTitle
         progressBar.indeterminateTintList = ColorStateList.valueOf(
