@@ -110,7 +110,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             CalendarSyncHelper.scheduleShiftReminders(context)
         }
 
-        val stampIntent = Intent(context, MainActivity::class.java).apply {
+        val stampIntent = Intent(context, QuickStampActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("AUTO_STAMP", true)
             putExtra("IS_ENDING", isEnding)
