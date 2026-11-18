@@ -58,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private var inFlightStampAction: Action = Action.NONE
     private var lastSessionRecoveryMs: Long = 0L
     private var currentTab: Tab = Tab.STAMP
+    private var dashboardRedirectCount: Int = 0
     private var syncStep = 0
     private val collectedCalendarHtml = mutableListOf<String>()
 
@@ -121,6 +122,17 @@ class MainActivity : AppCompatActivity() {
         if (intent?.getBooleanExtra("OPEN_CALENDAR_CHANGES", false) == true) {
             intent.removeExtra("OPEN_CALENDAR_CHANGES")
             CalendarChangeTracker.showManageChangesDialog(this)
+        }
+    }
+
+
+    private fun resolveResumeUrl(baseUrl: String): String {
+        return when {
+            pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT -> "$baseUrl/WorktimeStamping"
+            pendingAction == Action.SYNC_CALENDAR -> "$baseUrl/Calendar/Month"
+            currentTab == Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
+            currentTab == Tab.SHIFTS -> "$baseUrl/Calendar/Month"
+            else -> "$baseUrl/WorktimeStamping"
         }
     }
 
@@ -615,6 +627,9 @@ class MainActivity : AppCompatActivity() {
 
                 injectDarkTheme(view)
                 CookieManager.getInstance().flush()
+                if (!url.contains("/Login/", ignoreCase = true) && !url.contains("/InfraDashboard", ignoreCase = true)) {
+                    dashboardRedirectCount = 0
+                }
                 if (!url.contains("/Login/", ignoreCase = true)) {
                     getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                         .edit()
@@ -1566,11 +1581,7 @@ class MainActivity : AppCompatActivity() {
                         .edit()
                         .putLong("last_valid_session_ms", System.currentTimeMillis())
                         .apply()
-                    val targetUrl = if (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT) {
-                        "$baseUrl/WorktimeStamping"
-                    } else {
-                        webView.url ?: "$baseUrl/WorktimeStamping"
-                    }
+                    val targetUrl = resolveResumeUrl(baseUrl)
                     webView.loadUrl(targetUrl)
                 } else {
                     webView.loadUrl("$baseUrl/Login/Login")
