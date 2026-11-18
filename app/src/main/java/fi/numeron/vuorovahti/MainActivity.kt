@@ -194,6 +194,18 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleMedium).apply {
+            isIndeterminate = true
+            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
+        }
+        val spinnerParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+        overlay.addView(progressBar, spinnerParams)
+
         rootContent.addView(overlay, FrameLayout.LayoutParams(webView.width, webView.height))
         syncOverlayBoundsToWebView(overlay)
         transitionOverlay = overlay
