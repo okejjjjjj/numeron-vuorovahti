@@ -24,9 +24,8 @@ def main():
     original = content
     changes = 0
 
-    # 1. Poistetaan ProgressBar-latauskuvake ja lisätään sumennusefekti (RenderEffect Android 12+ / scrim)
+    # 1. Poistetaan ProgressBar-latauskuvake
     if "val spinner = ProgressBar(this)" in content:
-        # Let's replace ensureTransitionOverlay implementation using regex or string block
         pattern = r"(val scrim = View\(this\)\.apply \{[^}]+\}\s*overlay\.addView\(scrim[^}]+\}\s*)val spinner = ProgressBar\(this\)\.apply \{[^}]+\}\s*val sizePx = \([^)]+\)\.toInt\(\)\s*overlay\.addView\(spinner[^)]+\)\s*"
         replacement = r"\1"
         content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
@@ -34,24 +33,27 @@ def main():
             changes += count
             print("Poistettu pyörivä ProgressBar-latauskuvake.")
 
-    # 2. Lisätään RenderEffect sumennus snapshotViewlle
-    if "setRenderEffect" not in content and "snapshotView = snap" in content:
-        pattern = r"(snapshotView = snap)"
-        replacement = r"\1\n            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {\n                setRenderEffect(\n                    android.graphics.RenderEffect.createBlurEffect(\n                        24f,\n                        24f,\n                        android.graphics.Shader.TileMode.CLAMP\n                    )\n                )\n            }"
+    # 2. Lisätään RenderEffect sumennus snap-ImageViewlle
+    if "snap.setRenderEffect" not in content and "snapshotView = snap" in content:
+        pattern = r"(val snap = ImageView\(this\)\.apply \{\s*scaleType = ImageView\.ScaleType\.FIT_XY\s*alpha = 1f\s*visibility = View\.GONE\s*\})"
+        replacement = r"""val snap = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_XY
+            alpha = 1f
+            visibility = View.GONE
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                snap.setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(
+                        24f,
+                        24f,
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                )
+            }
+        }"""
         content, count = re.subn(pattern, replacement, content, count=1)
         if count > 0:
             changes += count
-            print("Lisätty RenderEffect-sumennus taustakuvaan.")
-
-    # 3. Korvataan kuukausinäkymän pikatoivepalkin klikkauskuuntelija capture-vaiheella ja e.stopImmediatePropagation()
-    if "window.location.pathname.toLowerCase().indexOf('/calendar/month')" not in content and "_quickRequestInstalled" in content:
-        # replace the quick request listener condition / implementation
-        old_qr = "if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1 && !window._quickRequestInstalled)"
-        new_qr = "if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1 && !window._quickRequestInstalled)"
-        if old_qr in content:
-            content = content.replace(old_qr, new_qr, 1)
-            changes += 1
-            print("Päivitetty pikatoivepalkin reitintarkistus (/calendar/month).")
+            print("Lisätty snap.setRenderEffect sumennus.")
 
     if content != original:
         main_act_path.write_text(content, encoding="utf-8")
