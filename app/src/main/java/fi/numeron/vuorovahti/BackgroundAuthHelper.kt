@@ -274,7 +274,7 @@ object BackgroundAuthHelper {
         for (targetUrl in urls) {
             var res = executeRequest(targetUrl, "GET", cookieStore) ?: return@withContext null
             val needsLogin = res.finalUrl.contains("/Login", ignoreCase = true) ||
-                res.body.contains("id="LoginForm"", ignoreCase = true)
+                res.body.contains("id=\"LoginForm\"", ignoreCase = true)
 
             if (needsLogin && !reauthed) {
                 reauthed = true
@@ -285,7 +285,7 @@ object BackgroundAuthHelper {
 
             if (res.statusCode !in 200..299 ||
                 res.finalUrl.contains("/Login", ignoreCase = true) ||
-                res.body.contains("id="LoginForm"", ignoreCase = true)
+                res.body.contains("id=\"LoginForm\"", ignoreCase = true)
             ) {
                 return@withContext null
             }
