@@ -632,6 +632,25 @@ object CalendarChangeTracker {
             footerBar.addView(btnRevertAll)
         }
 
+        val btnAccept = Button(context).apply {
+            text = "Hyväksy"
+            isAllCaps = false
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            background = makeCardBg("#10B981", "#34D399", 8)
+            setTextColor(Color.parseColor("#FFFFFF"))
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { marginEnd = dp(8) }
+            setOnClickListener {
+                dialogRef?.dismiss()
+                onChanged?.invoke()
+            }
+        }
+        footerBar.addView(btnAccept)
+
         val btnClose = Button(context).apply {
             text = "Sulje"
             isAllCaps = false

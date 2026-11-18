@@ -1437,6 +1437,22 @@ class MainActivity : AppCompatActivity() {
                     document.head.appendChild(style);
                 }
                 style.innerHTML = '$safeCss';
+                // === LISÄTTÄVÄT PÄIVÄNTOIVOTUKSET TYÖVUOROILLE ===
+                (function addShiftGreeting() {
+                    var container = document.querySelector('.punching-shift-container');
+                    if (!container || document.getElementById('numeron-shift-greeting')) return;
+                    var hour = new Date().getHours();
+                    var greeting = "Hyvää työpäivää!";
+                    if (hour < 10) greeting = "Hyvää huomenta, mukavaa työvirettä!";
+                    else if (hour >= 14 && hour < 20) greeting = "Hyvää iltapäivää, jaksuja vuoroon!";
+                    else if (hour >= 20 || hour < 4) greeting = "Hyvää iltaa ja tsemppiä vuoroon!";
+
+                    var greetDiv = document.createElement('div');
+                    greetDiv.id = 'numeron-shift-greeting';
+                    greetDiv.style.cssText = 'font-size:13px;color:#38BDF8;font-weight:600;margin-bottom:8px;padding:6px 10px;background:#111923;border:1px solid #2A394A;border-radius:8px;';
+                    greetDiv.textContent = '✨ ' + greeting;
+                    container.insertBefore(greetDiv, container.firstChild);
+                })();
                 // === TÄNÄÄN-OSION MUOTOILU KOLMELLE RIVILLE ===
                 (function formatTodayShiftBox() {
                     function capFirst(str) {
@@ -1850,8 +1866,8 @@ class MainActivity : AppCompatActivity() {
                 if (buttonFlipped || rowUpdated) {
                     inFlightStampAction = Action.NONE
                     CookieManager.getInstance().flush()
-                    Toast.makeText(this, "Leimaus vahvistettu ($targetText)", Toast.LENGTH_SHORT).show()
-                    webView.postDelayed({ finishAndRemoveTask() }, 600L)
+                    // Poistettu ylimääräinen Toast, luotetaan visuaaliseen tilaan
+                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 } else if (checkAttempt < 25) {
                     verifyStampAndClose(targetText, beforeBtn, beforeRow, checkAttempt + 1)
                 } else {
