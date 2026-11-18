@@ -1578,17 +1578,11 @@ class MainActivity : AppCompatActivity() {
                     document.addEventListener('click', function(e) {
                         var btn = e.target && e.target.closest('#forgottenStampButton');
                         if (btn) {
-                            setTimeout(function() {
-                                var panel = document.getElementById('forgotStampPanel');
-                                if (panel) {
-                                    var topVal = panel.style.top || '';
-                                    if (panel.classList.contains('minimized') || !topVal || topVal === '100%') {
-                                        panel.classList.remove('minimized');
-                                        panel.classList.add('force-open');
-                                        panel.style.top = '0px';
-                                    }
-                                }
-                            }, 350);
+                            var panel = document.getElementById('forgotStampPanel');
+                            if (panel) {
+                                panel.classList.remove('minimized');
+                                panel.classList.add('force-open');
+                            }
                         }
                         var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
                         if (cancelBtn) {
@@ -1596,7 +1590,6 @@ class MainActivity : AppCompatActivity() {
                             if (panel) {
                                 panel.classList.remove('force-open');
                                 panel.classList.add('minimized');
-                                panel.style.top = '100%';
                             }
                         }
                     }, true);
