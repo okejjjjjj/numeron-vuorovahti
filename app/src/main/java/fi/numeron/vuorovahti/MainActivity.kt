@@ -260,7 +260,7 @@ class MainActivity : AppCompatActivity() {
 
         overlay.animate()
             .alpha(0f)
-            .setDuration(220L)
+            .setDuration(320L)
             .withEndAction {
                 overlay.visibility = View.GONE
                 snapshotView?.setImageDrawable(null)
