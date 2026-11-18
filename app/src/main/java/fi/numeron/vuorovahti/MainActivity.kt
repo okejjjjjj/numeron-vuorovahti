@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity() {
             )
         )
 
-        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleMedium).apply {
+        val progressBar = ProgressBar(this, null, android.R.style.Widget_ProgressBar_Medium).apply {
             isIndeterminate = true
             indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
         }
