@@ -148,7 +148,7 @@ class MainActivity : AppCompatActivity() {
     private var snapshotView: ImageView? = null
     private var isTransitionActive: Boolean = false
 
-    private fun ensureTransitionOverlay(): FrameLayout {
+        private fun ensureTransitionOverlay(): FrameLayout {
         transitionOverlay?.let { overlay ->
             syncOverlayBoundsToWebView(overlay)
             return overlay
@@ -168,13 +168,10 @@ class MainActivity : AppCompatActivity() {
             alpha = 1f
             visibility = View.GONE
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                snap.setRenderEffect(
-                    android.graphics.RenderEffect.createBlurEffect(
-                        24f,
-                        24f,
-                        android.graphics.Shader.TileMode.CLAMP
-                    )
-                )
+                try {
+                    val blur = android.graphics.RenderEffect.createBlurEffect(24f, 24f, android.graphics.Shader.TileMode.CLAMP)
+                    setRenderEffect(blur)
+                } catch (_: Exception) {}
             }
         }
         overlay.addView(
@@ -185,15 +182,6 @@ class MainActivity : AppCompatActivity() {
             )
         )
         snapshotView = snap
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                setRenderEffect(
-                    android.graphics.RenderEffect.createBlurEffect(
-                        24f,
-                        24f,
-                        android.graphics.Shader.TileMode.CLAMP
-                    )
-                )
-            }
 
         val scrim = View(this).apply {
             setBackgroundColor(Color.parseColor("#660F1722"))
@@ -205,13 +193,6 @@ class MainActivity : AppCompatActivity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
-
-        val spinner = ProgressBar(this).apply {
-            isIndeterminate = true
-            indeterminateTintList = ColorStateList.valueOf(Color.parseColor("#38BDF8"))
-        }
-        val sizePx = (34 * resources.displayMetrics.density).toInt()
-        overlay.addView(spinner, FrameLayout.LayoutParams(sizePx, sizePx, Gravity.CENTER))
 
         rootContent.addView(overlay, FrameLayout.LayoutParams(webView.width, webView.height))
         syncOverlayBoundsToWebView(overlay)
