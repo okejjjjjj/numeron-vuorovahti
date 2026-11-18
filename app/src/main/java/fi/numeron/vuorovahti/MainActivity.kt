@@ -176,6 +176,15 @@ class MainActivity : AppCompatActivity() {
             )
         )
         snapshotView = snap
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(
+                        24f,
+                        24f,
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                )
+            }
 
         val scrim = View(this).apply {
             setBackgroundColor(Color.parseColor("#660F1722"))
@@ -1604,7 +1613,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
-                if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1 && !window._quickRequestInstalled) {
+                if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1 && !window._quickRequestInstalled) {
                     window._quickRequestInstalled = true;
                     var monthsFi = {
                         'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
