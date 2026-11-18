@@ -167,6 +167,15 @@ class MainActivity : AppCompatActivity() {
             scaleType = ImageView.ScaleType.FIT_XY
             alpha = 1f
             visibility = View.GONE
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                snap.setRenderEffect(
+                    android.graphics.RenderEffect.createBlurEffect(
+                        24f,
+                        24f,
+                        android.graphics.Shader.TileMode.CLAMP
+                    )
+                )
+            }
         }
         overlay.addView(
             snap,
