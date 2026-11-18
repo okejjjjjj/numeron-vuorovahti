@@ -347,7 +347,29 @@ object SettingsDialogHelper {
         val nextNotifMs = prefs.getLong("next_reminder_ms", 0L)
         val nextNotifLabel = prefs.getString("next_reminder_label", "") ?: ""
 
-        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null) {
+        fun canScheduleExactAlarmsCompat(): Boolean {
+            return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
+            } else {
+                true
+            }
+        }
+
+        fun openExactAlarmSettings() {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                try {
+                    context.startActivity(
+                        android.content.Intent(
+                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                            android.net.Uri.parse("package:${context.packageName}")
+                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                } catch (_: Exception) {
+                }
+            }
+        }
+
+        fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null): Pair<TextView, TextView> {
             val box = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
                 background = makeCardBg("#111923", "#233040", 8)
@@ -364,22 +386,24 @@ object SettingsDialogHelper {
                 textSize = 11f
                 setTextColor(Color.parseColor("#94A3B8"))
             })
-            box.addView(TextView(context).apply {
+            val valueTv = TextView(context).apply {
                 text = value
                 textSize = 14f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.parseColor("#F1F5F9"))
                 setPadding(0, dp(2), 0, 0)
-            })
-            if (!subValue.isNullOrEmpty()) {
-                box.addView(TextView(context).apply {
-                    text = subValue
-                    textSize = 12f
-                    setTextColor(Color.parseColor("#38BDF8"))
-                    setPadding(0, dp(2), 0, 0)
-                })
             }
+            box.addView(valueTv)
+            val subTv = TextView(context).apply {
+                text = subValue ?: ""
+                textSize = 12f
+                setTextColor(Color.parseColor("#38BDF8"))
+                setPadding(0, dp(2), 0, 0)
+                visibility = if (!subValue.isNullOrEmpty()) View.VISIBLE else View.GONE
+            }
+            box.addView(subTv)
             parent.addView(box)
+            return Pair(valueTv, subTv)
         }
 
         addStatusRow(
@@ -398,7 +422,7 @@ object SettingsDialogHelper {
             formatTimestamp(lastNotifMs, "Ei vielä lähetetty"),
             if (lastNotifMs > 0L) lastNotifLabel else null
         )
-        addStatusRow(
+        val (nextNotifValueTv, nextNotifSubTv) = addStatusRow(
             statusCard,
             "Seuraava leimausnotifikaatio lähetetään",
             when {
@@ -409,34 +433,26 @@ object SettingsDialogHelper {
             if (initialShiftReminders && nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
         )
 
-        val exactAlarmAllowed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager).canScheduleExactAlarms()
-        } else {
-            true
-        }
-        addStatusRow(
+        val exactAlarmAllowed = canScheduleExactAlarmsCompat()
+        val (exactAlarmValueTv, exactAlarmSubTv) = addStatusRow(
             statusCard,
             "Tarkat vuorohälytykset",
-            if (exactAlarmAllowed) "Sallittu" else "Rajoitettu – napauta salliaksesi",
-            if (exactAlarmAllowed) null else "Avaa järjestelmän hälytysasetukset"
+            if (exactAlarmAllowed) "Sallittu – muistutukset hälyttävät minuutilleen" else "Valinnainen (rajoitettu) – napauta salliaksesi",
+            if (exactAlarmAllowed) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) "Napauta avataksesi hälytysasetukset" else null
+            } else {
+                "Varmistaa minuutintarkat vuoromuistutukset"
+            }
         )
-        if (!exactAlarmAllowed && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
-                try {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                            android.net.Uri.parse("package:${context.packageName}")
-                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                } catch (_: Exception) {
-                }
+                openExactAlarmSettings()
             }
         }
 
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
-        addStatusRow(
+        val (batteryOptValueTv, batteryOptSubTv) = addStatusRow(
             statusCard,
             "Akun virransäästörajoitukset",
             if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
@@ -629,6 +645,40 @@ object SettingsDialogHelper {
             styleEditText(this)
         }
         reminderDetailsContainer.addView(editReminder)
+
+        val exactAlarmNoticeBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeCardBg("#111923", "#2A394A", 8)
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            visibility = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && !canScheduleExactAlarmsCompat()) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(10)
+            }
+            setOnClickListener {
+                openExactAlarmSettings()
+            }
+        }
+        exactAlarmNoticeBox.addView(TextView(context).apply {
+            text = "Tarkat vuorohälytykset (valinnainen)"
+            textSize = 13f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#F1F5F9"))
+        })
+        exactAlarmNoticeBox.addView(TextView(context).apply {
+            text = "Muistutukset toimivat ilmankin, mutta sallimalla tarkat hälytykset ne tulevat minuutilleen. Napauta avataksesi asetukset →"
+            textSize = 12f
+            setTextColor(Color.parseColor("#38BDF8"))
+            setPadding(0, dp(3), 0, 0)
+        })
+        reminderDetailsContainer.addView(exactAlarmNoticeBox)
+
         actionCard.addView(reminderDetailsContainer)
 
         val switchTrackRequests = createToggleRow(
@@ -883,6 +933,71 @@ object SettingsDialogHelper {
                 }
             } else {
                 finishSave()
+            }
+        }
+
+        var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat()
+
+        fun refreshSystemPermissionStates() {
+            val nowExactAllowed = canScheduleExactAlarmsCompat()
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                if (nowExactAllowed) {
+                    exactAlarmValueTv.text = "Sallittu – muistutukset hälyttävät minuutilleen"
+                    exactAlarmValueTv.setTextColor(Color.parseColor("#34D399"))
+                    exactAlarmSubTv.text = "Napauta avataksesi hälytysasetukset"
+                    exactAlarmSubTv.visibility = View.VISIBLE
+                    exactAlarmNoticeBox.visibility = View.GONE
+                } else {
+                    exactAlarmValueTv.text = "Valinnainen (rajoitettu) – napauta salliaksesi"
+                    exactAlarmValueTv.setTextColor(Color.parseColor("#F1F5F9"))
+                    exactAlarmSubTv.text = "Varmistaa minuutintarkat vuoromuistutukset"
+                    exactAlarmSubTv.visibility = View.VISIBLE
+                    exactAlarmNoticeBox.visibility = View.VISIBLE
+                }
+            } else {
+                exactAlarmValueTv.text = "Sallittu"
+                exactAlarmValueTv.setTextColor(Color.parseColor("#34D399"))
+                exactAlarmSubTv.visibility = View.GONE
+                exactAlarmNoticeBox.visibility = View.GONE
+            }
+
+            val nowIgnoringBattery = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+            if (nowIgnoringBattery) {
+                batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
+                batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
+                batteryOptSubTv.visibility = View.GONE
+            } else {
+                batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
+                batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
+                batteryOptSubTv.text = "Varmistaa tausta-ajojen toiminnan lepotilassa"
+                batteryOptSubTv.visibility = View.VISIBLE
+            }
+
+            if (!lastKnownExactAlarmAllowed && nowExactAllowed) {
+                CalendarSyncHelper.scheduleShiftReminders(context)
+                val updatedNextMs = prefs.getLong("next_reminder_ms", 0L)
+                val updatedNextLabel = prefs.getString("next_reminder_label", "") ?: ""
+                val remindersOn = switchShiftReminders.isChecked
+                nextNotifValueTv.text = when {
+                    !remindersOn -> "Leimausmuistutukset pois käytöstä"
+                    updatedNextMs > System.currentTimeMillis() -> formatTimestamp(updatedNextMs, "")
+                    else -> "Ei tulevia ajoitettuja hälytyksiä"
+                }
+                if (remindersOn && updatedNextMs > System.currentTimeMillis() && updatedNextLabel.isNotEmpty()) {
+                    nextNotifSubTv.text = updatedNextLabel
+                    nextNotifSubTv.visibility = View.VISIBLE
+                } else {
+                    nextNotifSubTv.visibility = View.GONE
+                }
+            }
+            lastKnownExactAlarmAllowed = nowExactAllowed
+        }
+
+        refreshSystemPermissionStates()
+
+        rootContainer.viewTreeObserver.addOnWindowFocusChangeListener { hasFocus ->
+            if (hasFocus) {
+                refreshSystemPermissionStates()
             }
         }
 

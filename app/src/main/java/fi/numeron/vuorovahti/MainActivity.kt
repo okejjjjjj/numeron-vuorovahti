@@ -493,28 +493,6 @@ class MainActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 101)
         }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-            val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            if (!alarmManager.canScheduleExactAlarms() && !prefs.getBoolean("exact_alarm_prompted", false)) {
-                prefs.edit().putBoolean("exact_alarm_prompted", true).apply()
-                Toast.makeText(
-                    this,
-                    "Salli tarkat hälytykset, jotta vuoromuistutukset tulevat ajallaan",
-                    Toast.LENGTH_LONG
-                ).show()
-                try {
-                    startActivity(
-                        Intent(
-                            android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
-                            android.net.Uri.parse("package:$packageName")
-                        )
-                    )
-                } catch (_: Exception) {
-                }
-            }
-        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
