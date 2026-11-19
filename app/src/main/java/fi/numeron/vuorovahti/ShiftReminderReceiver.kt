@@ -91,7 +91,8 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         shiftTitle: String,
         timeStr: String,
         isEnding: Boolean,
-        isTest: Boolean = false
+        isTest: Boolean = false,
+        rescheduleNext: Boolean = true
     ) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_vuorovahti_reminders"
@@ -119,7 +120,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             .putString("last_reminder_sent_label", "$dirTag – $shiftTitle$testSuffix")
             .apply()
 
-        if (!isTest) {
+        if (!isTest && rescheduleNext) {
             CalendarSyncHelper.scheduleShiftReminders(context)
         }
 

@@ -388,12 +388,18 @@ object SettingsDialogHelper {
 
         fun openBatteryOptimizationSettings() {
             val pkgUri = android.net.Uri.parse("package:${context.packageName}")
-            val openedDirect = launchSystemSettingsIntent(
-                android.content.Intent(
-                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    pkgUri
+            val isAlreadyIgnored = (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
+                .isIgnoringBatteryOptimizations(context.packageName)
+            val openedDirect = if (!isAlreadyIgnored) {
+                launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        pkgUri
+                    )
                 )
-            )
+            } else {
+                false
+            }
             if (!openedDirect) {
                 val openedList = launchSystemSettingsIntent(
                     android.content.Intent(
@@ -514,20 +520,10 @@ object SettingsDialogHelper {
             statusCard,
             "Akun virransäästörajoitukset",
             if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
-            if (ignoringBatteryOpt) null else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+            if (ignoringBatteryOpt) "Napauta avataksesi virransäästöasetukset" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
         )
-        if (!ignoringBatteryOpt) {
-            statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
-                try {
-                    context.startActivity(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                            android.net.Uri.parse("package:${context.packageName}")
-                        ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    )
-                } catch (_: Exception) {
-                }
-            }
+        statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+            openBatteryOptimizationSettings()
         }
 
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===

@@ -79,12 +79,13 @@ object NumeronParser {
         val dayCells = doc.select("table.month-table td.month-day")
         if (dayCells.isEmpty()) return null
         for (cell in dayCells) {
-            if (cell.hasClass("past-day") || cell.hasClass("day-different-month")) continue
+            if (cell.hasClass("day-different-month")) continue
 
             val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
             val date = LocalDate.of(currentYear, currentMonth, dayNum)
 
-            if (date.isBefore(today)) continue
+            // Sallitaan eilinen yövuorojen varalta, jotka päättyvät tänään nykyhetken jälkeen
+            if (date.isBefore(today.minusDays(1))) continue
 
             cell.select(".month-item.work").forEach { item ->
                 val timesText = item.selectFirst(".itemTimes")?.text()?.trim() ?: ""
@@ -104,13 +105,14 @@ object NumeronParser {
                     }
 
                     val startDateTime = LocalDateTime.of(date, startTime)
-                    // Ei huomioida menneitä tai meneillään olevia vuoroja
-                    if (!startDateTime.isAfter(now)) return@forEach
-
                     var endDate = date
                     if (endTime.isBefore(startTime)) {
                         endDate = date.plusDays(1)
                     }
+                    val endDateTime = LocalDateTime.of(endDate, endTime)
+
+                    // Huomioidaan tulevat sekä parhaillaan meneillään olevat työvuorot
+                    if (!endDateTime.isAfter(now)) return@forEach
 
                     val parsed = parseShiftText(rawNameText)
                     val comment = listOf(parsed.shiftName, parsed.role)
@@ -121,7 +123,7 @@ object NumeronParser {
                         WorkShift(
                             title = "Työvuoro",
                             start = startDateTime,
-                            end = LocalDateTime.of(endDate, endTime),
+                            end = endDateTime,
                             isAllDayLeave = false,
                             location = parsed.location,
                             description = comment
@@ -133,13 +135,14 @@ object NumeronParser {
             cell.select(".month-item.absence").forEach { item ->
                 val nameText = item.selectFirst(".itemName")?.text()?.trim() ?: "Loma / Poissaolo"
                 val leaveStart = date.atStartOfDay()
-                if (!leaveStart.isAfter(now)) return@forEach
+                val leaveEnd = date.plusDays(1).atStartOfDay()
+                if (!leaveEnd.isAfter(now)) return@forEach
 
                 shifts.add(
                     WorkShift(
                         title = nameText,
                         start = leaveStart,
-                        end = date.plusDays(1).atStartOfDay(),
+                        end = leaveEnd,
                         isAllDayLeave = true,
                         location = "",
                         description = ""

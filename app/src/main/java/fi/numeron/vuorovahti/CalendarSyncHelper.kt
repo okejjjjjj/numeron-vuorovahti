@@ -205,7 +205,7 @@ object CalendarSyncHelper {
         val colorKeys = resolveGoogleShiftColorKeys(context, calendarId)
         val userTag = getUserTag(context)
 
-        val upcomingShifts = shifts.filter { it.start.isAfter(now) }
+        val upcomingShifts = shifts.filter { it.end.isAfter(now) }
 
         val ownedEvents = mutableListOf<ExistingEvent>()
         val unownedCandidateEvents = mutableListOf<ExistingEvent>()
@@ -711,13 +711,26 @@ object CalendarSyncHelper {
 
             if (!continuesFromPrev) {
                 val startTrigger = current.startMs - (minutesBefore * 60_000L)
+                val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                 if (startTrigger > now) {
-                    val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                     val code = setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
                     newReqCodes.add(code.toString())
                     if (startTrigger < earliestNextTriggerMs) {
                         earliestNextTriggerMs = startTrigger
                         earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
+                    }
+                } else if (current.endMs - now > 15L * 60_000L) {
+                    // Vuoro on jo meneillään tai alkamassa hetken kuluttua eikä sisäänleimausmuistutusta ole vielä lähetetty
+                    val alreadyNotifiedStart = prefs.getLong("notified_ongoing_start_ms", 0L)
+                    if (alreadyNotifiedStart != current.startMs) {
+                        prefs.edit().putLong("notified_ongoing_start_ms", current.startMs).apply()
+                        ShiftReminderReceiver().showReminderNotification(
+                            context = context,
+                            shiftTitle = current.displayTitle,
+                            timeStr = startStr,
+                            isEnding = false,
+                            rescheduleNext = false
+                        )
                     }
                 }
             }
