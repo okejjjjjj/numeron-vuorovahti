@@ -529,9 +529,9 @@ object SettingsDialogHelper {
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
         val authCard = createSectionCard("Kirjautuminen ja yhteys")
 
-        authCard.addView(createLabel("Organisaatiotunnus (esim. siunsote)"))
+        authCard.addView(createLabel("Organisaatiotunnus (esim. demo)"))
         val editOrg = EditText(context).apply {
-            hint = "siunsote"
+            hint = "demo"
             setText(prefs.getString("org_raw_input", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true

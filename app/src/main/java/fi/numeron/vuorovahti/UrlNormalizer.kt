@@ -12,9 +12,9 @@ object UrlNormalizer {
      * Muuntaa käyttäjän syötteen aina validiksi Numeron WFM -perusosoitteeksi.
      * Esimerkit:
      * - "demo" -> "demo"
-     * - "siunsote" -> "https://siunsote.numeronwfm.com"
-     * - "Siun Sote" -> "https://siunsote.numeronwfm.com"
-     * - "siunsote.numeronwfm.com/Login" -> "https://siunsote.numeronwfm.com"
+     * - "demo" -> "https://demo.numeronwfm.com"
+     * - "Hyvinvointialue Demo" -> "https://demo.numeronwfm.com"
+     * - "demo.numeronwfm.com/Login" -> "https://demo.numeronwfm.com"
      * - "https://oma.yritys.fi/wfm" -> "https://oma.yritys.fi/wfm" (jos oma domain)
      */
     fun normalizeOrgUrl(rawInput: String?): String {

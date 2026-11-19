@@ -302,7 +302,7 @@ object DemoModeHelper {
                         $statusBadge
                     </div>
                     <span class="punching-shift-times">07:00 - 15:00</span>
-                    <span class="punching-shift-workplace">Outokumpu Onni</span>
+                    <span class="punching-shift-workplace">Keskusyksikkö Helmi</span>
                     <span class="punching-shift-role">Aamu • Hoitaja</span>
                 </div>
 
@@ -817,16 +817,16 @@ object DemoModeHelper {
 
         return if (variant % 2 == 0) {
             listOf(
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(1), LocalTime.of(7, 0)), LocalDateTime.of(today.plusDays(1), LocalTime.of(15, 0)), false, "Outokumpu Onni", "Aamu • Hoitaja"),
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(2), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(2), LocalTime.of(21, 0)), false, "Outokumpu Onni", "Ilta • Hoitaja"),
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(3), LocalTime.of(21, 0)), LocalDateTime.of(today.plusDays(4), LocalTime.of(7, 0)), false, "Outokumpu Onni", "Yö • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(1), LocalTime.of(7, 0)), LocalDateTime.of(today.plusDays(1), LocalTime.of(15, 0)), false, "Keskusyksikkö Helmi", "Aamu • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(2), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(2), LocalTime.of(21, 0)), false, "Keskusyksikkö Helmi", "Ilta • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(3), LocalTime.of(21, 0)), LocalDateTime.of(today.plusDays(4), LocalTime.of(7, 0)), false, "Keskusyksikkö Helmi", "Yö • Hoitaja"),
                 WorkShift("Vuosiloma (Demo)", today.plusDays(5).atStartOfDay(), today.plusDays(7).atStartOfDay(), true)
             )
         } else {
             listOf(
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(1), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(1), LocalTime.of(21, 0)), false, "Outokumpu Onni", "Ilta • Hoitaja"),
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(2), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(2), LocalTime.of(21, 0)), false, "Outokumpu Onni", "Ilta • Hoitaja"),
-                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(4), LocalTime.of(7, 0)), LocalDateTime.of(today.plusDays(4), LocalTime.of(15, 0)), false, "Outokumpu Onni", "Aamu • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(1), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(1), LocalTime.of(21, 0)), false, "Keskusyksikkö Helmi", "Ilta • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(2), LocalTime.of(13, 0)), LocalDateTime.of(today.plusDays(2), LocalTime.of(21, 0)), false, "Keskusyksikkö Helmi", "Ilta • Hoitaja"),
+                WorkShift("Työvuoro", LocalDateTime.of(today.plusDays(4), LocalTime.of(7, 0)), LocalDateTime.of(today.plusDays(4), LocalTime.of(15, 0)), false, "Keskusyksikkö Helmi", "Aamu • Hoitaja"),
                 WorkShift("Vuosiloma (Demo)", today.plusDays(5).atStartOfDay(), today.plusDays(7).atStartOfDay(), true)
             )
         }
