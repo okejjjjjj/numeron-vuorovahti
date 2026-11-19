@@ -19,8 +19,8 @@ android {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 36
-        versionCode = 87
-        versionName = "3.2.3"
+        versionCode = 88
+        versionName = "3.2.4"
     }
 
     buildTypes {

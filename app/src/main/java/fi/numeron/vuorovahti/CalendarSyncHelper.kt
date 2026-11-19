@@ -713,14 +713,22 @@ object CalendarSyncHelper {
                 val startTrigger = current.startMs - (minutesBefore * 60_000L)
                 val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
                 if (startTrigger > now) {
-                    val code = setExactAlarmSafe(context, alarmManager, startTrigger, current.displayTitle, startStr, isEnding = false)
+                    val code = setExactAlarmSafe(
+                        context,
+                        alarmManager,
+                        startTrigger,
+                        current.displayTitle,
+                        startStr,
+                        isEnding = false,
+                        shiftStartMs = current.startMs
+                    )
                     newReqCodes.add(code.toString())
                     if (startTrigger < earliestNextTriggerMs) {
                         earliestNextTriggerMs = startTrigger
                         earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
                     }
-                } else if (current.endMs - now > 15L * 60_000L) {
-                    // Vuoro on jo meneillään tai alkamassa hetken kuluttua eikä sisäänleimausmuistutusta ole vielä lähetetty
+                } else if (now <= current.startMs + 10L * 60_000L && current.endMs - now > 30L * 60_000L) {
+                    // Vuoro on alkamassa hetken kuluttua tai juuri alkanut eikä sisäänleimausmuistutusta ole vielä lähetetty
                     val alreadyNotifiedStart = prefs.getLong("notified_ongoing_start_ms", 0L)
                     if (alreadyNotifiedStart != current.startMs) {
                         prefs.edit().putLong("notified_ongoing_start_ms", current.startMs).apply()
@@ -787,7 +795,8 @@ object CalendarSyncHelper {
         triggerMs: Long,
         title: String,
         timeStr: String,
-        isEnding: Boolean
+        isEnding: Boolean,
+        shiftStartMs: Long = 0L
     ): Int {
         val reqCode = ((triggerMs / 60_000L).toInt() * 2) + (if (isEnding) 1 else 0)
         val intent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
@@ -795,6 +804,9 @@ object CalendarSyncHelper {
             putExtra("SHIFT_TITLE", title)
             putExtra("SHIFT_TIME", timeStr)
             putExtra("IS_ENDING", isEnding)
+            if (shiftStartMs > 0L) {
+                putExtra("SHIFT_START_MS", shiftStartMs)
+            }
         }
         val pi = PendingIntent.getBroadcast(
             context,

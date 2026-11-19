@@ -71,6 +71,14 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             val title = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"
             val timeStr = intent.getStringExtra("SHIFT_TIME") ?: ""
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+            val shiftStartMs = intent.getLongExtra("SHIFT_START_MS", 0L)
+
+            if (!isEnding && shiftStartMs > 0L) {
+                context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putLong("notified_ongoing_start_ms", shiftStartMs)
+                    .apply()
+            }
 
             ShiftReminderReceiver().showReminderNotification(context, title, timeStr, isEnding)
 
