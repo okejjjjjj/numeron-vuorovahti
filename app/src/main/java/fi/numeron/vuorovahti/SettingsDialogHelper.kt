@@ -511,7 +511,7 @@ object SettingsDialogHelper {
             } else {
                 formatTimestamp(
                     prefs.getLong("next_calendar_sync_ms", 0L),
-                    if (en) "Weekdays at 09:30 and 14:30" else "Arkisin klo 09:30 ja 14:30",
+                    if (en) "Weekdays at 10:15–11:00 and 14:30–15:00" else "Arkisin klo 10:15–11:00 ja 14:30–15:00",
                     en
                 )
             }
@@ -526,7 +526,7 @@ object SettingsDialogHelper {
                         if (nextRun > System.currentTimeMillis() && nextRun < Long.MAX_VALUE) {
                             nextSyncValueTv.text = formatTimestamp(
                                 nextRun,
-                                if (en) "Weekdays at 09:30 and 14:30" else "Arkisin klo 09:30 ja 14:30",
+                                if (en) "Weekdays at 10:15–11:00 and 14:30–15:00" else "Arkisin klo 10:15–11:00 ja 14:30–15:00",
                                 en
                             )
                         }

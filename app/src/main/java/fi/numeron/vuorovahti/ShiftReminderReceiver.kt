@@ -277,18 +277,31 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         fun computeNextOfficeHourSyncMs(nowMs: Long = System.currentTimeMillis()): Long {
             val zone = java.time.ZoneId.systemDefault()
             val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDateTime()
-            val candidateDate = now.toLocalDate()
-            val slots = listOf(java.time.LocalTime.of(9, 30), java.time.LocalTime.of(14, 30))
+            val baseDate = now.toLocalDate()
+            val minAllowed = now.plusMinutes(5)
+            val windows = listOf(
+                Pair(java.time.LocalTime.of(10, 15), java.time.LocalTime.of(11, 0)),
+                Pair(java.time.LocalTime.of(14, 30), java.time.LocalTime.of(15, 0))
+            )
 
             for (dayOffset in 0..7) {
-                val date = candidateDate.plusDays(dayOffset.toLong())
+                val date = baseDate.plusDays(dayOffset.toLong())
                 val dow = date.dayOfWeek
                 if (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY) continue
-                for (slot in slots) {
-                    val candidate = java.time.LocalDateTime.of(date, slot)
-                    if (candidate.isAfter(now.plusMinutes(5))) {
-                        return candidate.atZone(zone).toInstant().toEpochMilli()
+                for ((startTime, endTime) in windows) {
+                    val windowStart = java.time.LocalDateTime.of(date, startTime)
+                    if (dayOffset == 0 && !now.isBefore(windowStart)) continue
+
+                    val windowEnd = java.time.LocalDateTime.of(date, endTime)
+                    val earliest = if (minAllowed.isAfter(windowStart)) minAllowed else windowStart
+                    val spanSeconds = java.time.Duration.between(earliest, windowEnd).seconds.coerceAtLeast(0L)
+                    val randomOffsetSec = if (spanSeconds > 0L) {
+                        kotlin.random.Random.nextLong(0L, spanSeconds + 1L)
+                    } else {
+                        0L
                     }
+                    val candidate = earliest.plusSeconds(randomOffsetSec)
+                    return candidate.atZone(zone).toInstant().toEpochMilli()
                 }
             }
             return nowMs + TimeUnit.HOURS.toMillis(12)
