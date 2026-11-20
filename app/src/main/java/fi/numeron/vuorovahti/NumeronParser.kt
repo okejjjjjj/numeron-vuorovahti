@@ -31,6 +31,17 @@ object NumeronParser {
 
     private fun parseShiftText(rawName: String): ParsedShiftText {
         val cleaned = rawName.trim().replace(Regex("^\\d+\\s*"), "").trim()
+        if (cleaned.isEmpty()) {
+            return ParsedShiftText(location = "", shiftName = "", role = "")
+        }
+        val noWorkRegex = Regex(
+            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|vuosiloma|sairausloma|poissaolo)",
+            RegexOption.IGNORE_CASE
+        )
+        if (noWorkRegex.containsMatchIn(cleaned)) {
+            val formatted = cleaned.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            return ParsedShiftText(location = formatted, shiftName = "", role = "")
+        }
         val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (tokens.isEmpty()) {
             return ParsedShiftText(location = "", shiftName = "", role = "")
