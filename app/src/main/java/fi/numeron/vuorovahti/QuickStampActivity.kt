@@ -203,7 +203,63 @@ class QuickStampActivity : AppCompatActivity() {
     }
 
         private fun buildGreeting(isEnding: Boolean): String {
+        val en = DemoModeHelper.isEnglish(this)
         val hour = LocalTime.now().hour
+        if (en) {
+            val enOptions = if (isEnding) {
+                when (hour) {
+                    in 5..10 -> listOf(
+                        "Good morning, thank you for the night shift!",
+                        "Morning has arrived – get some well-earned rest!",
+                        "Night shift complete, have a restful day!"
+                    )
+                    in 11..16 -> listOf(
+                        "Thanks for your shift, enjoy the rest of your day!",
+                        "Shift wrapped up – have a great afternoon!",
+                        "Work done for now, enjoy your time off!"
+                    )
+                    in 17..21 -> listOf(
+                        "Good evening, thank you for your shift!",
+                        "Evening shift done – have a relaxing evening!",
+                        "Thanks for today's shift, enjoy your evening!"
+                    )
+                    else -> listOf(
+                        "Good night, thank you for your shift!",
+                        "Thanks for the late shift, sleep well!",
+                        "Shift complete – have a peaceful night!"
+                    )
+                }
+            } else {
+                when (hour) {
+                    in 4..9 -> listOf(
+                        "Good morning and have a great shift!",
+                        "Morning! Wishing you a smooth and steady shift!",
+                        "Have a pleasant morning shift!"
+                    )
+                    in 10..13 -> listOf(
+                        "Good day and have a smooth shift!",
+                        "Wishing you a productive day shift!",
+                        "Have a great shift today!"
+                    )
+                    in 14..17 -> listOf(
+                        "Good afternoon and have a great evening shift!",
+                        "Wishing you a smooth evening shift!",
+                        "Have a pleasant afternoon and evening shift!"
+                    )
+                    in 18..21 -> listOf(
+                        "Good evening and have a smooth shift!",
+                        "Wishing you a calm and steady evening!",
+                        "Have a great shift tonight!"
+                    )
+                    else -> listOf(
+                        "Good night and have a smooth night shift!",
+                        "Wishing you a calm and steady night shift!",
+                        "Have a great night shift!"
+                    )
+                }
+            }
+            return enOptions.random()
+        }
         val options = if (isEnding) {
             when (hour) {
                 in 5..10 -> listOf(
@@ -348,10 +404,19 @@ class QuickStampActivity : AppCompatActivity() {
             nm.cancel(notifId)
         }
 
+        val en = DemoModeHelper.isEnglish(this)
         val isEnding = incoming?.getBooleanExtra("IS_ENDING", false) ?: false
         val isTest = incoming?.getBooleanExtra("IS_TEST", false) ?: false
-        val targetText = if (isEnding) "Ulos" else "Sisään"
-        val actionTitle = if (isEnding) "Leimataan ulos" else "Leimataan sisään"
+        val targetText = if (en) {
+            if (isEnding) "Out" else "In"
+        } else {
+            if (isEnding) "Ulos" else "Sisään"
+        }
+        val actionTitle = if (en) {
+            if (isEnding) "Clocking out" else "Clocking in"
+        } else {
+            if (isEnding) "Leimataan ulos" else "Leimataan sisään"
+        }
 
         greetingText.text = buildGreeting(isEnding)
         greetingText.visibility = View.VISIBLE
@@ -362,12 +427,12 @@ class QuickStampActivity : AppCompatActivity() {
         )
 
         if (isTest) {
-            statusText.text = "Testi-ilmoitus ($targetText)…"
+            statusText.text = if (en) "Test notification ($targetText)…" else "Testi-ilmoitus ($targetText)…"
             activeJob = scope.launch {
                 delay(650L)
                 showFinalState(
-                    title = "Testi-ilmoitus ($targetText)",
-                    subtitle = "Oikeaa leimausta ei suoritettu",
+                    title = if (en) "Test notification ($targetText)" else "Testi-ilmoitus ($targetText)",
+                    subtitle = if (en) "No actual stamp was recorded" else "Oikeaa leimausta ei suoritettu",
                     badgeText = "✓",
                     badgeFillHex = "#0F2E26",
                     badgeStrokeHex = "#10B981",
@@ -424,7 +489,8 @@ class QuickStampActivity : AppCompatActivity() {
     }
 
     private fun handleDemoQuickStamp(wantIn: Boolean, targetText: String) {
-        statusText.text = "Suoritetaan demoleimaus…"
+        val en = DemoModeHelper.isEnglish(this)
+        statusText.text = if (en) "Recording demo stamp…" else "Suoritetaan demoleimaus…"
         activeJob = scope.launch {
             delay(550L)
             val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
@@ -440,8 +506,8 @@ class QuickStampActivity : AppCompatActivity() {
                     .apply()
 
                 showFinalState(
-                    title = "Demoleimaus vahvistettu",
-                    subtitle = "$targetText • klo $nowTime",
+                    title = if (en) "Demo stamp confirmed" else "Demoleimaus vahvistettu",
+                    subtitle = if (en) "$targetText • at $nowTime" else "$targetText • klo $nowTime",
                     badgeText = "✓",
                     badgeFillHex = "#0F2E26",
                     badgeStrokeHex = "#10B981",
@@ -450,8 +516,8 @@ class QuickStampActivity : AppCompatActivity() {
                 )
             } else {
                 showFinalState(
-                    title = "Ei leimattu",
-                    subtitle = "Demotila: Olet jo tilassa $targetText",
+                    title = if (en) "Not stamped" else "Ei leimattu",
+                    subtitle = if (en) "Demo mode: Already clocked $targetText" else "Demotila: Olet jo tilassa $targetText",
                     badgeText = "!",
                     badgeFillHex = "#1E3A5F",
                     badgeStrokeHex = "#38BDF8",

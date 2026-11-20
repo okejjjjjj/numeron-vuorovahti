@@ -36,34 +36,37 @@ data class CalendarOption(
     val id: Long,
     val name: String,
     val accountName: String,
-    val accountType: String
+    val accountType: String,
+    val isEnglish: Boolean = false
 ) {
     override fun toString(): String {
-        val typeTag = if (accountType == "com.google") "Google" else "Paikallinen"
+        val typeTag = if (accountType == "com.google") "Google" else if (isEnglish) "Local" else "Paikallinen"
         return "$name ($accountName) [$typeTag]"
     }
 }
 
 data class ShiftColorChoice(
     val name: String,
-    val rgb: Int
+    val rgb: Int,
+    val enName: String = name,
+    val isEnglish: Boolean = false
 ) {
-    override fun toString(): String = name
+    override fun toString(): String = if (isEnglish) enName else name
 }
 
 object SettingsDialogHelper {
 
     val SHIFT_COLOR_CHOICES = listOf(
-        ShiftColorChoice("Basilika (Vihreä)", Color.rgb(11, 128, 67)),
-        ShiftColorChoice("Salvia (Vaaleanvihreä)", Color.rgb(51, 182, 121)),
-        ShiftColorChoice("Mandariini (Oranssi)", Color.rgb(244, 81, 30)),
-        ShiftColorChoice("Banaani (Keltainen)", Color.rgb(246, 191, 38)),
-        ShiftColorChoice("Viinirypäle (Lila)", Color.rgb(142, 36, 170)),
-        ShiftColorChoice("Mustikka (Sininen)", Color.rgb(63, 81, 181)),
-        ShiftColorChoice("Riikinkukko (Turkoosi)", Color.rgb(3, 155, 229)),
-        ShiftColorChoice("Flamingo (Vaaleanpunainen)", Color.rgb(230, 124, 115)),
-        ShiftColorChoice("Tomaatti (Punainen)", Color.rgb(213, 0, 0)),
-        ShiftColorChoice("Grafiitti (Harmaa)", Color.rgb(97, 97, 97))
+        ShiftColorChoice("Basilika (Vihreä)", Color.rgb(11, 128, 67), "Basil (Green)"),
+        ShiftColorChoice("Salvia (Vaaleanvihreä)", Color.rgb(51, 182, 121), "Sage (Light green)"),
+        ShiftColorChoice("Mandariini (Oranssi)", Color.rgb(244, 81, 30), "Tangerine (Orange)"),
+        ShiftColorChoice("Banaani (Keltainen)", Color.rgb(246, 191, 38), "Banana (Yellow)"),
+        ShiftColorChoice("Viinirypäle (Lila)", Color.rgb(142, 36, 170), "Grape (Purple)"),
+        ShiftColorChoice("Mustikka (Sininen)", Color.rgb(63, 81, 181), "Blueberry (Blue)"),
+        ShiftColorChoice("Riikinkukko (Turkoosi)", Color.rgb(3, 155, 229), "Peacock (Turquoise)"),
+        ShiftColorChoice("Flamingo (Vaaleanpunainen)", Color.rgb(230, 124, 115), "Flamingo (Pink)"),
+        ShiftColorChoice("Tomaatti (Punainen)", Color.rgb(213, 0, 0), "Tomato (Red)"),
+        ShiftColorChoice("Grafiitti (Harmaa)", Color.rgb(97, 97, 97), "Graphite (Gray)")
     )
 
     val DEFAULT_MORNING_RGB = Color.rgb(11, 128, 67)
@@ -71,6 +74,7 @@ object SettingsDialogHelper {
     val DEFAULT_NIGHT_RGB = Color.rgb(142, 36, 170)
 
     fun getAvailableCalendars(context: Context): List<CalendarOption> {
+        val en = DemoModeHelper.isEnglish(context)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
         }
@@ -94,11 +98,11 @@ object SettingsDialogHelper {
         )?.use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(0)
-                val name = cursor.getString(1) ?: "Kalenteri"
+                val name = cursor.getString(1) ?: (if (en) "Calendar" else "Kalenteri")
                 val account = cursor.getString(2) ?: ""
                 val accountType = cursor.getString(3) ?: ""
                 val isPrimary = cursor.getInt(4) == 1
-                list.add(CalendarOption(id, name, account, accountType))
+                list.add(CalendarOption(id, name, account, accountType, en))
                 if (accountType == "com.google" && (isPrimary || name.equals(account, ignoreCase = true))) {
                     val item = list.removeAt(list.lastIndex)
                     list.add(0, item)
@@ -108,9 +112,9 @@ object SettingsDialogHelper {
         return list.sortedBy { if (it.accountType == "com.google") 0 else 1 }
     }
 
-    private fun formatTimestamp(ms: Long, fallback: String): String {
+    private fun formatTimestamp(ms: Long, fallback: String, en: Boolean = false): String {
         if (ms <= 0L) return fallback
-        val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy 'klo' HH:mm")
+        val fmt = DateTimeFormatter.ofPattern(if (en) "dd.MM.yyyy 'at' HH:mm" else "dd.MM.yyyy 'klo' HH:mm")
         return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(fmt)
     }
 
@@ -135,6 +139,8 @@ object SettingsDialogHelper {
         onTestNotification: () -> Unit,
         onSaved: () -> Unit
     ) {
+        val en = DemoModeHelper.isEnglish(context)
+        val isDemoActive = DemoModeHelper.isDemoEnabled(context)
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val density = context.resources.displayMetrics.density
         fun dp(v: Int): Int = (v * density).toInt()
@@ -153,22 +159,60 @@ object SettingsDialogHelper {
         }
 
         val headerBar = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(Color.parseColor("#182332"))
             setPadding(dp(20), dp(18), dp(20), dp(14))
         }
-        headerBar.addView(TextView(context).apply {
-            text = "Vuorovahti – Asetukset"
+        val headerTitleCol = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        headerTitleCol.addView(TextView(context).apply {
+            text = if (en) "Vuorovahti – Settings" else "Vuorovahti – Asetukset"
             textSize = 19f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#F1F5F9"))
         })
-        headerBar.addView(TextView(context).apply {
-            text = "Tunnukset, kalenterisynkronointi ja ilmoitukset"
+        headerTitleCol.addView(TextView(context).apply {
+            text = if (en) "Credentials, calendar sync & notifications" else "Tunnukset, kalenterisynkronointi ja ilmoitukset"
             textSize = 12f
             setTextColor(Color.parseColor("#94A3B8"))
             setPadding(0, dp(2), 0, 0)
         })
+        headerBar.addView(headerTitleCol)
+
+        var dialogRef: AlertDialog? = null
+
+        if (isDemoActive) {
+            val langPill = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                background = makeCardBg("#111923", "#2A394A", 8)
+                setPadding(dp(2), dp(2), dp(2), dp(2))
+            }
+            fun makeLangBtn(label: String, targetLang: String, active: Boolean): TextView {
+                return TextView(context).apply {
+                    text = label
+                    textSize = 11f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor(if (active) "#FFFFFF" else "#94A3B8"))
+                    setPadding(dp(9), dp(5), dp(9), dp(5))
+                    if (active) {
+                        background = makeCardBg("#1982C4", "#38BDF8", 6)
+                    }
+                    setOnClickListener {
+                        DemoModeHelper.setDemoLanguage(context, targetLang)
+                        dialogRef?.dismiss()
+                        onSaved()
+                        showSettingsDialog(context, onManualSync, onManageChanges, onTestNotification, onSaved)
+                    }
+                }
+            }
+            langPill.addView(makeLangBtn("FI", "fi", !en))
+            langPill.addView(makeLangBtn("EN", "en", en))
+            headerBar.addView(langPill)
+        }
+
         rootContainer.addView(headerBar)
 
         val divider = View(context).apply {
@@ -333,7 +377,7 @@ object SettingsDialogHelper {
         }
 
         // === KORTTI 1: TILA JA AIKATAULUT ===
-        val statusCard = createSectionCard("Tila ja aikataulut")
+        val statusCard = createSectionCard(if (en) "Status and schedules" else "Tila ja aikataulut")
 
         val initialSyncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
         val initialShiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
@@ -456,13 +500,21 @@ object SettingsDialogHelper {
 
         addStatusRow(
             statusCard,
-            "Työvuorot ja kalenteri tarkistettu",
-            formatTimestamp(lastSyncMs, "Ei vielä tarkistettu")
+            if (en) "Shifts and calendar checked" else "Työvuorot ja kalenteri tarkistettu",
+            formatTimestamp(lastSyncMs, if (en) "Not checked yet" else "Ei vielä tarkistettu", en)
         )
         val (nextSyncValueTv, _) = addStatusRow(
             statusCard,
-            "Seuraava automaattinen tarkistus",
-            if (!anyBackgroundEnabled) "Pois käytöstä" else formatTimestamp(prefs.getLong("next_calendar_sync_ms", 0L), "Arkisin klo 09:30 ja 14:30")
+            if (en) "Next automatic check" else "Seuraava automaattinen tarkistus",
+            if (!anyBackgroundEnabled) {
+                if (en) "Disabled" else "Pois käytöstä"
+            } else {
+                formatTimestamp(
+                    prefs.getLong("next_calendar_sync_ms", 0L),
+                    if (en) "Weekdays at 09:30 and 14:30" else "Arkisin klo 09:30 ja 14:30",
+                    en
+                )
+            }
         )
         if (anyBackgroundEnabled) {
             try {
@@ -472,7 +524,11 @@ object SettingsDialogHelper {
                         val infos = future.get()
                         val nextRun = infos.firstOrNull { !it.state.isFinished }?.nextScheduleTimeMillis ?: 0L
                         if (nextRun > System.currentTimeMillis() && nextRun < Long.MAX_VALUE) {
-                            nextSyncValueTv.text = formatTimestamp(nextRun, "Arkisin klo 09:30 ja 14:30")
+                            nextSyncValueTv.text = formatTimestamp(
+                                nextRun,
+                                if (en) "Weekdays at 09:30 and 14:30" else "Arkisin klo 09:30 ja 14:30",
+                                en
+                            )
                         }
                     } catch (_: Exception) {
                     }
@@ -482,17 +538,17 @@ object SettingsDialogHelper {
         }
         addStatusRow(
             statusCard,
-            "Edellinen leimausnotifikaatio lähetetty",
-            formatTimestamp(lastNotifMs, "Ei vielä lähetetty"),
+            if (en) "Last stamp notification sent" else "Edellinen leimausnotifikaatio lähetetty",
+            formatTimestamp(lastNotifMs, if (en) "Not sent yet" else "Ei vielä lähetetty", en),
             if (lastNotifMs > 0L) lastNotifLabel else null
         )
         val (nextNotifValueTv, nextNotifSubTv) = addStatusRow(
             statusCard,
-            "Seuraava leimausnotifikaatio lähetetään",
+            if (en) "Next stamp notification scheduled" else "Seuraava leimausnotifikaatio lähetetään",
             when {
-                !initialShiftReminders -> "Leimausmuistutukset pois käytöstä"
-                nextNotifMs > System.currentTimeMillis() -> formatTimestamp(nextNotifMs, "")
-                else -> "Ei tulevia ajoitettuja hälytyksiä"
+                !initialShiftReminders -> if (en) "Stamp reminders disabled" else "Leimausmuistutukset pois käytöstä"
+                nextNotifMs > System.currentTimeMillis() -> formatTimestamp(nextNotifMs, "", en)
+                else -> if (en) "No upcoming scheduled alarms" else "Ei tulevia ajoitettuja hälytyksiä"
             },
             if (initialShiftReminders && nextNotifMs > System.currentTimeMillis()) nextNotifLabel else null
         )
@@ -500,12 +556,18 @@ object SettingsDialogHelper {
         val exactAlarmAllowed = canScheduleExactAlarmsCompat()
         val (exactAlarmValueTv, exactAlarmSubTv) = addStatusRow(
             statusCard,
-            "Tarkat vuorohälytykset",
-            if (exactAlarmAllowed) "Sallittu – muistutukset hälyttävät minuutilleen" else "Valinnainen (rajoitettu) – napauta salliaksesi",
+            if (en) "Exact shift alarms" else "Tarkat vuorohälytykset",
             if (exactAlarmAllowed) {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) "Napauta avataksesi hälytysasetukset" else null
+                if (en) "Allowed – reminders trigger on the exact minute" else "Sallittu – muistutukset hälyttävät minuutilleen"
             } else {
-                "Varmistaa minuutintarkat vuoromuistutukset"
+                if (en) "Optional (restricted) – tap to allow" else "Valinnainen (rajoitettu) – napauta salliaksesi"
+            },
+            if (exactAlarmAllowed) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    if (en) "Tap to open alarm settings" else "Napauta avataksesi hälytysasetukset"
+                } else null
+            } else {
+                if (en) "Ensures minute-accurate shift reminders" else "Varmistaa minuutintarkat vuoromuistutukset"
             }
         )
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -518,18 +580,26 @@ object SettingsDialogHelper {
         val ignoringBatteryOpt = powerManager.isIgnoringBatteryOptimizations(context.packageName)
         val (batteryOptValueTv, batteryOptSubTv) = addStatusRow(
             statusCard,
-            "Akun virransäästörajoitukset",
-            if (ignoringBatteryOpt) "Ei rajoitettu (taustasynkronointi aktiivinen)" else "Optimoitu – napauta poistaaksesi rajoitus",
-            if (ignoringBatteryOpt) "Napauta avataksesi virransäästöasetukset" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+            if (en) "Battery optimization" else "Akun virransäästörajoitukset",
+            if (ignoringBatteryOpt) {
+                if (en) "Unrestricted (background sync active)" else "Ei rajoitettu (taustasynkronointi aktiivinen)"
+            } else {
+                if (en) "Optimized – tap to remove restriction" else "Optimoitu – napauta poistaaksesi rajoitus"
+            },
+            if (ignoringBatteryOpt) {
+                if (en) "Tap to open battery settings" else "Napauta avataksesi virransäästöasetukset"
+            } else {
+                if (en) "Ensures background sync works in sleep mode" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
+            }
         )
         statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
             openBatteryOptimizationSettings()
         }
 
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
-        val authCard = createSectionCard("Kirjautuminen ja yhteys")
+        val authCard = createSectionCard(if (en) "Login and connection" else "Kirjautuminen ja yhteys")
 
-        authCard.addView(createLabel("Organisaatiotunnus (esim. demo)"))
+        authCard.addView(createLabel(if (en) "Organization ID (e.g. demo)" else "Organisaatiotunnus (esim. demo)"))
         val editOrg = EditText(context).apply {
             hint = "demo"
             setText(prefs.getString("org_raw_input", ""))
@@ -539,9 +609,9 @@ object SettingsDialogHelper {
         }
         authCard.addView(editOrg)
 
-        authCard.addView(createLabel("Käyttäjätunnus"))
+        authCard.addView(createLabel(if (en) "Username" else "Käyttäjätunnus"))
         val editUser = EditText(context).apply {
-            hint = "Käyttäjätunnus"
+            hint = if (en) "Username" else "Käyttäjätunnus"
             setText(SecureCredentialManager.getUsername(context) ?: "")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             isSingleLine = true
@@ -552,12 +622,12 @@ object SettingsDialogHelper {
         val existingPassword = SecureCredentialManager.getPassword(context) ?: ""
         val hasSavedPassword = existingPassword.isNotEmpty()
 
-        authCard.addView(createLabel("Salasana"))
+        authCard.addView(createLabel(if (en) "Password" else "Salasana"))
         val editPass = EditText(context).apply {
             hint = if (hasSavedPassword) {
-                "•••••••• (tallennettu – kirjoita uusi vaihtaaksesi)"
+                if (en) "•••••••• (saved – type new to change)" else "•••••••• (tallennettu – kirjoita uusi vaihtaaksesi)"
             } else {
-                "Salasana"
+                if (en) "Password" else "Salasana"
             }
             setText("")
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -574,7 +644,7 @@ object SettingsDialogHelper {
         }
 
         val btnTestCredentials = Button(context).apply {
-            text = "Testaa yhteys ja tunnukset"
+            text = if (en) "Test connection and credentials" else "Testaa yhteys ja tunnukset"
             styleButton(this, "#1E3A5F", "#0284C7", "#E0F2FE")
             setOnClickListener {
                 val normalizedUrl = UrlNormalizer.normalizeOrgUrl(editOrg.text.toString())
@@ -584,23 +654,27 @@ object SettingsDialogHelper {
 
                 if (normalizedUrl.isEmpty()) {
                     tvTestStatus.setTextColor(Color.parseColor("#EF4444"))
-                    tvTestStatus.text = "Virhe: Syötä organisaatiotunnus."
+                    tvTestStatus.text = if (en) "Error: Enter organization ID." else "Virhe: Syötä organisaatiotunnus."
                     return@setOnClickListener
                 }
                 if (user.isEmpty() || pass.isEmpty()) {
                     tvTestStatus.setTextColor(Color.parseColor("#EF4444"))
-                    tvTestStatus.text = "Virhe: Syötä käyttäjätunnus ja salasana."
+                    tvTestStatus.text = if (en) "Error: Enter username and password." else "Virhe: Syötä käyttäjätunnus ja salasana."
                     return@setOnClickListener
                 }
                 if (DemoModeHelper.isDemoCredentials(editOrg.text.toString(), user, pass)) {
                     tvTestStatus.setTextColor(Color.parseColor("#10B981"))
-                    tvTestStatus.text = "Demotila tunnistettu! Tallenna asetukset ottaaksesi demotilan käyttöön."
+                    tvTestStatus.text = if (en) {
+                        "Demo mode recognized! Save settings to enable demo mode."
+                    } else {
+                        "Demotila tunnistettu! Tallenna asetukset ottaaksesi demotilan käyttöön."
+                    }
                     return@setOnClickListener
                 }
 
                 isEnabled = false
                 tvTestStatus.setTextColor(Color.parseColor("#38BDF8"))
-                tvTestStatus.text = "Testataan osoitetta $normalizedUrl..."
+                tvTestStatus.text = if (en) "Testing address $normalizedUrl..." else "Testataan osoitetta $normalizedUrl..."
 
                 testLoginWithHiddenWebView(context, normalizedUrl, user, pass) { success, message ->
                     isEnabled = true
@@ -615,7 +689,7 @@ object SettingsDialogHelper {
         authCard.addView(tvTestStatus)
 
         // === KORTTI 3: KALENTERISYNRONOINTI JA VÄRIKOODIT ===
-        val calCard = createSectionCard("Kalenterisynkronointi ja värikoodit")
+        val calCard = createSectionCard(if (en) "Calendar sync and color codes" else "Kalenterisynkronointi ja värikoodit")
 
         val calDetailsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -624,14 +698,14 @@ object SettingsDialogHelper {
 
         val switchSyncCalendar = createToggleRow(
             parent = calCard,
-            title = "Synkronoi työvuorot Google-kalenteriin",
-            subtitle = "Vie työvuorot ja poissaolot valittuun kalenteriin automaattisesti",
+            title = if (en) "Sync shifts to Google Calendar" else "Synkronoi työvuorot Google-kalenteriin",
+            subtitle = if (en) "Automatically export work shifts and leaves to the selected calendar" else "Vie työvuorot ja poissaolot valittuun kalenteriin automaattisesti",
             initialChecked = initialSyncCalendar
         ) { enabled ->
             calDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
         }
 
-        calDetailsContainer.addView(createLabel("Kohdekalenteri"))
+        calDetailsContainer.addView(createLabel(if (en) "Target calendar" else "Kohdekalenteri"))
         val calendars = getAvailableCalendars(context)
         val spinnerCalendar = Spinner(context).apply { styleSpinner(this) }
         if (calendars.isNotEmpty()) {
@@ -642,9 +716,9 @@ object SettingsDialogHelper {
         }
         calDetailsContainer.addView(spinnerCalendar)
 
-        calDetailsContainer.addView(createLabel("Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
+        calDetailsContainer.addView(createLabel(if (en) "Person tag for shared calendar (optional, e.g. Alex)" else "Henkilötunniste yhteiskalenteriin (valinnainen, esim. Jukka)"))
         val editUserTag = EditText(context).apply {
-            hint = "Jätä tyhjäksi omassa kalenterissa"
+            hint = if (en) "Leave empty for personal calendar" else "Jätä tyhjäksi omassa kalenterissa"
             setText(prefs.getString("calendar_user_tag", ""))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             isSingleLine = true
@@ -652,30 +726,32 @@ object SettingsDialogHelper {
         }
         calDetailsContainer.addView(editUserTag)
 
+        val localizedColors = SHIFT_COLOR_CHOICES.map { it.copy(isEnglish = en) }
+
         fun createColorSpinner(savedRgb: Int): Spinner {
             val spinner = Spinner(context).apply { styleSpinner(this) }
-            spinner.adapter = createDarkAdapter(SHIFT_COLOR_CHOICES)
-            val idx = SHIFT_COLOR_CHOICES.indexOfFirst { it.rgb == savedRgb }
+            spinner.adapter = createDarkAdapter(localizedColors)
+            val idx = localizedColors.indexOfFirst { it.rgb == savedRgb }
             if (idx >= 0) spinner.setSelection(idx)
             return spinner
         }
 
-        calDetailsContainer.addView(createLabel("Aamuvuoron väri"))
+        calDetailsContainer.addView(createLabel(if (en) "Morning shift color" else "Aamuvuoron väri"))
         val spinnerMorningColor = createColorSpinner(prefs.getInt("color_morning_rgb", DEFAULT_MORNING_RGB))
         calDetailsContainer.addView(spinnerMorningColor)
 
-        calDetailsContainer.addView(createLabel("Iltavuoron väri"))
+        calDetailsContainer.addView(createLabel(if (en) "Evening shift color" else "Iltavuoron väri"))
         val spinnerEveningColor = createColorSpinner(prefs.getInt("color_evening_rgb", DEFAULT_EVENING_RGB))
         calDetailsContainer.addView(spinnerEveningColor)
 
-        calDetailsContainer.addView(createLabel("Yövuoron väri"))
+        calDetailsContainer.addView(createLabel(if (en) "Night shift color" else "Yövuoron väri"))
         val spinnerNightColor = createColorSpinner(prefs.getInt("color_night_rgb", DEFAULT_NIGHT_RGB))
         calDetailsContainer.addView(spinnerNightColor)
 
         calCard.addView(calDetailsContainer)
 
         // === KORTTI 4: MUISTUTUKSET JA ILMOITUKSET ===
-        val actionCard = createSectionCard("Muistutukset ja ilmoitukset")
+        val actionCard = createSectionCard(if (en) "Reminders and notifications" else "Muistutukset ja ilmoitukset")
 
         val reminderDetailsContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -684,14 +760,14 @@ object SettingsDialogHelper {
 
         val switchShiftReminders = createToggleRow(
             parent = actionCard,
-            title = "Työvuorojen leimausmuistutukset",
-            subtitle = "Ilmoitus ennen vuoron alkua ja loppua pikaleimauspainikkeella (toimii myös ilman kalenterisynkronointia)",
+            title = if (en) "Shift stamp reminders" else "Työvuorojen leimausmuistutukset",
+            subtitle = if (en) "Notification before shift start and end with quick-stamp action (works without calendar sync)" else "Ilmoitus ennen vuoron alkua ja loppua pikaleimauspainikkeella (toimii myös ilman kalenterisynkronointia)",
             initialChecked = initialShiftReminders
         ) { enabled ->
             reminderDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
         }
 
-        reminderDetailsContainer.addView(createLabel("Muistutus ennen vuoroa (min)"))
+        reminderDetailsContainer.addView(createLabel(if (en) "Reminder before shift (min)" else "Muistutus ennen vuoroa (min)"))
         val editReminder = EditText(context).apply {
             setText(prefs.getInt("reminder_minutes", 30).toString())
             inputType = InputType.TYPE_CLASS_NUMBER
@@ -720,13 +796,17 @@ object SettingsDialogHelper {
             }
         }
         exactAlarmNoticeBox.addView(TextView(context).apply {
-            text = "Tarkat vuorohälytykset (valinnainen)"
+            text = if (en) "Exact shift alarms (optional)" else "Tarkat vuorohälytykset (valinnainen)"
             textSize = 13f
             setTypeface(null, Typeface.BOLD)
             setTextColor(Color.parseColor("#F1F5F9"))
         })
         exactAlarmNoticeBox.addView(TextView(context).apply {
-            text = "Muistutukset toimivat ilmankin, mutta sallimalla tarkat hälytykset ne tulevat minuutilleen. Napauta avataksesi asetukset →"
+            text = if (en) {
+                "Reminders work without it, but enabling exact alarms ensures minute-accurate delivery. Tap to open settings →"
+            } else {
+                "Muistutukset toimivat ilmankin, mutta sallimalla tarkat hälytykset ne tulevat minuutilleen. Napauta avataksesi asetukset →"
+            }
             textSize = 12f
             setTextColor(Color.parseColor("#38BDF8"))
             setPadding(0, dp(3), 0, 0)
@@ -737,41 +817,45 @@ object SettingsDialogHelper {
 
         val switchTrackRequests = createToggleRow(
             parent = actionCard,
-            title = "Ilmoita käsitellyistä toiveista",
-            subtitle = "Lähettää ilmoituksen, kun työvuoro- tai lomatoiveesi hyväksytään tai hylätään",
+            title = if (en) "Notify about processed requests" else "Ilmoita käsitellyistä toiveista",
+            subtitle = if (en) "Sends a notification when your shift or leave request is approved or rejected" else "Lähettää ilmoituksen, kun työvuoro- tai lomatoiveesi hyväksytään tai hylätään",
             initialChecked = initialTrackRequests
         )
 
         val btnSync = Button(context).apply {
-            text = "Hae ja päivitä työvuorot nyt"
+            text = if (en) "Fetch and update shifts now" else "Hae ja päivitä työvuorot nyt"
             styleButton(this, "#1982C4", "#38BDF8", "#FFFFFF")
         }
         actionCard.addView(btnSync)
 
         val btnChanges = Button(context).apply {
-            text = "Hallitse kalenterimuutoksia"
+            text = if (en) "Manage calendar changes" else "Hallitse kalenterimuutoksia"
             styleButton(this, "#233040", "#37475A", "#F1F5F9")
         }
         actionCard.addView(btnChanges)
 
         val btnTestNotif = Button(context).apply {
-            text = "Lähetä testi-ilmoitus"
+            text = if (en) "Send test notification" else "Lähetä testi-ilmoitus"
             styleButton(this, "#233040", "#37475A", "#F1F5F9")
         }
         actionCard.addView(btnTestNotif)
 
         // === KORTTI 5: VAPAAEHTOINEN TUKI (GOOGLE PLAY BILLING) ===
-        val supportCard = createSectionCard("Tue sovelluksen kehitystä")
+        val supportCard = createSectionCard(if (en) "Support app development" else "Tue sovelluksen kehitystä")
 
         supportCard.addView(TextView(context).apply {
-            text = "Vuorovahti on maksuton ja itsenäinen harrastusprojekti. Kaikki ominaisuudet ovat aina kaikkien käytössä. Halutessasi voit tukea kehitystä vapaaehtoisella kertamaksulla:"
+            text = if (en) {
+                "Vuorovahti is a free, independent hobby project. All features are always available to everyone. If you wish, you can support development with a voluntary one-time tip:"
+            } else {
+                "Vuorovahti on maksuton ja itsenäinen harrastusprojekti. Kaikki ominaisuudet ovat aina kaikkien käytössä. Halutessasi voit tukea kehitystä vapaaehtoisella kertamaksulla:"
+            }
             textSize = 12.5f
             setTextColor(Color.parseColor("#CBD5E1"))
             setPadding(0, 0, 0, dp(8))
         })
 
         val tvSupportStatus = TextView(context).apply {
-            text = "Haetaan tukivaihtoehtoja Google Playsta..."
+            text = if (en) "Fetching support options from Google Play..." else "Haetaan tukivaihtoehtoja Google Playsta..."
             textSize = 12f
             setTextColor(Color.parseColor("#94A3B8"))
             setPadding(0, dp(2), 0, dp(4))
@@ -786,11 +870,11 @@ object SettingsDialogHelper {
         lateinit var billingHelper: SupportBillingHelper
 
         val btnFallbackSupport = Button(context).apply {
-            text = "☕ Tarjoa kehittäjälle kahvit"
+            text = if (en) "☕ Buy the developer a coffee" else "☕ Tarjoa kehittäjälle kahvit"
             styleButton(this, "#1E3A5F", "#0284C7", "#E0F2FE")
             setOnClickListener {
                 tvSupportStatus.setTextColor(Color.parseColor("#38BDF8"))
-                tvSupportStatus.text = "Yhdistetään Google Playhin..."
+                tvSupportStatus.text = if (en) "Connecting to Google Play..." else "Yhdistetään Google Playhin..."
                 billingHelper.startConnection()
             }
         }
@@ -800,13 +884,13 @@ object SettingsDialogHelper {
             context = context,
             onProductsLoaded = { products ->
                 tvSupportStatus.setTextColor(Color.parseColor("#94A3B8"))
-                tvSupportStatus.text = "Valitse sopiva kertatuki (Google Play):"
+                tvSupportStatus.text = if (en) "Choose a one-time tip (Google Play):" else "Valitse sopiva kertatuki (Google Play):"
                 tipButtonsContainer.removeAllViews()
 
                 val icons = listOf("☕", "🥐", "🍲")
                 products.forEachIndexed { index, product ->
                     val price = product.oneTimePurchaseOfferDetails?.formattedPrice ?: ""
-                    val title = product.name.ifBlank { "Tue kehitystä" }
+                    val title = product.name.ifBlank { if (en) "Support development" else "Tue kehitystä" }
                     val icon = icons.getOrElse(index) { "☕" }
                     val btnTier = Button(context).apply {
                         text = if (price.isNotEmpty()) "$icon $title — $price" else "$icon $title"
@@ -827,7 +911,6 @@ object SettingsDialogHelper {
         )
         billingHelper.startConnection()
 
-
         // Alapalkki: Peruuta ja Tallenna
         val bottomDivider = View(context).apply {
             setBackgroundColor(Color.parseColor("#2A394A"))
@@ -842,7 +925,7 @@ object SettingsDialogHelper {
         }
 
         val btnCancel = Button(context).apply {
-            text = "Peruuta"
+            text = if (en) "Cancel" else "Peruuta"
             background = makeCardBg("#233040", "#37475A", 8)
             setTextColor(Color.parseColor("#CBD5E1"))
             isAllCaps = false
@@ -857,7 +940,7 @@ object SettingsDialogHelper {
         }
 
         val btnSave = Button(context).apply {
-            text = "Tallenna"
+            text = if (en) "Save" else "Tallenna"
             background = makeCardBg("#1982C4", "#38BDF8", 8)
             setTextColor(Color.parseColor("#FFFFFF"))
             isAllCaps = false
@@ -868,9 +951,14 @@ object SettingsDialogHelper {
 
         footerBar.addView(btnCancel)
         footerBar.addView(btnSave)
-                // Vastuuvapauslauseke (epävirallinen sovellus)
+
+        // Vastuuvapauslauseke (epävirallinen sovellus)
         val tvDisclaimer = TextView(context).apply {
-            text = "Tämä on itsenäinen, epävirallinen kolmannen osapuolen asiakassovellus. Numeron vuorovahti ei ole millään tavalla sidoksissa Vismaan, Numeroniin tai muihin mahdollisiin tahoihin."
+            text = if (en) {
+                "This is an independent, unofficial third-party client application. Numeron vuorovahti is not affiliated with Visma, Numeron, or any other entity."
+            } else {
+                "Tämä on itsenäinen, epävirallinen kolmannen osapuolen asiakassovellus. Numeron vuorovahti ei ole millään tavalla sidoksissa Vismaan, Numeroniin tai muihin mahdollisiin tahoihin."
+            }
             textSize = 11f
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
@@ -883,6 +971,7 @@ object SettingsDialogHelper {
         val dialog = AlertDialog.Builder(context)
             .setView(rootContainer)
             .create()
+        dialogRef = dialog
 
         dialog.window?.setBackgroundDrawable(makeCardBg("#0F1722", "#2A394A", 14))
 
@@ -969,13 +1058,19 @@ object SettingsDialogHelper {
                 }
                 if (targetCalId != null && futureCount > 0) {
                     AlertDialog.Builder(context)
-                        .setTitle("Poistetaanko kalenterimerkinnät?")
-                        .setMessage("Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?")
-                        .setPositiveButton("Poista merkinnät") { _, _ ->
+                        .setTitle(if (en) "Delete calendar events?" else "Poistetaanko kalenterimerkinnät?")
+                        .setMessage(
+                            if (en) {
+                                "Calendar sync was disabled. Do you want to delete the upcoming events added by this app to Google Calendar ($futureCount events)?"
+                            } else {
+                                "Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?"
+                            }
+                        )
+                        .setPositiveButton(if (en) "Delete events" else "Poista merkinnät") { _, _ ->
                             CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
                             finishSave(forceSync = missingCacheForReminders)
                         }
-                        .setNegativeButton("Jätä kalenteriin") { _, _ ->
+                        .setNegativeButton(if (en) "Keep in calendar" else "Jätä kalenteriin") { _, _ ->
                             finishSave()
                         }
                         .setCancelable(false)
@@ -994,20 +1089,20 @@ object SettingsDialogHelper {
             val nowExactAllowed = canScheduleExactAlarmsCompat()
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
                 if (nowExactAllowed) {
-                    exactAlarmValueTv.text = "Sallittu – muistutukset hälyttävät minuutilleen"
+                    exactAlarmValueTv.text = if (en) "Allowed – reminders trigger on the exact minute" else "Sallittu – muistutukset hälyttävät minuutilleen"
                     exactAlarmValueTv.setTextColor(Color.parseColor("#34D399"))
-                    exactAlarmSubTv.text = "Napauta avataksesi hälytysasetukset"
+                    exactAlarmSubTv.text = if (en) "Tap to open alarm settings" else "Napauta avataksesi hälytysasetukset"
                     exactAlarmSubTv.visibility = View.VISIBLE
                     exactAlarmNoticeBox.visibility = View.GONE
                 } else {
-                    exactAlarmValueTv.text = "Valinnainen (rajoitettu) – napauta salliaksesi"
+                    exactAlarmValueTv.text = if (en) "Optional (restricted) – tap to allow" else "Valinnainen (rajoitettu) – napauta salliaksesi"
                     exactAlarmValueTv.setTextColor(Color.parseColor("#F1F5F9"))
-                    exactAlarmSubTv.text = "Varmistaa minuutintarkat vuoromuistutukset"
+                    exactAlarmSubTv.text = if (en) "Ensures minute-accurate shift reminders" else "Varmistaa minuutintarkat vuoromuistutukset"
                     exactAlarmSubTv.visibility = View.VISIBLE
                     exactAlarmNoticeBox.visibility = View.VISIBLE
                 }
             } else {
-                exactAlarmValueTv.text = "Sallittu"
+                exactAlarmValueTv.text = if (en) "Allowed" else "Sallittu"
                 exactAlarmValueTv.setTextColor(Color.parseColor("#34D399"))
                 exactAlarmSubTv.visibility = View.GONE
                 exactAlarmNoticeBox.visibility = View.GONE
@@ -1015,14 +1110,14 @@ object SettingsDialogHelper {
 
             val nowIgnoringBattery = powerManager.isIgnoringBatteryOptimizations(context.packageName)
             if (nowIgnoringBattery) {
-                batteryOptValueTv.text = "Ei rajoitettu (taustasynkronointi aktiivinen)"
+                batteryOptValueTv.text = if (en) "Unrestricted (background sync active)" else "Ei rajoitettu (taustasynkronointi aktiivinen)"
                 batteryOptValueTv.setTextColor(Color.parseColor("#34D399"))
-                batteryOptSubTv.text = "Napauta avataksesi virransäästöasetukset"
+                batteryOptSubTv.text = if (en) "Tap to open battery settings" else "Napauta avataksesi virransäästöasetukset"
                 batteryOptSubTv.visibility = View.VISIBLE
             } else {
-                batteryOptValueTv.text = "Optimoitu – napauta poistaaksesi rajoitus"
+                batteryOptValueTv.text = if (en) "Optimized – tap to remove restriction" else "Optimoitu – napauta poistaaksesi rajoitus"
                 batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
-                batteryOptSubTv.text = "Varmistaa tausta-ajojen toiminnan lepotilassa"
+                batteryOptSubTv.text = if (en) "Ensures background sync works in sleep mode" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
                 batteryOptSubTv.visibility = View.VISIBLE
             }
 
@@ -1032,9 +1127,9 @@ object SettingsDialogHelper {
                 val updatedNextLabel = prefs.getString("next_reminder_label", "") ?: ""
                 val remindersOn = switchShiftReminders.isChecked
                 nextNotifValueTv.text = when {
-                    !remindersOn -> "Leimausmuistutukset pois käytöstä"
-                    updatedNextMs > System.currentTimeMillis() -> formatTimestamp(updatedNextMs, "")
-                    else -> "Ei tulevia ajoitettuja hälytyksiä"
+                    !remindersOn -> if (en) "Stamp reminders disabled" else "Leimausmuistutukset pois käytöstä"
+                    updatedNextMs > System.currentTimeMillis() -> formatTimestamp(updatedNextMs, "", en)
+                    else -> if (en) "No upcoming scheduled alarms" else "Ei tulevia ajoitettuja hälytyksiä"
                 }
                 if (remindersOn && updatedNextMs > System.currentTimeMillis() && updatedNextLabel.isNotEmpty()) {
                     nextNotifSubTv.text = updatedNextLabel

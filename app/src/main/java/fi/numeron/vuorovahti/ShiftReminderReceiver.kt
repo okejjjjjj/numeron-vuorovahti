@@ -56,8 +56,10 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val count = CalendarChangeTracker.revertAllChanges(appCtx)
+                        val en = DemoModeHelper.isEnglish(appCtx)
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(appCtx, "Peruttu $count kalenterimuutosta", Toast.LENGTH_LONG).show()
+                            val msg = if (en) "Reverted $count calendar changes" else "Peruttu $count kalenterimuutosta"
+                            Toast.makeText(appCtx, msg, Toast.LENGTH_LONG).show()
                         }
                     } finally {
                         pendingResult.finish()
@@ -114,14 +116,31 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             nm.createNotificationChannel(channel)
         }
 
+        val en = DemoModeHelper.isEnglish(context)
         val notifId = if (isEnding) 2002 else 1001
-        val fullButtonLabel = if (isEnding) "LEIMAA ULOS" else "LEIMAA SISÄÄN"
-        val shortButtonLabel = if (isEnding) "ULOS" else "SISÄÄN"
-        val contentTitle = if (isEnding) "Vuoro päättyy klo $timeStr" else "Vuoro alkaa klo $timeStr"
+        val fullButtonLabel = if (en) {
+            if (isEnding) "CLOCK OUT" else "CLOCK IN"
+        } else {
+            if (isEnding) "LEIMAA ULOS" else "LEIMAA SISÄÄN"
+        }
+        val shortButtonLabel = if (en) {
+            if (isEnding) "OUT" else "IN"
+        } else {
+            if (isEnding) "ULOS" else "SISÄÄN"
+        }
+        val contentTitle = if (en) {
+            if (isEnding) "Shift ends at $timeStr" else "Shift starts at $timeStr"
+        } else {
+            if (isEnding) "Vuoro päättyy klo $timeStr" else "Vuoro alkaa klo $timeStr"
+        }
         val btnBgRes = if (isEnding) R.drawable.bg_notif_btn_out else R.drawable.bg_notif_btn_in
 
-        val dirTag = if (isEnding) "Ulos" else "Sisään"
-        val testSuffix = if (isTest) " [Testi]" else ""
+        val dirTag = if (en) {
+            if (isEnding) "Out" else "In"
+        } else {
+            if (isEnding) "Ulos" else "Sisään"
+        }
+        val testSuffix = if (isTest) (if (en) " [Test]" else " [Testi]") else ""
         context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             .edit()
             .putLong("last_reminder_sent_ms", System.currentTimeMillis())
@@ -203,14 +222,17 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 )
             }
 
+            val en = DemoModeHelper.isEnglish(context)
             val summary = CalendarChangeTracker.formatSummary(changes)
             val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
             if (changes.size > 6) {
-                shownItems.add("...ja ${changes.size - 6} muuta muutosta")
+                shownItems.add(
+                    if (en) "...and ${changes.size - 6} more changes" else "...ja ${changes.size - 6} muuta muutosta"
+                )
             }
             val detailsLines = shownItems.joinToString("\n")
             val collapsedText = shownItems.firstOrNull()
-                ?: "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia"
+                ?: if (en) "Tap to edit or undo individual changes" else "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia"
 
             // Avaa sovelluksessa suoraan muutosten muokkaus- ja perumisikkunan
             val manageIntent = Intent(context, MainActivity::class.java).apply {
@@ -237,14 +259,16 @@ class ShiftReminderReceiver : BroadcastReceiver() {
 
             val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
-                .setContentTitle("Google-kalenteria päivitetty ($summary)")
+                .setContentTitle(
+                    if (en) "Google Calendar updated ($summary)" else "Google-kalenteria päivitetty ($summary)"
+                )
                 .setContentText(collapsedText)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(detailsLines))
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(managePi)
-                .addAction(android.R.drawable.ic_menu_edit, "Muokkaa / Peru", managePi)
-                .addAction(android.R.drawable.ic_menu_revert, "Peru kaikki", revertAllPi)
+                .addAction(android.R.drawable.ic_menu_edit, if (en) "Edit / Undo" else "Muokkaa / Peru", managePi)
+                .addAction(android.R.drawable.ic_menu_revert, if (en) "Undo all" else "Peru kaikki", revertAllPi)
                 .build()
 
             nm.notify(NOTIF_ID_CALENDAR_CHANGES, notification)

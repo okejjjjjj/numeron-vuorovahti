@@ -141,7 +141,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateDemoBanner() {
-        bannerDemoMode.visibility = if (DemoModeHelper.isDemoEnabled(this)) View.VISIBLE else View.GONE
+        val isDemo = DemoModeHelper.isDemoEnabled(this)
+        val en = DemoModeHelper.isEnglish(this)
+        bannerDemoMode.visibility = if (isDemo) View.VISIBLE else View.GONE
+        bannerDemoMode.text = if (en) {
+            "DEMO MODE ACTIVE – Try stamping, shifts & notifications"
+        } else {
+            "DEMOTILA AKTIIVINEN – Kokeile leimausta, vuoroja ja ilmoituksia"
+        }
+        btnNavStamp.text = if (en) "Stamp" else "Leimaus"
+        btnNavRequests.text = if (en) "Requests" else "Toiveet"
+        btnNavShifts.text = if (en) "Shifts" else "Vuorot"
     }
 
     private var transitionOverlay: FrameLayout? = null
@@ -375,10 +385,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun triggerTestReminderNotification() {
+        val en = DemoModeHelper.isEnglish(this)
         val timeStr = LocalTime.now().plusMinutes(30).format(DateTimeFormatter.ofPattern("HH:mm"))
         ShiftReminderReceiver().showReminderNotification(
             context = this,
-            shiftTitle = "Aamuvuoro (Testi-ilmoitus)",
+            shiftTitle = if (en) "Morning Shift (Test notification)" else "Aamuvuoro (Testi-ilmoitus)",
             timeStr = timeStr,
             isEnding = false,
             isTest = true
@@ -416,20 +427,25 @@ class MainActivity : AppCompatActivity() {
                 CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
 
                 withContext(Dispatchers.Main) {
+                    val en = DemoModeHelper.isEnglish(this@MainActivity)
                     if (syncCalendar && calId == null) {
-                        Toast.makeText(this@MainActivity, "Kalenterioikeus tai kalenteri puuttuu", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            this@MainActivity,
+                            if (en) "Calendar permission or calendar missing" else "Kalenterioikeus tai kalenteri puuttuu",
+                            Toast.LENGTH_LONG
+                        ).show()
                     } else if (changes.isNotEmpty()) {
                         Toast.makeText(
                             this@MainActivity,
-                            "Kalenterimuutokset: ${CalendarChangeTracker.formatSummary(changes)}",
+                            if (en) "Calendar changes: ${CalendarChangeTracker.formatSummary(changes)}" else "Kalenterimuutokset: ${CalendarChangeTracker.formatSummary(changes)}",
                             Toast.LENGTH_LONG
                         ).show()
                         CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
                     } else {
                         val msg = if (syncCalendar) {
-                            "Demovuorot ovat jo ajan tasalla kalenterissa"
+                            if (en) "Demo shifts are already up to date in calendar" else "Demovuorot ovat jo ajan tasalla kalenterissa"
                         } else {
-                            "Demovuorot ja muistutukset päivitetty (${demoShifts.size} vuoroa)"
+                            if (en) "Demo shifts and reminders updated (${demoShifts.size} shifts)" else "Demovuorot ja muistutukset päivitetty (${demoShifts.size} vuoroa)"
                         }
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                     }
@@ -681,8 +697,10 @@ class MainActivity : AppCompatActivity() {
                 webView.evaluateJavascript("DemoBridge.toggleStamp()", null)
                 webView.postDelayed({ finishAndRemoveTask() }, 1200L)
             } else {
-                val stateStr = if (wantIn) "Sisään" else "Ulos"
-                Toast.makeText(this, "Demotila: Olet jo leimannut tilaan $stateStr", Toast.LENGTH_SHORT).show()
+                val en = DemoModeHelper.isEnglish(this)
+                val stateStr = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
+                val msg = if (en) "Demo mode: Already clocked $stateStr" else "Demotila: Olet jo leimannut tilaan $stateStr"
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
                 webView.postDelayed({ finishAndRemoveTask() }, 1200L)
             }
         }
