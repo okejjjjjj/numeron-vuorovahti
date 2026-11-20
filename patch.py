@@ -66,90 +66,43 @@ def increment_version() -> None:
     gradle_file.write_text(text, encoding="utf-8")
 
 
-def patch_shift_reminder_receiver() -> None:
-    path = find_file("ShiftReminderReceiver.kt")
+def patch_numeron_parser() -> None:
+    path = find_file("NumeronParser.kt")
     src = path.read_text(encoding="utf-8")
 
-    old_fn = r"""        fun computeNextOfficeHourSyncMs(nowMs: Long = System.currentTimeMillis()): Long {
-            val zone = java.time.ZoneId.systemDefault()
-            val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDateTime()
-            val candidateDate = now.toLocalDate()
-            val slots = listOf(java.time.LocalTime.of(9, 30), java.time.LocalTime.of(14, 30))
-
-            for (dayOffset in 0..7) {
-                val date = candidateDate.plusDays(dayOffset.toLong())
-                val dow = date.dayOfWeek
-                if (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY) continue
-                for (slot in slots) {
-                    val candidate = java.time.LocalDateTime.of(date, slot)
-                    if (candidate.isAfter(now.plusMinutes(5))) {
-                        return candidate.atZone(zone).toInstant().toEpochMilli()
-                    }
-                }
-            }
-            return nowMs + TimeUnit.HOURS.toMillis(12)
+    old_block = r"""    private fun parseShiftText(rawName: String): ParsedShiftText {
+        val cleaned = rawName.trim().replace(Regex("^\\d+\\s*"), "").trim()
+        val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) {
+            return ParsedShiftText(location = "", shiftName = "", role = "")
         }"""
 
-    new_fn = r"""        fun computeNextOfficeHourSyncMs(nowMs: Long = System.currentTimeMillis()): Long {
-            val zone = java.time.ZoneId.systemDefault()
-            val now = java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDateTime()
-            val baseDate = now.toLocalDate()
-            val minAllowed = now.plusMinutes(5)
-            val windows = listOf(
-                Pair(java.time.LocalTime.of(10, 15), java.time.LocalTime.of(11, 0)),
-                Pair(java.time.LocalTime.of(14, 30), java.time.LocalTime.of(15, 0))
-            )
-
-            for (dayOffset in 0..7) {
-                val date = baseDate.plusDays(dayOffset.toLong())
-                val dow = date.dayOfWeek
-                if (dow == java.time.DayOfWeek.SATURDAY || dow == java.time.DayOfWeek.SUNDAY) continue
-                for ((startTime, endTime) in windows) {
-                    val windowStart = java.time.LocalDateTime.of(date, startTime)
-                    if (dayOffset == 0 && !now.isBefore(windowStart)) continue
-
-                    val windowEnd = java.time.LocalDateTime.of(date, endTime)
-                    val earliest = if (minAllowed.isAfter(windowStart)) minAllowed else windowStart
-                    val spanSeconds = java.time.Duration.between(earliest, windowEnd).seconds.coerceAtLeast(0L)
-                    val randomOffsetSec = if (spanSeconds > 0L) {
-                        kotlin.random.Random.nextLong(0L, spanSeconds + 1L)
-                    } else {
-                        0L
-                    }
-                    val candidate = earliest.plusSeconds(randomOffsetSec)
-                    return candidate.atZone(zone).toInstant().toEpochMilli()
-                }
-            }
-            return nowMs + TimeUnit.HOURS.toMillis(12)
+    new_block = r"""    private fun parseShiftText(rawName: String): ParsedShiftText {
+        val cleaned = rawName.trim().replace(Regex("^\\d+\\s*"), "").trim()
+        if (cleaned.isEmpty()) {
+            return ParsedShiftText(location = "", shiftName = "", role = "")
+        }
+        val noWorkRegex = Regex(
+            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|vuosiloma|sairausloma|poissaolo)",
+            RegexOption.IGNORE_CASE
+        )
+        if (noWorkRegex.containsMatchIn(cleaned)) {
+            val formatted = cleaned.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            return ParsedShiftText(location = formatted, shiftName = "", role = "")
+        }
+        val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) {
+            return ParsedShiftText(location = "", shiftName = "", role = "")
         }"""
 
-    src = replace_exact(path, src, old_fn, new_fn)
+    src = replace_exact(path, src, old_block, new_block)
     verify_kotlin_delimiters(path, src)
     path.write_text(src, encoding="utf-8")
     print(f"Päivitetty: {path}")
 
 
-def patch_settings_dialog_helper() -> None:
-    path = find_file("SettingsDialogHelper.kt")
-    src = path.read_text(encoding="utf-8")
-
-    new_str = 'if (en) "Weekdays at 10:15–11:00 and 14:30–15:00" else "Arkisin klo 10:15–11:00 ja 14:30–15:00"'
-    updated = re.sub(
-        r'if \(en\) "Weekdays [^"]+" else "Arkisin [^"]+"',
-        new_str,
-        src
-    )
-    if updated == src:
-        raise RuntimeError("[SettingsDialogHelper.kt] Korvattavia aikataulutekstejä ei löytynyt.")
-
-    verify_kotlin_delimiters(path, updated)
-    path.write_text(updated, encoding="utf-8")
-    print(f"Päivitetty: {path}")
-
-
 def main() -> None:
-    patch_shift_reminder_receiver()
-    patch_settings_dialog_helper()
+    patch_numeron_parser()
     increment_version()
 
 
