@@ -2326,11 +2326,11 @@ def patch_main_activity() -> None:
     path = find_file("MainActivity.kt")
     src = path.read_text(encoding="utf-8")
 
-    old_banner = """    private fun updateDemoBanner() {
+    old_banner = r"""    private fun updateDemoBanner() {
         bannerDemoMode.visibility = if (DemoModeHelper.isDemoEnabled(this)) View.VISIBLE else View.GONE
     }"""
 
-    new_banner = """    private fun updateDemoBanner() {
+    new_banner = r"""    private fun updateDemoBanner() {
         val isDemo = DemoModeHelper.isDemoEnabled(this)
         val en = DemoModeHelper.isEnglish(this)
         bannerDemoMode.visibility = if (isDemo) View.VISIBLE else View.GONE
@@ -2344,7 +2344,7 @@ def patch_main_activity() -> None:
         btnNavShifts.text = if (en) "Shifts" else "Vuorot"
     }"""
 
-    old_test_notif = """    private fun triggerTestReminderNotification() {
+    old_test_notif = r"""    private fun triggerTestReminderNotification() {
         val timeStr = LocalTime.now().plusMinutes(30).format(DateTimeFormatter.ofPattern("HH:mm"))
         ShiftReminderReceiver().showReminderNotification(
             context = this,
@@ -2355,7 +2355,7 @@ def patch_main_activity() -> None:
         )
     }"""
 
-    new_test_notif = """    private fun triggerTestReminderNotification() {
+    new_test_notif = r"""    private fun triggerTestReminderNotification() {
         val en = DemoModeHelper.isEnglish(this)
         val timeStr = LocalTime.now().plusMinutes(30).format(DateTimeFormatter.ofPattern("HH:mm"))
         ShiftReminderReceiver().showReminderNotification(
@@ -2367,7 +2367,7 @@ def patch_main_activity() -> None:
         )
     }"""
 
-    old_demo_sync_toasts = """                withContext(Dispatchers.Main) {
+    old_demo_sync_toasts = r"""                withContext(Dispatchers.Main) {
                     if (syncCalendar && calId == null) {
                         Toast.makeText(this@MainActivity, "Kalenterioikeus tai kalenteri puuttuu", Toast.LENGTH_LONG).show()
                     } else if (changes.isNotEmpty()) {
@@ -2387,7 +2387,7 @@ def patch_main_activity() -> None:
                     }
                 }"""
 
-    new_demo_sync_toasts = """                withContext(Dispatchers.Main) {
+    new_demo_sync_toasts = r"""                withContext(Dispatchers.Main) {
                     val en = DemoModeHelper.isEnglish(this@MainActivity)
                     if (syncCalendar && calId == null) {
                         Toast.makeText(
@@ -2412,13 +2412,13 @@ def patch_main_activity() -> None:
                     }
                 }"""
 
-    old_demo_autostamp = """            } else {
+    old_demo_autostamp = r"""            } else {
                 val stateStr = if (wantIn) "Sisään" else "Ulos"
                 Toast.makeText(this, "Demotila: Olet jo leimannut tilaan $stateStr", Toast.LENGTH_SHORT).show()
                 webView.postDelayed({ finishAndRemoveTask() }, 1200L)
             }"""
 
-    new_demo_autostamp = """            } else {
+    new_demo_autostamp = r"""            } else {
                 val en = DemoModeHelper.isEnglish(this)
                 val stateStr = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
                 val msg = if (en) "Demo mode: Already clocked $stateStr" else "Demotila: Olet jo leimannut tilaan $stateStr"
@@ -2439,19 +2439,19 @@ def patch_shift_reminder_receiver() -> None:
     path = find_file("ShiftReminderReceiver.kt")
     src = path.read_text(encoding="utf-8")
 
-    old_revert_block = """                        val count = CalendarChangeTracker.revertAllChanges(appCtx)
+    old_revert_block = r"""                        val count = CalendarChangeTracker.revertAllChanges(appCtx)
                         withContext(Dispatchers.Main) {
                             Toast.makeText(appCtx, "Peruttu $count kalenterimuutosta", Toast.LENGTH_LONG).show()
                         }"""
 
-    new_revert_block = """                        val count = CalendarChangeTracker.revertAllChanges(appCtx)
+    new_revert_block = r"""                        val count = CalendarChangeTracker.revertAllChanges(appCtx)
                         val en = DemoModeHelper.isEnglish(appCtx)
                         withContext(Dispatchers.Main) {
                             val msg = if (en) "Reverted $count calendar changes" else "Peruttu $count kalenterimuutosta"
                             Toast.makeText(appCtx, msg, Toast.LENGTH_LONG).show()
                         }"""
 
-    old_notif_labels = """        val notifId = if (isEnding) 2002 else 1001
+    old_notif_labels = r"""        val notifId = if (isEnding) 2002 else 1001
         val fullButtonLabel = if (isEnding) "LEIMAA ULOS" else "LEIMAA SISÄÄN"
         val shortButtonLabel = if (isEnding) "ULOS" else "SISÄÄN"
         val contentTitle = if (isEnding) "Vuoro päättyy klo $timeStr" else "Vuoro alkaa klo $timeStr"
@@ -2460,7 +2460,7 @@ def patch_shift_reminder_receiver() -> None:
         val dirTag = if (isEnding) "Ulos" else "Sisään"
         val testSuffix = if (isTest) " [Testi]" else "" """.rstrip()
 
-    new_notif_labels = """        val en = DemoModeHelper.isEnglish(context)
+    new_notif_labels = r"""        val en = DemoModeHelper.isEnglish(context)
         val notifId = if (isEnding) 2002 else 1001
         val fullButtonLabel = if (en) {
             if (isEnding) "CLOCK OUT" else "CLOCK IN"
@@ -2486,7 +2486,7 @@ def patch_shift_reminder_receiver() -> None:
         }
         val testSuffix = if (isTest) (if (en) " [Test]" else " [Testi]") else "" """.rstrip()
 
-    old_cal_changes_notif = """            val summary = CalendarChangeTracker.formatSummary(changes)
+    old_cal_changes_notif = r"""            val summary = CalendarChangeTracker.formatSummary(changes)
             val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
             if (changes.size > 6) {
                 shownItems.add("...ja ${changes.size - 6} muuta muutosta")
@@ -2495,7 +2495,7 @@ def patch_shift_reminder_receiver() -> None:
             val collapsedText = shownItems.firstOrNull()
                 ?: "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia" """.rstrip()
 
-    new_cal_changes_notif = """            val en = DemoModeHelper.isEnglish(context)
+    new_cal_changes_notif = r"""            val en = DemoModeHelper.isEnglish(context)
             val summary = CalendarChangeTracker.formatSummary(changes)
             val shownItems = changes.take(6).map { CalendarChangeTracker.formatNotificationLine(it) }.toMutableList()
             if (changes.size > 6) {
@@ -2507,7 +2507,7 @@ def patch_shift_reminder_receiver() -> None:
             val collapsedText = shownItems.firstOrNull()
                 ?: if (en) "Tap to edit or undo individual changes" else "Napauta muokataksesi tai peruaksesi yksittäisiä muutoksia" """.rstrip()
 
-    old_cal_notif_builder = """            val notification = NotificationCompat.Builder(context, channelId)
+    old_cal_notif_builder = r"""            val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
                 .setContentTitle("Google-kalenteria päivitetty ($summary)")
                 .setContentText(collapsedText)
@@ -2519,7 +2519,7 @@ def patch_shift_reminder_receiver() -> None:
                 .addAction(android.R.drawable.ic_menu_revert, "Peru kaikki", revertAllPi)
                 .build()"""
 
-    new_cal_notif_builder = """            val notification = NotificationCompat.Builder(context, channelId)
+    new_cal_notif_builder = r"""            val notification = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
                 .setContentTitle(
                     if (en) "Google Calendar updated ($summary)" else "Google-kalenteria päivitetty ($summary)"
@@ -2546,11 +2546,11 @@ def patch_quick_stamp_activity() -> None:
     path = find_file("QuickStampActivity.kt")
     src = path.read_text(encoding="utf-8")
 
-    old_greeting_fn = """        private fun buildGreeting(isEnding: Boolean): String {
+    old_greeting_fn = r"""    private fun buildGreeting(isEnding: Boolean): String {
         val hour = LocalTime.now().hour
         val options = if (isEnding) {"""
 
-    new_greeting_fn = """    private fun buildGreeting(isEnding: Boolean): String {
+    new_greeting_fn = r"""    private fun buildGreeting(isEnding: Boolean): String {
         val en = DemoModeHelper.isEnglish(this)
         val hour = LocalTime.now().hour
         if (en) {
@@ -2610,7 +2610,7 @@ def patch_quick_stamp_activity() -> None:
         }
         val options = if (isEnding) {"""
 
-    old_process_intent = """        val isEnding = incoming?.getBooleanExtra("IS_ENDING", false) ?: false
+    old_process_intent = r"""        val isEnding = incoming?.getBooleanExtra("IS_ENDING", false) ?: false
         val isTest = incoming?.getBooleanExtra("IS_TEST", false) ?: false
         val targetText = if (isEnding) "Ulos" else "Sisään"
         val actionTitle = if (isEnding) "Leimataan ulos" else "Leimataan sisään"
@@ -2640,7 +2640,7 @@ def patch_quick_stamp_activity() -> None:
             return
         }"""
 
-    new_process_intent = """        val en = DemoModeHelper.isEnglish(this)
+    new_process_intent = r"""        val en = DemoModeHelper.isEnglish(this)
         val isEnding = incoming?.getBooleanExtra("IS_ENDING", false) ?: false
         val isTest = incoming?.getBooleanExtra("IS_TEST", false) ?: false
         val targetText = if (en) {
@@ -2679,7 +2679,7 @@ def patch_quick_stamp_activity() -> None:
             return
         }"""
 
-    old_demo_quick_stamp = """    private fun handleDemoQuickStamp(wantIn: Boolean, targetText: String) {
+    old_demo_quick_stamp = r"""    private fun handleDemoQuickStamp(wantIn: Boolean, targetText: String) {
         statusText.text = "Suoritetaan demoleimaus…"
         activeJob = scope.launch {
             delay(550L)
@@ -2718,7 +2718,7 @@ def patch_quick_stamp_activity() -> None:
         }
     }"""
 
-    new_demo_quick_stamp = """    private fun handleDemoQuickStamp(wantIn: Boolean, targetText: String) {
+    new_demo_quick_stamp = r"""    private fun handleDemoQuickStamp(wantIn: Boolean, targetText: String) {
         val en = DemoModeHelper.isEnglish(this)
         statusText.text = if (en) "Recording demo stamp…" else "Suoritetaan demoleimaus…"
         activeJob = scope.launch {
