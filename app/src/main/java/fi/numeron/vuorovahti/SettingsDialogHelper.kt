@@ -117,10 +117,6 @@ object SettingsDialogHelper {
         val fmt = DateTimeFormatter.ofPattern(if (en) "dd.MM.yyyy 'at' HH:mm" else "dd.MM.yyyy 'klo' HH:mm")
         return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(fmt)
     }
-        } catch (_: Exception) {
-        }
-        return fallbackSavedMs
-    }
 
     fun showSettingsDialog(
         context: Context,
