@@ -163,7 +163,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-        private fun ensureTransitionOverlay(): FrameLayout {
+    private fun ensureTransitionOverlay(): FrameLayout {
         transitionOverlay?.let { overlay ->
             syncOverlayBoundsToWebView(overlay)
             return overlay
@@ -272,7 +272,7 @@ class MainActivity : AppCompatActivity() {
             webView.alpha = 0f
             webView.post { syncOverlayBoundsToWebView(overlay) }
             webView.removeCallbacks(transitionFallbackRunnable)
-            webView.postDelayed(transitionFallbackRunnable, 8000L)
+            webView.postDelayed(transitionFallbackRunnable, 5000L)
 
             if (onReady != null) {
                 webView.post { onReady() }
@@ -292,10 +292,9 @@ class MainActivity : AppCompatActivity() {
         if (!isTransitionActive) return
 
         overlay.animate().cancel()
-
         overlay.animate()
             .alpha(0f)
-            .setDuration(320L)
+            .setDuration(260L)
             .withEndAction {
                 overlay.visibility = View.GONE
                 snapshotView?.setImageDrawable(null)
@@ -326,9 +325,13 @@ class MainActivity : AppCompatActivity() {
             }
         } else {
             val baseUrl = getBaseUrl()
-            if (baseUrl.isEmpty()) {
+            if (baseUrl.isEmpty() || (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))) {
                 endSnapshotTransition()
-                Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    this,
+                    if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                    Toast.LENGTH_LONG
+                ).show()
                 btnNavSettings.performClick()
                 return
             }
@@ -586,6 +589,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     val reqHost = uri.host
                     val isInternal = reqHost.equals("demo.local", ignoreCase = true) ||
+                        (!reqHost.isNullOrBlank() && (reqHost.endsWith(".numeronwfm.com", ignoreCase = true) || reqHost.endsWith(".numeronwfm.fi", ignoreCase = true))) ||
                         (!allowedHost.isNullOrBlank() && reqHost.equals(allowedHost, ignoreCase = true))
                     if (isInternal) {
                         startSnapshotTransition()
@@ -686,6 +690,10 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/Login/Login", ignoreCase = true) -> {
                         startSnapshotTransition()
                         handleAutoLogin()
+                    }
+                    url.contains("/InfraDashboard", ignoreCase = true) && dashboardRedirectCount < 2 -> {
+                        dashboardRedirectCount++
+                        webView.loadUrl(resolveResumeUrl(getBaseUrl()))
                     }
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
                         setActiveTab(btnNavStamp)
@@ -1683,56 +1691,6 @@ class MainActivity : AppCompatActivity() {
                         }
                         nameEl.setAttribute('data-raw-shift', rawText);
                         nameEl.setAttribute('data-formatted-for', 'v3:' + rawText);
-
-                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
-                (function setupStampingColorCoding() {
-                    function applyStampingColors() {
-                        var btn = document.getElementById('punchButton');
-                        if (btn) {
-                            var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
-                            if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
-                                btn.classList.remove('vv-punch-in');
-                                btn.classList.add('vv-punch-out');
-                            } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
-                                btn.classList.remove('vv-punch-out');
-                                btn.classList.add('vv-punch-in');
-                            }
-                        }
-
-                        var rows = document.querySelectorAll('#table-latest-stamps tr');
-                        for (var i = 0; i < rows.length; i++) {
-                            var cells = rows[i].querySelectorAll('td');
-                            if (!cells || cells.length === 0) continue;
-                            for (var j = 0; j < cells.length; j++) {
-                                var cell = cells[j];
-                                var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
-                                var lower = raw.toLowerCase();
-                                if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
-                                    var isIn = (lower === 'sisään' || lower === 'in');
-                                    var badge = cell.querySelector('.vv-stamp-badge');
-                                    if (!badge) {
-                                        cell.textContent = '';
-                                        badge = document.createElement('span');
-                                        badge.className = 'vv-stamp-badge';
-                                        cell.appendChild(badge);
-                                    }
-                                    badge.textContent = raw;
-                                    badge.classList.toggle('vv-stamp-in', isIn);
-                                    badge.classList.toggle('vv-stamp-out', !isIn);
-                                }
-                            }
-                        }
-                    }
-
-                    applyStampingColors();
-                    if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
-                        window._stampingColorObserverInstalled = true;
-                        var stampObs = new MutationObserver(function() {
-                            applyStampingColors();
-                        });
-                        stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
-                    }
-                })();
 
                         var parsed = parseShiftText(rawText);
                         var thirdLine = [parsed.shiftName, parsed.role]

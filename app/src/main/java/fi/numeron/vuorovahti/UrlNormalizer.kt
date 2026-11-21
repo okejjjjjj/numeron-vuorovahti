@@ -53,7 +53,10 @@ object UrlNormalizer {
 
     fun getSavedBaseUrl(context: Context): String {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val raw = prefs.getString("server_url", "") ?: ""
-        return normalizeOrgUrl(raw)
+        val serverUrl = (prefs.getString("server_url", "") ?: "").trim()
+        val rawOrg = (prefs.getString("org_raw_input", "") ?: "").trim()
+        val candidate = serverUrl.ifEmpty { rawOrg }
+        val normalized = normalizeOrgUrl(candidate)
+        return if (normalized.equals("demo", ignoreCase = true)) "" else normalized
     }
 }

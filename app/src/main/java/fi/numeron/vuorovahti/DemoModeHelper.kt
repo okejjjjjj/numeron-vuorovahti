@@ -31,6 +31,9 @@ object DemoModeHelper {
         if (user.isEmpty() || pass.isEmpty() || (org.isEmpty() && serverUrl.isEmpty())) {
             return true
         }
+        if (UrlNormalizer.isDemoInput(org) || UrlNormalizer.isDemoInput(serverUrl)) {
+            return true
+        }
         return isDemoCredentials(org.ifEmpty { serverUrl }, user, pass)
     }
 

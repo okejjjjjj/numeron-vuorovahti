@@ -600,9 +600,11 @@ object SettingsDialogHelper {
         val authCard = createSectionCard(if (en) "Login and connection" else "Kirjautuminen ja yhteys")
 
         authCard.addView(createLabel(if (en) "Organization ID (e.g. demo)" else "Organisaatiotunnus (esim. demo)"))
+        val savedOrgPref = (prefs.getString("org_raw_input", "") ?: "").trim()
+            .ifEmpty { (prefs.getString("server_url", "") ?: "").trim() }
         val editOrg = EditText(context).apply {
             hint = "demo"
-            setText(prefs.getString("org_raw_input", ""))
+            setText(savedOrgPref)
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
             styleEditText(this)
