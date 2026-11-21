@@ -17,7 +17,7 @@ def patch_manifest(path):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    updated = re.sub(
+    updated, _ = re.subn(
         r"[ \t]*<uses-permission\s+android:name=\"android\.permission\.(?:SCHEDULE_EXACT_ALARM|USE_EXACT_ALARM)\"\s*/>\s*\r?\n?",
         "",
         content,
@@ -74,18 +74,18 @@ def patch_settings_dialog_helper(path):
     )
 
     # 5. Poista tarkkojen hälytysten tilapäivitys refreshSystemPermissionStates-funktiosta
-    updated, _ = re.sub(
+    updated, _ = re.subn(
         r"\n[ \t]*var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat\(\)",
         "",
         updated,
     )
-    updated, _ = re.sub(
+    updated, _ = re.subn(
         r"\n[ \t]*val nowExactAllowed = canScheduleExactAlarmsCompat\(\)\n[ \t]*if \(android\.os\.Build\.VERSION\.SDK_INT >= android\.os\.Build\.VERSION_CODES\.S\) \{.*?\n[ \t]*\} else \{.*?\n[ \t]*\}",
         "",
         updated,
         flags=re.DOTALL,
     )
-    updated, _ = re.sub(
+    updated, _ = re.subn(
         r"\n[ \t]*if \(!lastKnownExactAlarmAllowed && nowExactAllowed\) \{.*?\n[ \t]*\}\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
         "",
         updated,
@@ -135,7 +135,7 @@ def patch_calendar_sync_helper(path):
     if old_block in content:
         updated = content.replace(old_block, new_block, 1)
     else:
-        updated = re.sub(
+        updated, _ = re.subn(
             r"if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S && !alarmManager\.canScheduleExactAlarms\(\)\) \{\s*"
             r"alarmManager\.setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, triggerMs, pi\)\s*"
             r"\}\s*else\s*\{\s*"
