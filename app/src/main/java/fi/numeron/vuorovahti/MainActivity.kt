@@ -1519,6 +1519,35 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #64748B !important;
                 color: #F1F5F9 !important;
             }
+            .month-item.request {
+                display: flex !important;
+                align-items: center !important;
+                gap: 4px !important;
+                background-color: #2E1F47 !important;
+                border: 1px solid #8B5CF6 !important;
+                border-left: 3px solid #A78BFA !important;
+                border-radius: 5px !important;
+                padding: 2px 5px !important;
+                margin-bottom: 2px !important;
+                color: #EDE9FE !important;
+                font-size: 10.5px !important;
+                font-weight: 600 !important;
+                line-height: 1.2 !important;
+                white-space: nowrap !important;
+                overflow: hidden !important;
+                text-overflow: ellipsis !important;
+            }
+            .vv-request-badge {
+                display: inline-block !important;
+                flex-shrink: 0 !important;
+                padding: 1px 4px !important;
+                border-radius: 4px !important;
+                background-color: rgba(167, 139, 250, 0.22) !important;
+                color: #DDD6FE !important;
+                font-size: 9px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.02em !important;
+            }
             .month-day-header {
                 display: flex !important;
                 align-items: center !important;
