@@ -1369,6 +1369,25 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #64748B !important;
                 color: #F1F5F9 !important;
             }
+            .month-day-header {
+                display: flex !important;
+                align-items: center !important;
+                justify-content: space-between !important;
+            }
+            .month-day-header .hidden {
+                display: none !important;
+            }
+            .month-day-header .circle {
+                display: inline-block !important;
+                width: 6px !important;
+                height: 6px !important;
+                min-width: 6px !important;
+                border-radius: 50% !important;
+                background-color: #F59E0B !important;
+                box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35) !important;
+                margin-right: 4px !important;
+                flex-shrink: 0 !important;
+            }
 
             /* === 8. KALENTERI: LUETTELONÄKYMÄ (/Calendar/List) === */
             #calendar-content {
