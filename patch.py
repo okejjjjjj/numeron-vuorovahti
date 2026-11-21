@@ -9,6 +9,93 @@ def find_file(filename):
     return None
 
 
+def remove_brace_block(text: str, start_marker: str, include_start_line: bool = True) -> str:
+    idx = text.find(start_marker)
+    if idx == -1:
+        return text
+
+    if include_start_line:
+        line_start = text.rfind("\n", 0, idx)
+        block_start = 0 if line_start == -1 else line_start
+    else:
+        block_start = idx
+
+    brace_idx = text.find("{", idx)
+    if brace_idx == -1:
+        return text
+
+    depth = 0
+    pos = brace_idx
+    while pos < len(text):
+        ch = text[pos]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_pos = pos + 1
+                if end_pos < len(text) and text[end_pos] == "\n":
+                    end_pos += 1
+                return text[:block_start] + text[end_pos:]
+        pos += 1
+
+    return text
+
+
+def remove_exact_alarm_status_block(text: str) -> str:
+    start_marker = "        val exactAlarmAllowed = canScheduleExactAlarmsCompat()"
+    end_marker = "        }"
+    start_idx = text.find(start_marker)
+    if start_idx == -1:
+        return text
+
+    line_start = text.rfind("\n", 0, start_idx)
+    block_start = 0 if line_start == -1 else line_start
+
+    # Etsitään if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) { ... }
+    if_marker = "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
+    if_idx = text.find(if_marker, start_idx)
+    if if_idx == -1:
+        return text
+
+    brace_start = text.find("{", if_idx)
+    depth = 0
+    pos = brace_start
+    while pos < len(text):
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                end_pos = pos + 1
+                if end_pos < len(text) and text[end_pos] == "\n":
+                    end_pos += 1
+                return text[:block_start] + text[end_pos:]
+        pos += 1
+
+    return text
+
+
+def remove_exact_alarm_notice_box(text: str) -> str:
+    marker = "        val exactAlarmNoticeBox = LinearLayout(context).apply {"
+    idx = text.find(marker)
+    if idx == -1:
+        return text
+
+    line_start = text.rfind("\n", 0, idx)
+    block_start = 0 if line_start == -1 else line_start
+
+    add_view_marker = "        reminderDetailsContainer.addView(exactAlarmNoticeBox)"
+    add_idx = text.find(add_view_marker, idx)
+    if add_idx == -1:
+        return text
+
+    end_pos = add_idx + len(add_view_marker)
+    if end_pos < len(text) and text[end_pos] == "\n":
+        end_pos += 1
+    return text[:block_start] + text[end_pos:]
+
+
 def patch_manifest(path):
     if not path or not os.path.exists(path):
         print("HUOM: AndroidManifest.xml ei löytynyt.")
@@ -40,40 +127,11 @@ def patch_settings_dialog_helper(path):
         content = f.read()
 
     updated = content
+    updated = remove_brace_block(updated, "        fun canScheduleExactAlarmsCompat(): Boolean {")
+    updated = remove_brace_block(updated, "        fun openExactAlarmSettings() {")
+    updated = remove_exact_alarm_status_block(updated)
+    updated = remove_exact_alarm_notice_box(updated)
 
-    # 1. Poista canScheduleExactAlarmsCompat()
-    updated, _ = re.subn(
-        r"\n[ \t]*fun canScheduleExactAlarmsCompat\(\): Boolean \{.*?\n[ \t]*\}",
-        "",
-        updated,
-        flags=re.DOTALL,
-    )
-
-    # 2. Poista openExactAlarmSettings()
-    updated, _ = re.subn(
-        r"\n[ \t]*fun openExactAlarmSettings\(\) \{.*?\n[ \t]*\}",
-        "",
-        updated,
-        flags=re.DOTALL,
-    )
-
-    # 3. Poista 'Tarkat vuorohälytykset' -statusrivi ja sen klikkikuuntelija
-    updated, _ = re.subn(
-        r"\n[ \t]*val exactAlarmAllowed = canScheduleExactAlarmsCompat\(\).*?\n[ \t]*\}\n",
-        "\n",
-        updated,
-        flags=re.DOTALL,
-    )
-
-    # 4. Poista duplikaatti exactAlarmNoticeBox reminderDetailsContainerista
-    updated, _ = re.subn(
-        r"\n[ \t]*val exactAlarmNoticeBox = LinearLayout\(context\)\.apply \{.*?\n[ \t]*reminderDetailsContainer\.addView\(exactAlarmNoticeBox\)",
-        "",
-        updated,
-        flags=re.DOTALL,
-    )
-
-    # 5. Poista tarkkojen hälytysten tilapäivitys refreshSystemPermissionStates-funktiosta
     updated, _ = re.subn(
         r"\n[ \t]*var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat\(\)",
         "",
