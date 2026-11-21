@@ -1,178 +1,176 @@
 import os
-import shutil
 import sys
 
-OLD_IS_ENGLISH = '''    fun isEnglish(context: Context): Boolean {
-        if (!isDemoEnabled(context)) return false
-        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val saved = prefs.getString("demo_language", null)
-        return when (saved) {
-            "en" -> true
-            "fi" -> false
-            else -> !Locale.getDefault().language.equals("fi", ignoreCase = true)
-        }
-    }'''
+OLD_STYLE_INJECT = r'''        val safeCss = css.replace("\\", "\\\\").replace("'", "\\'")
+        val js = """
+            (function() {
+                var style = document.getElementById('custom-dark-theme');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'custom-dark-theme';
+                    (document.head || document.documentElement).appendChild(style);
+                    style.textContent = '$safeCss';
+                }'''
 
-NEW_IS_ENGLISH = '''    fun isEnglish(context: Context): Boolean {
-        if (isDemoEnabled(context)) {
-            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            when (prefs.getString("demo_language", null)) {
-                "en" -> return true
-                "fi" -> return false
-            }
-        }
-        val sysLang = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-            context.resources.configuration.locales.get(0)?.language ?: Locale.getDefault().language
-        } else {
-            @Suppress("DEPRECATION")
-            context.resources.configuration.locale?.language ?: Locale.getDefault().language
-        }
-        return !sysLang.equals("fi", ignoreCase = true)
-    }'''
-
-MAIN_REPLACEMENTS = [
-    (
-        'Toast.makeText(this, "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()',
-        'Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()'
-    ),
-    (
-        '''            if (isTest) {
-                val dir = if (isEnding) "Ulos" else "Sisään"
-                Toast.makeText(
-                    this,
-                    "Testi-ilmoitus ($dir): Oikeaa leimausta ei suoritettu",
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-
-            pendingAction = if (isEnding) Action.STAMP_OUT else Action.STAMP_IN
-            Toast.makeText(this, "Suoritetaan automaattinen leimaus...", Toast.LENGTH_SHORT).show()''',
-        '''            if (isTest) {
-                val en = DemoModeHelper.isEnglish(this)
-                val dir = if (en) (if (isEnding) "Out" else "In") else (if (isEnding) "Ulos" else "Sisään")
-                val msg = if (en) "Test notification ($dir): No real stamp was performed" else "Testi-ilmoitus ($dir): Oikeaa leimausta ei suoritettu"
-                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-                return
-            }
-
-            pendingAction = if (isEnding) Action.STAMP_OUT else Action.STAMP_IN
-            val autoMsg = if (DemoModeHelper.isEnglish(this)) "Performing automatic stamp..." else "Suoritetaan automaattinen leimaus..."
-            Toast.makeText(this, autoMsg, Toast.LENGTH_SHORT).show()'''
-    ),
-    (
-        'Toast.makeText(this, "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()',
-        'Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Session expired – re-authenticating and stamping..." else "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()'
-    ),
-    (
-        '''                    Toast.makeText(this, "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
-                    verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
+NEW_STYLE_INJECT = r'''        val safeCss = css
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+        val js = """
+            (function() {
+                var style = document.getElementById('custom-dark-theme');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'custom-dark-theme';
                 }
-                status == "WRONG_DIRECTION" -> {
-                    pendingAction = Action.NONE
-                    inFlightStampAction = Action.NONE
-                    Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()''',
-        '''                    val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
-                    Toast.makeText(this, if (en) "Stamping ($dirLabel)..." else "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
-                    verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
+                var targetParent = document.head || document.documentElement;
+                if (targetParent && style.parentNode !== targetParent) {
+                    targetParent.appendChild(style);
                 }
-                status == "WRONG_DIRECTION" -> {
-                    pendingAction = Action.NONE
-                    inFlightStampAction = Action.NONE
-                    val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
-                    Toast.makeText(this, if (en) "Already clocked $dirLabel" else "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()'''
-    ),
-    (
-        '''                    Toast.makeText(
-                        this,
-                        "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
-                        Toast.LENGTH_LONG
-                    ).show()''',
-        '''                    Toast.makeText(
-                        this,
-                        if (DemoModeHelper.isEnglish(this)) "Could not verify stamp automatically – please check status on screen" else "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
-                        Toast.LENGTH_LONG
-                    ).show()'''
-    ),
-    (
-        '''                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }''',
-        '''                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (DemoModeHelper.isEnglish(this@MainActivity)) "Failed to read shifts – calendar was not modified" else "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }'''
-    ),
-    (
-        '''                    withContext(Dispatchers.Main) {
-                        if (syncCalendar && calId == null) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } else if (changes.isNotEmpty()) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
-                        } else {
-                            val msg = if (syncCalendar) {
-                                "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
-                            } else {
-                                "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
-                            }
-                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }''',
-        '''                    withContext(Dispatchers.Main) {
-                        val en = DemoModeHelper.isEnglish(this@MainActivity)
-                        if (syncCalendar && calId == null) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (en) "Shifts fetched (${allShifts.size}), but no calendar is selected" else "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } else if (changes.isNotEmpty()) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (en) "Calendar updated: ${CalendarChangeTracker.formatSummary(changes)}" else "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
-                        } else {
-                            val msg = if (syncCalendar) {
-                                if (en) "Calendar is up to date (${allShifts.size} shifts)" else "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
-                            } else {
-                                if (en) "Shifts and reminders updated (${allShifts.size} shifts)" else "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
-                            }
-                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }'''
-    ),
-]
+                if (style.textContent !== '$safeCss') {
+                    style.textContent = '$safeCss';
+                }'''
 
-RECEIVER_REPLACEMENTS = [
-    (
-        'val title = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"',
-        'val title = intent.getStringExtra("SHIFT_TITLE") ?: if (DemoModeHelper.isEnglish(context)) "Work Shift" else "Työvuoro"'
-    ),
-    (
-        '"Toive käsitelty: $statusDesc",',
-        'if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",'
-    ),
-]
+OLD_NESTED_STAMP = r'''                        if (existingWp && nameEl.getAttribute('data-formatted-for') === 'v3:' + rawText) {
+                            return;
+                        }
+                        nameEl.setAttribute('data-raw-shift', rawText);
+                        nameEl.setAttribute('data-formatted-for', 'v3:' + rawText);
+
+                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
+                (function setupStampingColorCoding() {
+                    function applyStampingColors() {
+                        var btn = document.getElementById('punchButton');
+                        if (btn) {
+                            var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
+                            if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
+                                btn.classList.remove('vv-punch-in');
+                                btn.classList.add('vv-punch-out');
+                            } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
+                                btn.classList.remove('vv-punch-out');
+                                btn.classList.add('vv-punch-in');
+                            }
+                        }
+
+                        var rows = document.querySelectorAll('#table-latest-stamps tr');
+                        for (var i = 0; i < rows.length; i++) {
+                            var cells = rows[i].querySelectorAll('td');
+                            if (!cells || cells.length === 0) continue;
+                            for (var j = 0; j < cells.length; j++) {
+                                var cell = cells[j];
+                                var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+                                var lower = raw.toLowerCase();
+                                if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
+                                    var isIn = (lower === 'sisään' || lower === 'in');
+                                    var badge = cell.querySelector('.vv-stamp-badge');
+                                    if (!badge) {
+                                        cell.textContent = '';
+                                        badge = document.createElement('span');
+                                        badge.className = 'vv-stamp-badge';
+                                        cell.appendChild(badge);
+                                    }
+                                    badge.textContent = raw;
+                                    badge.classList.toggle('vv-stamp-in', isIn);
+                                    badge.classList.toggle('vv-stamp-out', !isIn);
+                                }
+                            }
+                        }
+                    }
+
+                    applyStampingColors();
+                    if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
+                        window._stampingColorObserverInstalled = true;
+                        var stampObs = new MutationObserver(function() {
+                            applyStampingColors();
+                        });
+                        stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                    }
+                })();'''
+
+NEW_UNNESTED_HEAD = r'''                        if (existingWp && nameEl.getAttribute('data-formatted-for') === 'v3:' + rawText) {
+                            return;
+                        }
+                        nameEl.setAttribute('data-raw-shift', rawText);
+                        nameEl.setAttribute('data-formatted-for', 'v3:' + rawText);'''
+
+OLD_TODAY_END = r'''                    applyShiftFormat();
+                    if (!window._todayShiftObserverInstalled) {
+                        window._todayShiftObserverInstalled = true;
+                        var target = document.querySelector('.punching-shift-container') || document.body;
+                        if (target && typeof MutationObserver !== 'undefined') {
+                            var obs = new MutationObserver(function() {
+                                applyShiftFormat();
+                            });
+                            obs.observe(target, { childList: true, subtree: true, characterData: true });
+                        }
+                    }
+                })();'''
+
+NEW_TODAY_END_WITH_STAMP = r'''                    applyShiftFormat();
+                    if (!window._todayShiftObserverInstalled) {
+                        window._todayShiftObserverInstalled = true;
+                        var target = document.querySelector('.punching-shift-container') || document.body;
+                        if (target && typeof MutationObserver !== 'undefined') {
+                            var obs = new MutationObserver(function() {
+                                applyShiftFormat();
+                            });
+                            obs.observe(target, { childList: true, subtree: true, characterData: true });
+                        }
+                    }
+                })();
+
+                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
+                try {
+                    (function setupStampingColorCoding() {
+                        function applyStampingColors() {
+                            var btn = document.getElementById('punchButton');
+                            if (btn) {
+                                var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
+                                if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
+                                    btn.classList.remove('vv-punch-in');
+                                    btn.classList.add('vv-punch-out');
+                                } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
+                                    btn.classList.remove('vv-punch-out');
+                                    btn.classList.add('vv-punch-in');
+                                }
+                            }
+
+                            var rows = document.querySelectorAll('#table-latest-stamps tr');
+                            for (var i = 0; i < rows.length; i++) {
+                                var cells = rows[i].querySelectorAll('td');
+                                if (!cells || cells.length === 0) continue;
+                                for (var j = 0; j < cells.length; j++) {
+                                    var cell = cells[j];
+                                    var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+                                    var lower = raw.toLowerCase();
+                                    if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
+                                        var isIn = (lower === 'sisään' || lower === 'in');
+                                        var badge = cell.querySelector('.vv-stamp-badge');
+                                        if (!badge) {
+                                            cell.textContent = '';
+                                            badge = document.createElement('span');
+                                            badge.className = 'vv-stamp-badge';
+                                            cell.appendChild(badge);
+                                        }
+                                        badge.textContent = raw;
+                                        badge.classList.toggle('vv-stamp-in', isIn);
+                                        badge.classList.toggle('vv-stamp-out', !isIn);
+                                    }
+                                }
+                            }
+                        }
+
+                        applyStampingColors();
+                        if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
+                            window._stampingColorObserverInstalled = true;
+                            var stampObs = new MutationObserver(function() {
+                                applyStampingColors();
+                            });
+                            stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                        }
+                    })();
+                } catch (_e) {}'''
 
 
 def find_file(filename):
@@ -185,68 +183,35 @@ def find_file(filename):
     return None
 
 
-def update_file(path, replacements):
-    if not path or not os.path.isfile(path):
-        return False
-    with open(path, "r", encoding="utf-8") as f:
-        src = f.read()
-    changed = False
-    for old, new in replacements:
-        if new in src:
-            continue
-        if old in src:
-            src = src.replace(old, new, 1)
-            changed = True
-    if changed:
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(src)
-        print(f"Päivitetty: {path}")
-    else:
-        print(f"Ei muutoksia (jo ajan tasalla): {path}")
-    return changed
-
-
-def migrate_res_strings():
-    res_dir = os.path.join("app", "src", "main", "res")
-    default_strings = os.path.join(res_dir, "values", "strings.xml")
-    en_strings = os.path.join(res_dir, "values-en", "strings.xml")
-    fi_dir = os.path.join(res_dir, "values-fi")
-    fi_strings = os.path.join(fi_dir, "strings.xml")
-
-    if os.path.isfile(default_strings) and os.path.isfile(en_strings):
-        os.makedirs(fi_dir, exist_ok=True)
-        shutil.move(default_strings, fi_strings)
-        shutil.move(en_strings, default_strings)
-        try:
-            os.rmdir(os.path.join(res_dir, "values-en"))
-        except OSError:
-            pass
-        print("Päivitetty resurssikansiot: values/strings.xml -> values-fi/strings.xml ja values-en/strings.xml -> values/strings.xml")
-
-
 def main():
-    demo_path = find_file("DemoModeHelper.kt")
-    if not demo_path:
-        print("VIRHE: DemoModeHelper.kt ei löytynyt.")
+    main_path = find_file("MainActivity.kt")
+    if not main_path:
+        print("VIRHE: MainActivity.kt ei löytynyt.")
         sys.exit(1)
 
-    with open(demo_path, "r", encoding="utf-8") as f:
-        demo_src = f.read()
+    with open(main_path, "r", encoding="utf-8") as f:
+        src = f.read()
 
-    if NEW_IS_ENGLISH not in demo_src:
-        if OLD_IS_ENGLISH not in demo_src:
-            print("VIRHE: DemoModeHelper.isEnglish-funktiota ei löytynyt odotetussa muodossa.")
-            sys.exit(1)
-        demo_src = demo_src.replace(OLD_IS_ENGLISH, NEW_IS_ENGLISH, 1)
-        with open(demo_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(demo_src)
-        print(f"Päivitetty: {demo_path}")
+    changed = False
+    for label, old, new in [
+        ("Tyylielementin päivitys", OLD_STYLE_INJECT, NEW_STYLE_INJECT),
+        ("Sisäkkäisen leimausvärikoodauksen poisto", OLD_NESTED_STAMP, NEW_UNNESTED_HEAD),
+        ("Leimausvärikoodauksen siirto ylätasolle", OLD_TODAY_END, NEW_TODAY_END_WITH_STAMP),
+    ]:
+        if new in src:
+            continue
+        if old not in src:
+            print(f"VAROITUS: Kohtaa '{label}' ei löytynyt.")
+            continue
+        src = src.replace(old, new, 1)
+        changed = True
+
+    if changed:
+        with open(main_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(src)
+        print(f"Päivitetty: {main_path}")
     else:
-        print(f"Ei muutoksia (jo ajan tasalla): {demo_path}")
-
-    update_file(find_file("MainActivity.kt"), MAIN_REPLACEMENTS)
-    update_file(find_file("ShiftReminderReceiver.kt"), RECEIVER_REPLACEMENTS)
-    migrate_res_strings()
+        print(f"Ei muutoksia (jo päivitetty): {main_path}")
 
 
 if __name__ == "__main__":
