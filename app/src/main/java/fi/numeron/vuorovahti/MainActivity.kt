@@ -19,6 +19,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -53,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnNavClose: Button
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var navigateJob: Job? = null
+    private var navigationToken: Int = 0
+    private var isAutoSubmittingLogin: Boolean = false
 
     private var pendingAction: Action = Action.NONE
     private var inFlightStampAction: Action = Action.NONE
@@ -156,8 +160,10 @@ class MainActivity : AppCompatActivity() {
 
     private var transitionOverlay: FrameLayout? = null
     private var snapshotView: ImageView? = null
+    private var snapshotBitmap: Bitmap? = null
     private var isTransitionActive: Boolean = false
     private val transitionFallbackRunnable = Runnable {
+        isAutoSubmittingLogin = false
         endSnapshotTransition()
     }
 
@@ -242,35 +248,44 @@ class MainActivity : AppCompatActivity() {
         overlay.layoutParams = lp
     }
 
+    private fun recycleSnapshotBitmap() {
+        snapshotView?.setImageDrawable(null)
+        snapshotView?.visibility = View.GONE
+        try {
+            snapshotBitmap?.let {
+                if (!it.isRecycled) it.recycle()
+            }
+        } catch (_: Exception) {}
+        snapshotBitmap = null
+    }
+
     private fun startSnapshotTransition(onReady: (() -> Unit)? = null) {
         val overlay = ensureTransitionOverlay()
         overlay.animate().cancel()
+        webView.removeCallbacks(transitionFallbackRunnable)
+        webView.postDelayed(transitionFallbackRunnable, 6500L)
 
         if (!isTransitionActive) {
             isTransitionActive = true
+            recycleSnapshotBitmap()
 
             if (webView.width > 0 && webView.height > 0 && webView.alpha > 0.5f) {
                 try {
                     val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.RGB_565)
                     val canvas = Canvas(bitmap)
                     webView.draw(canvas)
+                    snapshotBitmap = bitmap
                     snapshotView?.setImageBitmap(bitmap)
                     snapshotView?.visibility = View.VISIBLE
                 } catch (_: Exception) {
-                    snapshotView?.setImageDrawable(null)
-                    snapshotView?.visibility = View.GONE
+                    recycleSnapshotBitmap()
                 }
-            } else {
-                snapshotView?.setImageDrawable(null)
-                snapshotView?.visibility = View.GONE
             }
 
             overlay.alpha = 1f
             overlay.visibility = View.VISIBLE
             webView.alpha = 0f
             webView.post { syncOverlayBoundsToWebView(overlay) }
-            webView.removeCallbacks(transitionFallbackRunnable)
-            webView.postDelayed(transitionFallbackRunnable, 4000L)
 
             if (onReady != null) {
                 webView.post { onReady() }
@@ -289,12 +304,15 @@ class MainActivity : AppCompatActivity() {
         overlay.animate().cancel()
         overlay.alpha = 0f
         overlay.visibility = View.GONE
-        snapshotView?.setImageDrawable(null)
-        snapshotView?.visibility = View.GONE
+        recycleSnapshotBitmap()
     }
 
     private fun navigateToTab(tab: Tab) {
         currentTab = tab
+        dashboardRedirectCount = 0
+        isAutoSubmittingLogin = false
+        val token = ++navigationToken
+        navigateJob?.cancel()
         updateDemoBanner()
 
         when (tab) {
@@ -305,11 +323,13 @@ class MainActivity : AppCompatActivity() {
 
         if (DemoModeHelper.isDemoEnabled(this)) {
             startSnapshotTransition {
+                if (token != navigationToken) return@startSnapshotTransition
                 val html = when (tab) {
                     Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
                     Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
                     Tab.SHIFTS -> DemoModeHelper.getDemoShiftsHtml(this)
                 }
+                webView.stopLoading()
                 webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
             }
         } else {
@@ -331,6 +351,7 @@ class MainActivity : AppCompatActivity() {
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
             }
             startSnapshotTransition {
+                if (token != navigationToken) return@startSnapshotTransition
                 val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
@@ -339,7 +360,7 @@ class MainActivity : AppCompatActivity() {
                 val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 25L * 60 * 1000L
 
                 if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
-                    scope.launch {
+                    navigateJob = scope.launch {
                         try {
                             val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
                             if (ok) {
@@ -347,9 +368,13 @@ class MainActivity : AppCompatActivity() {
                             }
                         } catch (_: Exception) {
                         }
-                        webView.loadUrl(url)
+                        if (token == navigationToken && !isFinishing && !isDestroyed) {
+                            webView.stopLoading()
+                            webView.loadUrl(url)
+                        }
                     }
                 } else {
+                    webView.stopLoading()
                     webView.loadUrl(url)
                 }
             }
@@ -694,12 +719,13 @@ class MainActivity : AppCompatActivity() {
             ) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
-                    endSnapshotTransition()
                     val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.errorCode ?: 0 else 0
+                    // -1 = net::ERR_ABORTED (tapahtuu normaalisti kun käyttäjä vaihtaa välilehteä kesken latauksen)
+                    if (code == -1 || code == android.webkit.WebViewClient.ERROR_UNKNOWN) return
+                    isAutoSubmittingLogin = false
+                    endSnapshotTransition()
                     val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else ""
-                    if (code != android.webkit.WebViewClient.ERROR_UNKNOWN) {
-                        Toast.makeText(this@MainActivity, "Sivun latausvirhe ($code): $desc", Toast.LENGTH_LONG).show()
-                    }
+                    Toast.makeText(this@MainActivity, "Sivun latausvirhe ($code): $desc", Toast.LENGTH_LONG).show()
                 }
             }
 
@@ -742,32 +768,46 @@ class MainActivity : AppCompatActivity() {
 
                 when {
                     url.contains("/Login/Login", ignoreCase = true) -> {
+                        isAutoSubmittingLogin = true
                         startSnapshotTransition()
                         handleAutoLogin()
+                        return
                     }
                     url.contains("/InfraDashboard", ignoreCase = true) && dashboardRedirectCount < 2 -> {
                         dashboardRedirectCount++
+                        startSnapshotTransition()
                         webView.loadUrl(resolveResumeUrl(getBaseUrl()))
+                        return
                     }
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
+                        isAutoSubmittingLogin = false
                         setActiveTab(btnNavStamp)
                         handleStampingPage()
                     }
                     url.contains("/PersonRequests", ignoreCase = true) -> {
+                        isAutoSubmittingLogin = false
                         setActiveTab(btnNavRequests)
                     }
                     url.contains("/Calendar", ignoreCase = true) -> {
+                        isAutoSubmittingLogin = false
                         setActiveTab(btnNavShifts)
                         handleCalendarPage()
                     }
                     pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT -> {
+                        isAutoSubmittingLogin = false
                         webView.loadUrl("${getBaseUrl()}/WorktimeStamping")
+                        return
+                    }
+                    else -> {
+                        isAutoSubmittingLogin = false
                     }
                 }
 
-                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 280L else 200L
+                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 280L else 180L
                 view?.postDelayed({
-                    endSnapshotTransition()
+                    if (!isAutoSubmittingLogin) {
+                        endSnapshotTransition()
+                    }
                 }, revealDelay)
             }
         }
@@ -1818,12 +1858,19 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         applyStampingColors();
-                        if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
-                            window._stampingColorObserverInstalled = true;
+                        var stampTblForColor = document.getElementById('table-latest-stamps');
+                        if (stampTblForColor && !stampTblForColor._colorObsInstalled && typeof MutationObserver !== 'undefined') {
+                            stampTblForColor._colorObsInstalled = true;
+                            var colorScheduled = false;
                             var stampObs = new MutationObserver(function() {
-                                applyStampingColors();
+                                if (colorScheduled) return;
+                                colorScheduled = true;
+                                setTimeout(function() {
+                                    colorScheduled = false;
+                                    applyStampingColors();
+                                }, 80);
                             });
-                            stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                            stampObs.observe(stampTblForColor, { childList: true, subtree: true });
                         }
                     })();
                 } catch (_e) {}
@@ -1945,30 +1992,21 @@ class MainActivity : AppCompatActivity() {
                     }, true);
 
                     function watchStampPageDom() {
-                        var panel = getForgotPanel();
-                        if (panel && !panel._vvWatched && typeof MutationObserver !== 'undefined') {
-                            panel._vvWatched = true;
-                            var pObs = new MutationObserver(function() {
-                                var st = panel.getAttribute('style') || '';
-                                var isTop100 = /top\s*:\s*100%/i.test(st);
-                                if (!isTop100 && !panel.classList.contains('minimized') && st.indexOf('top:') !== -1) {
-                                    panel.classList.add('force-open');
-                                } else if (isTop100) {
-                                    panel.classList.remove('force-open');
-                                }
-                            });
-                            pObs.observe(panel, { attributes: true, attributeFilter: ['style', 'class'] });
-                        }
                         var stampTbl = document.getElementById('table-latest-stamps');
                         if (stampTbl && !stampTbl._vvWatched && typeof MutationObserver !== 'undefined') {
                             stampTbl._vvWatched = true;
-                            new MutationObserver(revealHiddenStampRows).observe(stampTbl, { childList: true, subtree: true });
+                            var rowsScheduled = false;
+                            new MutationObserver(function() {
+                                if (rowsScheduled) return;
+                                rowsScheduled = true;
+                                setTimeout(function() {
+                                    rowsScheduled = false;
+                                    revealHiddenStampRows();
+                                }, 80);
+                            }).observe(stampTbl, { childList: true, subtree: true });
                         }
                     }
                     watchStampPageDom();
-                    if (document.body && typeof MutationObserver !== 'undefined') {
-                        new MutationObserver(watchStampPageDom).observe(document.body, { childList: true, subtree: true });
-                    }
                 }
 
                 // === AJAX- JA FETCH-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
@@ -2559,6 +2597,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        recycleSnapshotBitmap()
         try {
             CookieManager.getInstance().flush()
         } catch (_: Exception) {}
