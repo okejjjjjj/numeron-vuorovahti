@@ -31,9 +31,9 @@ def remove_brace_block(text: str, start_marker: str) -> str:
             depth -= 1
             if depth == 0:
                 end_pos = pos + 1
-                if end_pos < len(text) and text[end_pos] == "\n":
+                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
                     end_pos += 1
-                return text[:block_start] + text[end_pos:]
+                return text[:block_start] + "\n" + text[end_pos:]
         pos += 1
 
     return text
@@ -48,27 +48,20 @@ def remove_exact_alarm_status_block(text: str) -> str:
     line_start = text.rfind("\n", 0, start_idx)
     block_start = 0 if line_start == -1 else line_start
 
-    if_marker = "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
-    if_idx = text.find(if_marker, start_idx)
-    if if_idx == -1:
+    click_marker = "openExactAlarmSettings()"
+    click_idx = text.find(click_marker, start_idx)
+    if click_idx == -1:
         return text
 
-    brace_start = text.find("{", if_idx)
-    depth = 0
-    pos = brace_start
-    while pos < len(text):
-        if text[pos] == "{":
-            depth += 1
-        elif text[pos] == "}":
-            depth -= 1
-            if depth == 0:
-                end_pos = pos + 1
-                if end_pos < len(text) and text[end_pos] == "\n":
-                    end_pos += 1
-                return text[:block_start] + text[end_pos:]
-        pos += 1
+    end_brace = text.find("}", click_idx)
+    if end_brace == -1:
+        return text
 
-    return text
+    end_pos = end_brace + 1
+    while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
+        end_pos += 1
+
+    return text[:block_start] + "\n" + text[end_pos:]
 
 
 def remove_exact_alarm_notice_box(text: str) -> str:
@@ -86,9 +79,42 @@ def remove_exact_alarm_notice_box(text: str) -> str:
         return text
 
     end_pos = add_idx + len(add_view_marker)
-    if end_pos < len(text) and text[end_pos] == "\n":
+    while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
         end_pos += 1
-    return text[:block_start] + text[end_pos:]
+
+    return text[:block_start] + "\n" + text[end_pos:]
+
+
+def remove_now_exact_allowed_block(text: str) -> str:
+    marker = "            val nowExactAllowed = canScheduleExactAlarmsCompat()"
+    idx = text.find(marker)
+    if idx == -1:
+        return text
+
+    line_start = text.rfind("\n", 0, idx)
+    block_start = 0 if line_start == -1 else line_start
+
+    if_marker = "            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
+    if_idx = text.find(if_marker, idx)
+    if if_idx == -1:
+        return text
+
+    brace_start = text.find("{", if_idx)
+    depth = 0
+    pos = brace_start
+    while pos < len(text):
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                end_pos = pos + 1
+                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
+                    end_pos += 1
+                return text[:block_start] + "\n" + text[end_pos:]
+        pos += 1
+
+    return text
 
 
 def patch_manifest(path):
@@ -128,19 +154,14 @@ def patch_settings_dialog_helper(path):
     updated = remove_exact_alarm_notice_box(updated)
 
     updated, _ = re.subn(
-        r"\n[ \t]*var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat\(\)",
+        r"\r?\n[ \t]*var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat\(\)",
         "",
         updated,
     )
-    updated, _ = re.subn(
-        r"\n[ \t]*val nowExactAllowed = canScheduleExactAlarmsCompat\(\)\n[ \t]*if \(android\.os\.Build\.VERSION\.SDK_INT >= android\.os\.Build\.VERSION_CODES\.S\) \{.*?\n[ \t]*\} else \{.*?\n[ \t]*\}",
-        "",
-        updated,
-        flags=re.DOTALL,
-    )
+    updated = remove_now_exact_allowed_block(updated)
     updated = remove_brace_block(updated, "            if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
     updated, _ = re.subn(
-        r"\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
+        r"\r?\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
         "",
         updated,
     )
