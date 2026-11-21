@@ -9,16 +9,13 @@ def find_file(filename):
     return None
 
 
-def remove_brace_block(text: str, start_marker: str, include_start_line: bool = True) -> str:
+def remove_brace_block(text: str, start_marker: str) -> str:
     idx = text.find(start_marker)
     if idx == -1:
         return text
 
-    if include_start_line:
-        line_start = text.rfind("\n", 0, idx)
-        block_start = 0 if line_start == -1 else line_start
-    else:
-        block_start = idx
+    line_start = text.rfind("\n", 0, idx)
+    block_start = 0 if line_start == -1 else line_start
 
     brace_idx = text.find("{", idx)
     if brace_idx == -1:
@@ -44,7 +41,6 @@ def remove_brace_block(text: str, start_marker: str, include_start_line: bool = 
 
 def remove_exact_alarm_status_block(text: str) -> str:
     start_marker = "        val exactAlarmAllowed = canScheduleExactAlarmsCompat()"
-    end_marker = "        }"
     start_idx = text.find(start_marker)
     if start_idx == -1:
         return text
@@ -52,7 +48,6 @@ def remove_exact_alarm_status_block(text: str) -> str:
     line_start = text.rfind("\n", 0, start_idx)
     block_start = 0 if line_start == -1 else line_start
 
-    # Etsitään if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) { ... }
     if_marker = "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
     if_idx = text.find(if_marker, start_idx)
     if if_idx == -1:
@@ -143,11 +138,11 @@ def patch_settings_dialog_helper(path):
         updated,
         flags=re.DOTALL,
     )
+    updated = remove_brace_block(updated, "            if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
     updated, _ = re.subn(
-        r"\n[ \t]*if \(!lastKnownExactAlarmAllowed && nowExactAllowed\) \{.*?\n[ \t]*\}\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
+        r"\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
         "",
         updated,
-        flags=re.DOTALL,
     )
 
     assert "fun showSettingsDialog(" in updated, "VIRHE: showSettingsDialog puuttuu SettingsDialogHelper.kt:stä!"
