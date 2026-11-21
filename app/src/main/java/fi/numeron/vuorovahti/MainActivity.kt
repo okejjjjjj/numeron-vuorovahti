@@ -465,12 +465,42 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        pendingAction = Action.SYNC_CALENDAR
-        syncStep = 0
-        collectedCalendarHtml.clear()
-        val now = LocalDate.now()
         val baseUrl = getBaseUrl()
-        webView.loadUrl("$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}")
+        if (baseUrl.isBlank()) {
+            val en = DemoModeHelper.isEnglish(this)
+            Toast.makeText(
+                this,
+                if (en) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val now = LocalDate.now()
+        val nextMonth = now.plusMonths(1)
+        val urls = listOf(
+            "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}",
+            "$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}"
+        )
+
+        val enStart = DemoModeHelper.isEnglish(this)
+        Toast.makeText(
+            this,
+            if (enStart) "Syncing shifts..." else "Synkronoidaan työvuoroja...",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        scope.launch {
+            val fetchedPages = BackgroundAuthHelper.fetchAuthenticatedPages(this@MainActivity, urls)
+            if (fetchedPages != null && fetchedPages.size == 2) {
+                processSyncedCalendarPages(fetchedPages)
+            } else {
+                pendingAction = Action.SYNC_CALENDAR
+                syncStep = 0
+                collectedCalendarHtml.clear()
+                webView.loadUrl(urls[0])
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -544,6 +574,7 @@ class MainActivity : AppCompatActivity() {
             databaseEnabled = true
             userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
         }
+        webView.webChromeClient = android.webkit.WebChromeClient()
 
         webView.addJavascriptInterface(
             DemoModeHelper.DemoJsBridge(
@@ -586,6 +617,15 @@ class MainActivity : AppCompatActivity() {
                         (!reqHost.isNullOrBlank() && (reqHost.endsWith(".numeronwfm.com", ignoreCase = true) || reqHost.endsWith(".numeronwfm.fi", ignoreCase = true))) ||
                         (!allowedHost.isNullOrBlank() && reqHost.equals(allowedHost, ignoreCase = true))
                     if (isInternal) {
+                        if (request?.isForMainFrame == true &&
+                            url.contains("/InfraDashboard", ignoreCase = true) &&
+                            dashboardRedirectCount < 2
+                        ) {
+                            dashboardRedirectCount++
+                            startSnapshotTransition()
+                            view?.loadUrl(resolveResumeUrl(getBaseUrl()))
+                            return true
+                        }
                         startSnapshotTransition()
                         return false
                     }
@@ -1020,13 +1060,9 @@ class MainActivity : AppCompatActivity() {
             #table-latest-stamps tr:hover td {
                 background-color: #233040 !important;
             }
-            #forgotStampPanel,
-            #forgotStampPanel.minimized,
-            #forgotStampPanel[style*="top: 100%"],
-            #forgotStampPanel[style*="top:100%"] {
+            #forgotStampPanel:not(.force-open) {
                 display: none !important;
             }
-            #forgotStampPanel[style*="top:"]:not(.minimized):not([style*="top: 100%"]):not([style*="top:100%"]),
             #forgotStampPanel.force-open {
                 display: block !important;
                 position: fixed !important;
@@ -1826,24 +1862,160 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
-                    document.addEventListener('click', function(e) {
-                        var btn = e.target && e.target.closest('#forgottenStampButton');
-                        if (btn) {
-                            var panel = document.getElementById('forgotStampPanel');
-                            if (panel) {
-                                panel.classList.remove('minimized');
-                                panel.classList.add('force-open');
-                            }
+
+                    function getForgotPanel() {
+                        return document.getElementById('forgotStampPanel') || document.querySelector('[id*="forgotStampPanel" i], [id*="ForgotStampPanel" i]');
+                    }
+
+                    function openForgotPanel() {
+                        var panel = getForgotPanel();
+                        if (panel) {
+                            panel.classList.remove('minimized', 'hidden', 'hide');
+                            panel.classList.add('force-open');
+                            panel.style.top = '10%';
+                            panel.style.display = 'block';
                         }
-                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
+                        var fog = document.querySelector('.drw-fog-of-war');
+                        if (fog) {
+                            fog.classList.add('showing');
+                            fog.style.display = 'block';
+                        }
+                    }
+
+                    function closeForgotPanel() {
+                        var panel = getForgotPanel();
+                        if (panel) {
+                            panel.classList.remove('force-open');
+                            panel.classList.add('minimized');
+                            panel.style.top = '100%';
+                            panel.style.display = 'none';
+                        }
+                        var fog = document.querySelector('.drw-fog-of-war');
+                        if (fog) {
+                            fog.classList.remove('showing');
+                            fog.style.display = 'none';
+                        }
+                    }
+
+                    function isForgotOpenTrigger(el) {
+                        if (!el) return false;
+                        if (el.closest('#forgotStampPanel')) return false;
+                        if (el.closest('#forgottenStampButton, #punchForgottenButton, [id*="forgotten" i], [id*="ForgotStamp" i]')) return true;
+                        var clickable = el.closest('button, a, [role="button"]');
+                        if (!clickable) return false;
+                        var txt = (clickable.innerText || clickable.textContent || '').toLowerCase();
+                        return txt.indexOf('unohtunut leimaus') !== -1 || txt.indexOf('forgotten stamp') !== -1;
+                    }
+
+                    function revealHiddenStampRows() {
+                        var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr.hide, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
+                        for (var i = 0; i < hiddenRows.length; i++) {
+                            hiddenRows[i].classList.remove('hidden', 'hide');
+                            hiddenRows[i].style.display = 'table-row';
+                        }
+                    }
+
+                    function isShowMoreTrigger(el) {
+                        if (!el) return false;
+                        var clickable = el.closest('button, a, [role="button"]');
+                        if (!clickable) return false;
+                        var id = (clickable.id || '').toLowerCase();
+                        if (id.indexOf('more') !== -1 || id.indexOf('lisaa') !== -1) return true;
+                        var txt = (clickable.innerText || clickable.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                        return txt === 'näytä lisää' || txt === 'show more' || txt.indexOf('näytä lisää') !== -1 || txt.indexOf('show more') !== -1;
+                    }
+
+                    document.addEventListener('click', function(e) {
+                        if (isForgotOpenTrigger(e.target)) {
+                            openForgotPanel();
+                            setTimeout(openForgotPanel, 60);
+                            setTimeout(openForgotPanel, 250);
+                            return;
+                        }
+                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader, .drw-fog-of-war');
                         if (cancelBtn) {
-                            var panel = document.getElementById('forgotStampPanel');
-                            if (panel) {
-                                panel.classList.remove('force-open');
-                                panel.classList.add('minimized');
-                            }
+                            closeForgotPanel();
+                            return;
+                        }
+                        if (isShowMoreTrigger(e.target)) {
+                            revealHiddenStampRows();
+                            setTimeout(revealHiddenStampRows, 150);
+                            setTimeout(revealHiddenStampRows, 500);
                         }
                     }, true);
+
+                    function watchStampPageDom() {
+                        var panel = getForgotPanel();
+                        if (panel && !panel._vvWatched && typeof MutationObserver !== 'undefined') {
+                            panel._vvWatched = true;
+                            var pObs = new MutationObserver(function() {
+                                var st = panel.getAttribute('style') || '';
+                                var isTop100 = /top\s*:\s*100%/i.test(st);
+                                if (!isTop100 && !panel.classList.contains('minimized') && st.indexOf('top:') !== -1) {
+                                    panel.classList.add('force-open');
+                                } else if (isTop100) {
+                                    panel.classList.remove('force-open');
+                                }
+                            });
+                            pObs.observe(panel, { attributes: true, attributeFilter: ['style', 'class'] });
+                        }
+                        var stampTbl = document.getElementById('table-latest-stamps');
+                        if (stampTbl && !stampTbl._vvWatched && typeof MutationObserver !== 'undefined') {
+                            stampTbl._vvWatched = true;
+                            new MutationObserver(revealHiddenStampRows).observe(stampTbl, { childList: true, subtree: true });
+                        }
+                    }
+                    watchStampPageDom();
+                    if (document.body && typeof MutationObserver !== 'undefined') {
+                        new MutationObserver(watchStampPageDom).observe(document.body, { childList: true, subtree: true });
+                    }
+                }
+
+                // === AJAX- JA FETCH-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
+                if (!window._ajaxSessionGuardInstalled) {
+                    window._ajaxSessionGuardInstalled = true;
+                    function triggerSessionRefreshOnce() {
+                        if (window._sessionExpiredHandled) return;
+                        window._sessionExpiredHandled = true;
+                        if (window.SessionBridge && typeof window.SessionBridge.onSessionExpired === 'function') {
+                            window.SessionBridge.onSessionExpired();
+                        }
+                    }
+                    if (window.XMLHttpRequest) {
+                        var origOpen = XMLHttpRequest.prototype.open;
+                        var origSend = XMLHttpRequest.prototype.send;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            this._vvUrl = url ? String(url) : '';
+                            return origOpen.apply(this, arguments);
+                        };
+                        XMLHttpRequest.prototype.send = function() {
+                            this.addEventListener('load', function() {
+                                try {
+                                    var respUrl = (this.responseURL || '').toLowerCase();
+                                    var bodyText = (typeof this.responseText === 'string') ? this.responseText : '';
+                                    var redirectedToLogin = respUrl.indexOf('/login') !== -1 || bodyText.indexOf('id="LoginForm"') !== -1;
+                                    if (this.status === 401 || this.status === 403 || redirectedToLogin) {
+                                        triggerSessionRefreshOnce();
+                                    }
+                                } catch (_err) {}
+                            });
+                            return origSend.apply(this, arguments);
+                        };
+                    }
+                    if (typeof window.fetch === 'function') {
+                        var origFetch = window.fetch;
+                        window.fetch = function() {
+                            return origFetch.apply(this, arguments).then(function(response) {
+                                try {
+                                    var rUrl = (response && response.url ? response.url : '').toLowerCase();
+                                    if (response && (response.status === 401 || response.status === 403 || rUrl.indexOf('/login') !== -1)) {
+                                        triggerSessionRefreshOnce();
+                                    }
+                                } catch (_err) {}
+                                return response;
+                            });
+                        };
+                    }
                 }
 
                 // === KALENTERIN POISSAOLOJEN SIISTINTÄ JA LOMAPALKKIEN YHDISTÄMINEN ===
@@ -2315,69 +2487,72 @@ class MainActivity : AppCompatActivity() {
                 pendingAction = Action.NONE
                 val pagesToParse = collectedCalendarHtml.toList()
                 collectedCalendarHtml.clear()
+                processSyncedCalendarPages(pagesToParse)
+            }
+        }
+    }
 
-                scope.launch(Dispatchers.IO) {
-                    val parsedPages = pagesToParse.map { NumeronParser.parseCalendarHtml(it) }
-                    if (parsedPages.any { it == null }) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (DemoModeHelper.isEnglish(this@MainActivity)) "Failed to read shifts – calendar was not modified" else "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                        return@launch
-                    }
-                    val baseUrl = getBaseUrl()
-                    val cookies = try {
-                        CookieManager.getInstance().getCookie(baseUrl)
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val rawShifts = NumeronParser.enrichShiftsWithListComments(
-                        baseUrl = baseUrl,
-                        cookieHeader = cookies,
-                        htmlPages = pagesToParse,
-                        shifts = parsedPages.filterNotNull().flatten()
-                    )
-                    val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-                    val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
-                    val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
-                    val allShifts = NumeronParser.mergeConsecutiveLeaves(rawShifts)
-                    CalendarSyncHelper.saveCachedShifts(this@MainActivity, allShifts)
+    private fun processSyncedCalendarPages(pagesToParse: List<String>) {
+        scope.launch(Dispatchers.IO) {
+            val parsedPages = pagesToParse.map { NumeronParser.parseCalendarHtml(it) }
+            if (parsedPages.any { it == null }) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (DemoModeHelper.isEnglish(this@MainActivity)) "Failed to read shifts – calendar was not modified" else "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+                return@launch
+            }
+            val baseUrl = getBaseUrl()
+            val cookies = try {
+                CookieManager.getInstance().getCookie(baseUrl)
+            } catch (_: Exception) {
+                null
+            }
+            val rawShifts = NumeronParser.enrichShiftsWithListComments(
+                baseUrl = baseUrl,
+                cookieHeader = cookies,
+                htmlPages = pagesToParse,
+                shifts = parsedPages.filterNotNull().flatten()
+            )
+            val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
+            val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
+            val allShifts = NumeronParser.mergeConsecutiveLeaves(rawShifts)
+            CalendarSyncHelper.saveCachedShifts(this@MainActivity, allShifts)
 
-                    val changes = if (syncCalendar && calId != null) {
-                        CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, allShifts)
+            val changes = if (syncCalendar && calId != null) {
+                CalendarSyncHelper.syncShiftsToCalendar(this@MainActivity, calId, allShifts)
+            } else {
+                prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
+                emptyList()
+            }
+            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
+
+            withContext(Dispatchers.Main) {
+                val en = DemoModeHelper.isEnglish(this@MainActivity)
+                if (syncCalendar && calId == null) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (en) "Shifts fetched (${allShifts.size}), but no calendar is selected" else "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else if (changes.isNotEmpty()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (en) "Calendar updated: ${CalendarChangeTracker.formatSummary(changes)}" else "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
+                } else {
+                    val msg = if (syncCalendar) {
+                        if (en) "Calendar is up to date (${allShifts.size} shifts)" else "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
                     } else {
-                        prefs.edit().putLong("last_calendar_sync_ms", System.currentTimeMillis()).apply()
-                        emptyList()
+                        if (en) "Shifts and reminders updated (${allShifts.size} shifts)" else "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
                     }
-                    CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
-
-                    withContext(Dispatchers.Main) {
-                        val en = DemoModeHelper.isEnglish(this@MainActivity)
-                        if (syncCalendar && calId == null) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (en) "Shifts fetched (${allShifts.size}), but no calendar is selected" else "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        } else if (changes.isNotEmpty()) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                if (en) "Calendar updated: ${CalendarChangeTracker.formatSummary(changes)}" else "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
-                                Toast.LENGTH_LONG
-                            ).show()
-                            CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
-                        } else {
-                            val msg = if (syncCalendar) {
-                                if (en) "Calendar is up to date (${allShifts.size} shifts)" else "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
-                            } else {
-                                if (en) "Shifts and reminders updated (${allShifts.size} shifts)" else "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
-                            }
-                            Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                 }
             }
         }

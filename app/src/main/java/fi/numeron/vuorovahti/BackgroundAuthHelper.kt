@@ -3,12 +3,16 @@ package fi.numeron.vuorovahti
 import android.content.Context
 import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 
 object BackgroundAuthHelper {
 
@@ -67,16 +71,20 @@ object BackgroundAuthHelper {
                 "${URLEncoder.encode(k, "UTF-8")}=${URLEncoder.encode(v, "UTF-8")}"
             }
 
-            // 2. Lähetä kirjautumislomake
+            // 2. Lähetä kirjautumislomake (pysäytetään 302-ohjaukseen ilman raskaan kohdesivun latausta)
             val loginResp = executeRequest(
                 urlString = postUrl,
                 method = "POST",
                 cookieStore = cookieStore,
-                postBody = encodedBody
+                postBody = encodedBody,
+                stopAfterRedirect = true
             ) ?: return@withContext false
 
-            val stillOnLogin = Jsoup.parse(loginResp.body)
-                .selectFirst("#LoginForm, input[type=password]") != null
+            val stillOnLogin = if (loginResp.body.isNotEmpty()) {
+                Jsoup.parse(loginResp.body).selectFirst("#LoginForm, input[type=password]") != null
+            } else {
+                loginResp.finalUrl.contains("/Login", ignoreCase = true)
+            }
             if (stillOnLogin || cookieStore.isEmpty()) {
                 return@withContext false
             }
@@ -107,7 +115,8 @@ object BackgroundAuthHelper {
         method: String,
         cookieStore: MutableMap<String, String>,
         postBody: String? = null,
-        maxRedirects: Int = 5
+        maxRedirects: Int = 5,
+        stopAfterRedirect: Boolean = false
     ): HttpResult? {
         var currentUrl = urlString
         var currentMethod = method
@@ -159,11 +168,15 @@ object BackgroundAuthHelper {
 
                 if (code in 300..399) {
                     val location = conn.getHeaderField("Location") ?: return null
-                    currentUrl = if (location.startsWith("http")) {
+                    val nextUrl = if (location.startsWith("http")) {
                         location
                     } else {
                         URL(URL(currentUrl), location).toString()
                     }
+                    if (stopAfterRedirect && cookieStore.isNotEmpty() && !nextUrl.contains("/Login", ignoreCase = true)) {
+                        return HttpResult(nextUrl, code, "")
+                    }
+                    currentUrl = nextUrl
                     currentMethod = "GET"
                     currentBody = null
                 } else {
@@ -246,52 +259,84 @@ object BackgroundAuthHelper {
     }
 
     suspend fun fetchAuthenticatedPages(context: Context, urls: List<String>): List<String>? = withContext(Dispatchers.IO) {
+        if (urls.isEmpty()) return@withContext emptyList()
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
         if (baseUrl.isBlank()) return@withContext null
 
-        val cookieStore = mutableMapOf<String, String>()
-        fun loadFromCookieManager() {
-            cookieStore.clear()
+        fun readCookiesFromManager(): Map<String, String> {
+            val map = mutableMapOf<String, String>()
             val raw = CookieManager.getInstance().getCookie(baseUrl).orEmpty()
             raw.split(";").forEach { part ->
                 val trimmed = part.trim()
                 val eq = trimmed.indexOf('=')
                 if (eq > 0) {
-                    cookieStore[trimmed.substring(0, eq).trim()] = trimmed.substring(eq + 1).trim()
+                    map[trimmed.substring(0, eq).trim()] = trimmed.substring(eq + 1).trim()
                 }
             }
+            return map
         }
 
-        loadFromCookieManager()
-        if (cookieStore.isEmpty()) {
-            if (!ensureAuthenticatedSession(context)) return@withContext null
-            loadFromCookieManager()
-        }
-
-        val results = mutableListOf<String>()
-        var reauthed = false
-
-        for (targetUrl in urls) {
-            var res = executeRequest(targetUrl, "GET", cookieStore) ?: return@withContext null
-            val needsLogin = res.finalUrl.contains("/Login", ignoreCase = true) ||
-                res.body.contains("id=\"LoginForm\"", ignoreCase = true)
-
-            if (needsLogin && !reauthed) {
-                reauthed = true
-                if (!ensureAuthenticatedSession(context)) return@withContext null
-                loadFromCookieManager()
-                res = executeRequest(targetUrl, "GET", cookieStore) ?: return@withContext null
+        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) {
+            if (updated == original) return
+            val cm = CookieManager.getInstance()
+            val secureAttr = if (baseUrl.startsWith("https://", ignoreCase = true)) "; Secure" else ""
+            updated.forEach { (k, v) ->
+                if (original[k] != v) {
+                    cm.setCookie(baseUrl, "$k=$v; Path=/$secureAttr")
+                }
             }
+            cm.flush()
+        }
 
-            if (res.statusCode !in 200..299 ||
+        suspend fun fetchAllParallel(baseCookies: Map<String, String>): List<HttpResult?> = coroutineScope {
+            urls.map { targetUrl ->
+                async(Dispatchers.IO) {
+                    val localStore = ConcurrentHashMap(baseCookies)
+                    val res = executeRequest(targetUrl, "GET", localStore)
+                    if (res != null) {
+                        persistUpdatedCookies(localStore, baseCookies)
+                    }
+                    res
+                }
+            }.awaitAll()
+        }
+
+        var cookies = readCookiesFromManager()
+        if (cookies.isEmpty()) {
+            if (!ensureAuthenticatedSession(context)) return@withContext null
+            cookies = readCookiesFromManager()
+        }
+
+        var responses = fetchAllParallel(cookies)
+        val anyNeedsLogin = responses.any { res ->
+            res == null ||
+                res.finalUrl.contains("/Login", ignoreCase = true) ||
+                res.body.contains("id=\"LoginForm\"", ignoreCase = true)
+        }
+
+        if (anyNeedsLogin) {
+            if (!ensureAuthenticatedSession(context)) return@withContext null
+            cookies = readCookiesFromManager()
+            responses = fetchAllParallel(cookies)
+        }
+
+        val bodies = ArrayList<String>(responses.size)
+        for (res in responses) {
+            if (res == null ||
+                res.statusCode !in 200..299 ||
                 res.finalUrl.contains("/Login", ignoreCase = true) ||
                 res.body.contains("id=\"LoginForm\"", ignoreCase = true)
             ) {
                 return@withContext null
             }
-            results.add(res.body)
+            bodies.add(res.body)
         }
 
-        results
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putLong("last_valid_session_ms", System.currentTimeMillis())
+            .apply()
+
+        bodies
     }
 }

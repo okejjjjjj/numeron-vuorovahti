@@ -8,6 +8,8 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 data class WorkShift(
@@ -365,10 +367,32 @@ object NumeronParser {
 
         val commentsMap = mutableMapOf<Pair<LocalDate, LocalTime?>, String>()
         val cleanBase = baseUrl.trimEnd('/')
-        for (sampleDate in weekSampleDates) {
+        if (weekSampleDates.size == 1) {
+            val sampleDate = weekSampleDates.first()
             val listUrl = "$cleanBase/Calendar/List?date=${sampleDate.monthValue}%2F${sampleDate.dayOfMonth}%2F${sampleDate.year}%2000%3A00%3A00"
-            val listHtml = fetchHtmlWithCookies(listUrl, cookieHeader) ?: continue
-            commentsMap.putAll(parseListCommentsHtml(listHtml))
+            val listHtml = fetchHtmlWithCookies(listUrl, cookieHeader)
+            if (listHtml != null) {
+                commentsMap.putAll(parseListCommentsHtml(listHtml))
+            }
+        } else {
+            val pool = Executors.newFixedThreadPool(weekSampleDates.size.coerceAtMost(4))
+            try {
+                val tasks = weekSampleDates.map { sampleDate ->
+                    Callable {
+                        val listUrl = "$cleanBase/Calendar/List?date=${sampleDate.monthValue}%2F${sampleDate.dayOfMonth}%2F${sampleDate.year}%2000%3A00%3A00"
+                        val listHtml = fetchHtmlWithCookies(listUrl, cookieHeader)
+                        if (listHtml != null) parseListCommentsHtml(listHtml) else emptyMap()
+                    }
+                }
+                for (future in pool.invokeAll(tasks)) {
+                    try {
+                        commentsMap.putAll(future.get())
+                    } catch (_: Exception) {
+                    }
+                }
+            } finally {
+                pool.shutdown()
+            }
         }
 
         if (commentsMap.isEmpty()) return shifts
