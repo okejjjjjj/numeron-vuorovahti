@@ -73,7 +73,7 @@ object SettingsDialogHelper {
     val DEFAULT_EVENING_RGB = Color.rgb(246, 191, 38)
     val DEFAULT_NIGHT_RGB = Color.rgb(142, 36, 170)
 
-    fun getAvailableCalendars(context: Context): List<CalendarOption> {
+        fun getAvailableCalendars(context: Context): List<CalendarOption> {
         val en = DemoModeHelper.isEnglish(context)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
@@ -103,7 +103,7 @@ object SettingsDialogHelper {
                 val accountType = cursor.getString(3) ?: ""
                 val isPrimary = cursor.getInt(4) == 1
                 list.add(CalendarOption(id, name, account, accountType, en))
-                if (accountType == "com.google" && (isPrimary || name.equals(account, ignoreCase = true))) {
+                if (accountType == "com.google" && isPrimary) {
                     val item = list.removeAt(list.lastIndex)
                     list.add(0, item)
                 }
@@ -111,6 +111,7 @@ object SettingsDialogHelper {
         }
         return list.sortedBy { if (it.accountType == "com.google") 0 else 1 }
     }
+
 
     private fun formatTimestamp(ms: Long, fallback: String, en: Boolean = false): String {
         if (ms <= 0L) return fallback
