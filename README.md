@@ -1,9 +1,6 @@
-<img width="40%"  alt="9652" src="https://github.com/user-attachments/assets/4c9c827d-6053-4240-aeea-1ba6f3194ece" />
-<img width="40%" alt="9651" src="https://github.com/user-attachments/assets/e512a8dd-0e6a-4037-98d9-995977097590" />
+# Numeron vuorovahti
 
-# Numeron-vuorovahti
-
-Moderni ja kevyt Android-sovellus Numeron WFM -työaikaseurantaan. Numeron-vuorovahti automatisoi työaikaleimaukset, synkronoi työvuorot ja lomat saumattomasti Google Kalenteriin sekä tekee vuorojen hallinnasta vaivatonta.
+Moderni ja kevyt Android-sovellus Numeron WFM -työaikaseurantaan. Numeron vuorovahti automatisoi työaikaleimaukset, synkronoi työvuorot ja lomat saumattomasti Google Kalenteriin sekä tekee vuorojen hallinnasta vaivatonta.
 
 ## Tärkeimmät ominaisuudet
 
@@ -22,8 +19,8 @@ Moderni ja kevyt Android-sovellus Numeron WFM -työaikaseurantaan. Numeron-vuoro
 ## Asetukset
 
 Ensimmäisellä käynnistyskerralla sovellus pyytää määrittämään:
-1. **Organisaation osoitteen** (esim. `omaorganisaatio.numeronwfm.com`)
-2. **Käyttäjätunnuksen ja salasanan**
+1. **Organisaation osoitteen tai tunnisteen** (esim. `omaorganisaatio.numeronwfm.com`)
+2. **Numeron Käyttäjätunnuksen ja salasanan**
 3. **Automaattisen synkronoinnin** asetukset
-4. **Kohdekalenterin** (voit valita haluamasi puhelimen kalenterin pudotusvalikosta)
+4. **Kohdekalenterin**
 5. **Leimausmuistutukset**
