@@ -9,96 +9,81 @@ def find_file(filename):
     return None
 
 
-def patch_background_auth_helper(path):
+def remove_function_by_braces(content, func_signature_prefix):
+    idx = content.find(func_signature_prefix)
+    if idx == -1:
+        return content, False
+
+    # Etsitään funktion aloittava '{'
+    open_brace_idx = content.find("{", idx)
+    if open_brace_idx == -1:
+        return content, False
+
+    depth = 0
+    in_string = False
+    escape = False
+    end_idx = -1
+
+    for i in range(open_brace_idx, len(content)):
+        ch = content[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+
+    if end_idx == -1:
+        return content, False
+
+    # Laajennetaan poisto rivin alkuun ja rivinvaihdon loppuun
+    start_line = content.rfind("\n", 0, idx)
+    if start_line == -1:
+        start_line = 0
+    end_line = content.find("\n", end_idx)
+    if end_line == -1:
+        end_line = len(content)
+    else:
+        end_line += 1
+
+    new_content = content[:start_line] + "\n" + content[end_line:]
+    return new_content, True
+
+
+def fix_settings_dialog_helper(path):
     if not path or not os.path.exists(path):
-        print("HUOM: BackgroundAuthHelper.kt ei löytynyt, ohitetaan.")
+        print("HUOM: SettingsDialogHelper.kt ei löytynyt.")
         return
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    updated = content
+    updated, removed = remove_function_by_braces(content, "private fun resolveNextSyncMs(")
 
-    if "stopAfterRedirect = true" in updated:
-        updated = updated.replace("stopAfterRedirect = true", "stopAfterRedirect = false", 1)
-
-    if "cookieSyncLock" not in updated:
-        obj_match = re.search(r"(object\s+BackgroundAuthHelper\s*\{)", updated)
-        if obj_match:
-            updated = updated.replace(
-                obj_match.group(1),
-                f"{obj_match.group(1)}\n    private val cookieSyncLock = Any()",
-                1,
-            )
-
-        persist_pattern = re.compile(
-            r"(private\s+fun\s+persistUpdatedCookies\([^\)]*\)\s*\{)(.*?)(\n    \})",
-            re.DOTALL,
-        )
-        if persist_pattern.search(updated):
-            updated = persist_pattern.sub(
-                r"\1\n        synchronized(cookieSyncLock) {\2\n        }\3",
-                updated,
-                count=1,
-            )
-        else:
-            updated = re.sub(
-                r"(CookieManager\.getInstance\(\)\.setCookie\([^\n]+\))",
-                r"synchronized(cookieSyncLock) { \1; CookieManager.getInstance().flush() }",
-                updated,
-            )
+    # Jos tiedosto on rikki aiemmasta osittaisesta poistosta, tarkistetaan onko 'showSettingsDialog' vielä olemassa
+    if not removed and "fun showSettingsDialog(" not in content:
+        print("VAROITUS: SettingsDialogHelper.kt näyttää pahasti vaurioituneelta — palauta se gitistä (git checkout -- SettingsDialogHelper.kt) ja aja skripti uudelleen.")
+        return
 
     if updated != content:
         with open(path, "w", encoding="utf-8") as f:
             f.write(updated)
-        print(f"OK: {path} päivitetty.")
+        print(f"OK: {path} korjattu (resolveNextSyncMs poistettu siististi).")
     else:
         print(f"OK: {path} ei vaatinut muutoksia.")
-
-
-def patch_settings_dialog_helper(path):
-    if not path or not os.path.exists(path):
-        print("HUOM: SettingsDialogHelper.kt ei löytynyt, ohitetaan.")
-        return
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    pattern = re.compile(
-        r"\n\s*private fun resolveNextSyncMs\([^\)]*\):\s*Long\s*\{.*?\n\s*\}\n",
-        re.DOTALL,
-    )
-    new_content, count = pattern.subn("\n", content, count=1)
-
-    if count > 0:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        print(f"OK: {path} — poistettu käyttämätön resolveNextSyncMs (.get()).")
-    else:
-        print(f"OK: {path} — resolveNextSyncMs ei tarvinnut muutoksia.")
-
-
-def patch_calendar_sync_helper(path):
-    if not path or not os.path.exists(path):
-        print("HUOM: CalendarSyncHelper.kt ei löytynyt, ohitetaan.")
-        return
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    old_cached_line = "val shiftRoleInfo = shift.description.lineSequence().firstOrNull()?.trim().orEmpty()"
-    new_cached_line = (
-        "val shiftRoleInfo = shift.description.substringBefore(EVENT_DESCRIPTION_TAG)"
-        ".lineSequence().firstOrNull()?.trim().orEmpty()"
-    )
-
-    if old_cached_line in content:
-        updated = content.replace(old_cached_line, new_cached_line, 1)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(updated)
-        print(f"OK: {path} — cachedShifts-kuvaus siistitty.")
-    else:
-        print(f"OK: {path} — ei muutettavaa cachedShifts-rivissä.")
 
 
 def bump_version_code():
@@ -118,8 +103,6 @@ def bump_version_code():
 
 
 if __name__ == "__main__":
-    patch_background_auth_helper(find_file("BackgroundAuthHelper.kt"))
-    patch_settings_dialog_helper(find_file("SettingsDialogHelper.kt"))
-    patch_calendar_sync_helper(find_file("CalendarSyncHelper.kt"))
+    fix_settings_dialog_helper(find_file("SettingsDialogHelper.kt"))
     bump_version_code()
     print("\nValmis!")
