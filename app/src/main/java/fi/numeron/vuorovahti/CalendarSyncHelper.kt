@@ -650,7 +650,7 @@ object CalendarSyncHelper {
                 if (endMs <= now || startMs >= twoWeeksAhead) continue
 
                 val baseTitle = formatShiftTitle(shift.title, userTag)
-                val shiftRoleInfo = shift.description.lineSequence().firstOrNull()?.trim().orEmpty()
+                val shiftRoleInfo = shift.description.substringBefore(EVENT_DESCRIPTION_TAG).lineSequence().firstOrNull()?.trim().orEmpty()
                 val displayTitle = if (shiftRoleInfo.isNotEmpty()) "$baseTitle ($shiftRoleInfo)" else baseTitle
                 userShifts.add(ReminderEventItem(displayTitle, startMs, endMs))
             }

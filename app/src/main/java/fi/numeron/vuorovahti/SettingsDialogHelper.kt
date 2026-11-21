@@ -117,16 +117,6 @@ object SettingsDialogHelper {
         val fmt = DateTimeFormatter.ofPattern(if (en) "dd.MM.yyyy 'at' HH:mm" else "dd.MM.yyyy 'klo' HH:mm")
         return Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).format(fmt)
     }
-
-    private fun resolveNextSyncMs(context: Context, fallbackSavedMs: Long): Long {
-        try {
-            val infos = WorkManager.getInstance(context)
-                .getWorkInfosForUniqueWork("NumeronVuorovahtiSync")
-                .get()
-            val nextRun = infos.firstOrNull { !it.state.isFinished }?.nextScheduleTimeMillis ?: 0L
-            if (nextRun > System.currentTimeMillis() && nextRun < Long.MAX_VALUE) {
-                return nextRun
-            }
         } catch (_: Exception) {
         }
         return fallbackSavedMs

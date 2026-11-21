@@ -15,6 +15,7 @@ import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 
 object BackgroundAuthHelper {
+    private val cookieSyncLock = Any()
 
     suspend fun ensureAuthenticatedSession(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (DemoModeHelper.isDemoEnabled(context)) return@withContext false
