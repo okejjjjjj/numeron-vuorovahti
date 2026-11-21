@@ -343,38 +343,10 @@ def patch_main_activity():
     with open(path, "r", encoding="utf-8") as f:
         src = f.read()
 
-    # 1. Poistetaan stopLoading() välilehden vaihdosta ja lisätään kuukausi/vuosi Vuorot-osoitteeseen
-    old_nav = """        if (DemoModeHelper.isDemoEnabled(this)) {
-            startSnapshotTransition {
-                webView.stopLoading()
-                val html = when (tab) {
-                    Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
-                    Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
-                    Tab.SHIFTS -> DemoModeHelper.getDemoShiftsHtml(this)
-                }
-                webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
-            }
-        } else {
-            val baseUrl = getBaseUrl()
-            if (baseUrl.isEmpty() || (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))) {
-                endSnapshotTransition()
-                Toast.makeText(
-                    this,
-                    if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
-                    Toast.LENGTH_LONG
-                ).show()
-                btnNavSettings.performClick()
-                return
-            }
-            val url = when (tab) {
-                Tab.STAMP -> "$baseUrl/WorktimeStamping"
-                Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
-                Tab.SHIFTS -> "$baseUrl/Calendar/Month"
-            }
-            startSnapshotTransition {
-                webView.stopLoading()"""
-
-    new_nav = """        if (DemoModeHelper.isDemoEnabled(this)) {
+    # 1. Varmistetaan navigateToTab-lohko ankkureilla (toimii riippumatta aiemmasta patchista)
+    nav_start_marker = "        if (DemoModeHelper.isDemoEnabled(this)) {"
+    nav_end_marker = "                if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {"
+    nav_replacement = """        if (DemoModeHelper.isDemoEnabled(this)) {
             startSnapshotTransition {
                 val html = when (tab) {
                     Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
@@ -401,12 +373,20 @@ def patch_main_activity():
                 Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
             }
-            startSnapshotTransition {"""
+            startSnapshotTransition {
+                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
+                val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
+                val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
+                val isAutoStamping = (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT)
+                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 25L * 60 * 1000L
 
-    if old_nav not in src:
-        print("VIRHE: navigateToTab-lohkoa ei löytynyt.")
-        sys.exit(1)
-    src = src.replace(old_nav, new_nav, 1)
+"""
+
+    s_idx = src.find(nav_start_marker)
+    e_idx = src.find(nav_end_marker, s_idx) if s_idx != -1 else -1
+    if s_idx != -1 and e_idx != -1:
+        src = src[:s_idx] + nav_replacement + src[e_idx:]
 
     # 2. Kevyt rinnakkainen kalenterisynkronointi WebView-latauksen sijaan
     old_sync = """        pendingAction = Action.SYNC_CALENDAR
@@ -472,7 +452,7 @@ def patch_main_activity():
         }
         webView.webChromeClient = android.webkit.WebChromeClient()"""
 
-    if old_settings_apply in src:
+    if "webChromeClient" not in src and old_settings_apply in src:
         src = src.replace(old_settings_apply, new_settings_apply, 1)
 
     old_override = """                    if (isInternal) {
@@ -494,7 +474,7 @@ def patch_main_activity():
                         return false
                     }"""
 
-    if old_override in src:
+    if "view?.loadUrl(resolveResumeUrl(getBaseUrl()))" not in src and old_override in src:
         src = src.replace(old_override, new_override, 1)
 
     # 4. Korjataan "Lisää unohtunut leimaus" -paneelin CSS ja "Näytä lisää" -toiminto leimaussivulla
@@ -507,12 +487,9 @@ def patch_main_activity():
             #forgotStampPanel[style*="top:"]:not(.minimized):not([style*="top: 100%"]):not([style*="top:100%"]),
             #forgotStampPanel.force-open {"""
 
-    new_forgot_css = """            #forgotStampPanel.minimized:not(.force-open),
-            #forgotStampPanel[style*="top: 100%"]:not(.force-open),
-            #forgotStampPanel[style*="top:100%"]:not(.force-open) {
+    new_forgot_css = """            #forgotStampPanel:not(.force-open) {
                 display: none !important;
             }
-            #forgotStampPanel:not(.minimized):not([style*="top: 100%"]):not([style*="top:100%"]),
             #forgotStampPanel.force-open {"""
 
     if old_forgot_css in src:
@@ -543,10 +520,14 @@ def patch_main_activity():
     new_forgot_js = """                if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
 
+                    function getForgotPanel() {
+                        return document.getElementById('forgotStampPanel') || document.querySelector('[id*="forgotStampPanel" i], [id*="ForgotStampPanel" i]');
+                    }
+
                     function openForgotPanel() {
-                        var panel = document.getElementById('forgotStampPanel') || document.querySelector('[id*="forgotStampPanel" i], [id*="ForgotStampPanel" i]');
+                        var panel = getForgotPanel();
                         if (panel) {
-                            panel.classList.remove('minimized', 'hidden');
+                            panel.classList.remove('minimized', 'hidden', 'hide');
                             panel.classList.add('force-open');
                             panel.style.top = '10%';
                             panel.style.display = 'block';
@@ -559,7 +540,7 @@ def patch_main_activity():
                     }
 
                     function closeForgotPanel() {
-                        var panel = document.getElementById('forgotStampPanel') || document.querySelector('[id*="forgotStampPanel" i], [id*="ForgotStampPanel" i]');
+                        var panel = getForgotPanel();
                         if (panel) {
                             panel.classList.remove('force-open');
                             panel.classList.add('minimized');
@@ -575,12 +556,20 @@ def patch_main_activity():
 
                     function isForgotOpenTrigger(el) {
                         if (!el) return false;
-                        if (el.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader, [id*="cancel" i]')) return false;
+                        if (el.closest('#forgotStampPanel')) return false;
                         if (el.closest('#forgottenStampButton, #punchForgottenButton, [id*="forgotten" i], [id*="ForgotStamp" i]')) return true;
                         var clickable = el.closest('button, a, [role="button"]');
                         if (!clickable) return false;
                         var txt = (clickable.innerText || clickable.textContent || '').toLowerCase();
                         return txt.indexOf('unohtunut leimaus') !== -1 || txt.indexOf('forgotten stamp') !== -1;
+                    }
+
+                    function revealHiddenStampRows() {
+                        var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr.hide, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
+                        for (var i = 0; i < hiddenRows.length; i++) {
+                            hiddenRows[i].classList.remove('hidden', 'hide');
+                            hiddenRows[i].style.display = 'table-row';
+                        }
                     }
 
                     function isShowMoreTrigger(el) {
@@ -597,70 +586,93 @@ def patch_main_activity():
                         if (isForgotOpenTrigger(e.target)) {
                             openForgotPanel();
                             setTimeout(openForgotPanel, 60);
+                            setTimeout(openForgotPanel, 250);
                             return;
                         }
-                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader');
+                        var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader, .drw-fog-of-war');
                         if (cancelBtn) {
                             closeForgotPanel();
                             return;
                         }
                         if (isShowMoreTrigger(e.target)) {
-                            setTimeout(function() {
-                                var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
-                                for (var i = 0; i < hiddenRows.length; i++) {
-                                    hiddenRows[i].classList.remove('hidden');
-                                    hiddenRows[i].style.display = 'table-row';
-                                }
-                            }, 250);
+                            revealHiddenStampRows();
+                            setTimeout(revealHiddenStampRows, 150);
+                            setTimeout(revealHiddenStampRows, 500);
                         }
                     }, true);
 
-                    function watchForgotPanel() {
-                        var panel = document.getElementById('forgotStampPanel');
-                        if (!panel || panel._vvWatched || typeof MutationObserver === 'undefined') return;
-                        panel._vvWatched = true;
-                        var pObs = new MutationObserver(function() {
-                            var st = panel.getAttribute('style') || '';
-                            var isTop100 = /top\\s*:\\s*100%/i.test(st);
-                            if (!isTop100 && !panel.classList.contains('minimized') && st.indexOf('top:') !== -1) {
-                                panel.classList.add('force-open');
-                            } else if (isTop100) {
-                                panel.classList.remove('force-open');
-                            }
-                        });
-                        pObs.observe(panel, { attributes: true, attributeFilter: ['style', 'class'] });
+                    function watchStampPageDom() {
+                        var panel = getForgotPanel();
+                        if (panel && !panel._vvWatched && typeof MutationObserver !== 'undefined') {
+                            panel._vvWatched = true;
+                            var pObs = new MutationObserver(function() {
+                                var st = panel.getAttribute('style') || '';
+                                var isTop100 = /top\\s*:\\s*100%/i.test(st);
+                                if (!isTop100 && !panel.classList.contains('minimized') && st.indexOf('top:') !== -1) {
+                                    panel.classList.add('force-open');
+                                } else if (isTop100) {
+                                    panel.classList.remove('force-open');
+                                }
+                            });
+                            pObs.observe(panel, { attributes: true, attributeFilter: ['style', 'class'] });
+                        }
+                        var stampTbl = document.getElementById('table-latest-stamps');
+                        if (stampTbl && !stampTbl._vvWatched && typeof MutationObserver !== 'undefined') {
+                            stampTbl._vvWatched = true;
+                            new MutationObserver(revealHiddenStampRows).observe(stampTbl, { childList: true, subtree: true });
+                        }
                     }
-                    watchForgotPanel();
+                    watchStampPageDom();
                     if (document.body && typeof MutationObserver !== 'undefined') {
-                        new MutationObserver(watchForgotPanel).observe(document.body, { childList: true, subtree: true });
+                        new MutationObserver(watchStampPageDom).observe(document.body, { childList: true, subtree: true });
                     }
                 }
 
-                // === AJAX-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
-                if (!window._ajaxSessionGuardInstalled && window.XMLHttpRequest) {
+                // === AJAX- JA FETCH-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
+                if (!window._ajaxSessionGuardInstalled) {
                     window._ajaxSessionGuardInstalled = true;
-                    var origOpen = XMLHttpRequest.prototype.open;
-                    var origSend = XMLHttpRequest.prototype.send;
-                    XMLHttpRequest.prototype.open = function(method, url) {
-                        this._vvUrl = url ? String(url) : '';
-                        return origOpen.apply(this, arguments);
-                    };
-                    XMLHttpRequest.prototype.send = function() {
-                        this.addEventListener('load', function() {
-                            try {
-                                var respUrl = (this.responseURL || '').toLowerCase();
-                                var bodyText = (typeof this.responseText === 'string') ? this.responseText : '';
-                                var redirectedToLogin = respUrl.indexOf('/login') !== -1 || bodyText.indexOf('id="LoginForm"') !== -1;
-                                if ((this.status === 401 || this.status === 403 || redirectedToLogin) && !window._sessionExpiredHandled) {
-                                    window._sessionExpiredHandled = true;
-                                    if (window.SessionBridge && typeof window.SessionBridge.onSessionExpired === 'function') {
-                                        window.SessionBridge.onSessionExpired();
+                    function triggerSessionRefreshOnce() {
+                        if (window._sessionExpiredHandled) return;
+                        window._sessionExpiredHandled = true;
+                        if (window.SessionBridge && typeof window.SessionBridge.onSessionExpired === 'function') {
+                            window.SessionBridge.onSessionExpired();
+                        }
+                    }
+                    if (window.XMLHttpRequest) {
+                        var origOpen = XMLHttpRequest.prototype.open;
+                        var origSend = XMLHttpRequest.prototype.send;
+                        XMLHttpRequest.prototype.open = function(method, url) {
+                            this._vvUrl = url ? String(url) : '';
+                            return origOpen.apply(this, arguments);
+                        };
+                        XMLHttpRequest.prototype.send = function() {
+                            this.addEventListener('load', function() {
+                                try {
+                                    var respUrl = (this.responseURL || '').toLowerCase();
+                                    var bodyText = (typeof this.responseText === 'string') ? this.responseText : '';
+                                    var redirectedToLogin = respUrl.indexOf('/login') !== -1 || bodyText.indexOf('id="LoginForm"') !== -1;
+                                    if (this.status === 401 || this.status === 403 || redirectedToLogin) {
+                                        triggerSessionRefreshOnce();
                                     }
-                                }
-                            } catch (_err) {}
-                        });
-                        return origSend.apply(this, arguments);
-                    };
+                                } catch (_err) {}
+                            });
+                            return origSend.apply(this, arguments);
+                        };
+                    }
+                    if (typeof window.fetch === 'function') {
+                        var origFetch = window.fetch;
+                        window.fetch = function() {
+                            return origFetch.apply(this, arguments).then(function(response) {
+                                try {
+                                    var rUrl = (response && response.url ? response.url : '').toLowerCase();
+                                    if (response && (response.status === 401 || response.status === 403 || rUrl.indexOf('/login') !== -1)) {
+                                        triggerSessionRefreshOnce();
+                                    }
+                                } catch (_err) {}
+                                return response;
+                            });
+                        };
+                    }
                 }"""
 
     if old_forgot_js in src:
@@ -840,7 +852,7 @@ def patch_main_activity():
         }
     }"""
 
-    if old_cal_handler in src:
+    if "private fun processSyncedCalendarPages(" not in src and old_cal_handler in src:
         src = src.replace(old_cal_handler, new_cal_handler, 1)
 
     with open(path, "w", encoding="utf-8", newline="\n") as f:
