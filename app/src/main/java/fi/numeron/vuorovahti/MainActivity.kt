@@ -158,9 +158,7 @@ class MainActivity : AppCompatActivity() {
     private var snapshotView: ImageView? = null
     private var isTransitionActive: Boolean = false
     private val transitionFallbackRunnable = Runnable {
-        if (isTransitionActive) {
-            endSnapshotTransition()
-        }
+        endSnapshotTransition()
     }
 
     private fun ensureTransitionOverlay(): FrameLayout {
@@ -174,8 +172,8 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.parseColor("#0F1722"))
             alpha = 0f
             visibility = View.GONE
-            isClickable = true
-            isFocusable = true
+            isClickable = false
+            isFocusable = false
         }
 
         val snap = ImageView(this).apply {
@@ -272,7 +270,7 @@ class MainActivity : AppCompatActivity() {
             webView.alpha = 0f
             webView.post { syncOverlayBoundsToWebView(overlay) }
             webView.removeCallbacks(transitionFallbackRunnable)
-            webView.postDelayed(transitionFallbackRunnable, 5000L)
+            webView.postDelayed(transitionFallbackRunnable, 4000L)
 
             if (onReady != null) {
                 webView.post { onReady() }
@@ -285,23 +283,14 @@ class MainActivity : AppCompatActivity() {
     private fun endSnapshotTransition() {
         webView.removeCallbacks(transitionFallbackRunnable)
         webView.alpha = 1f
-        val overlay = transitionOverlay ?: run {
-            isTransitionActive = false
-            return
-        }
-        if (!isTransitionActive) return
+        isTransitionActive = false
 
+        val overlay = transitionOverlay ?: return
         overlay.animate().cancel()
-        overlay.animate()
-            .alpha(0f)
-            .setDuration(260L)
-            .withEndAction {
-                overlay.visibility = View.GONE
-                snapshotView?.setImageDrawable(null)
-                snapshotView?.visibility = View.GONE
-                isTransitionActive = false
-            }
-            .start()
+        overlay.alpha = 0f
+        overlay.visibility = View.GONE
+        snapshotView?.setImageDrawable(null)
+        snapshotView?.visibility = View.GONE
     }
 
     private fun navigateToTab(tab: Tab) {
@@ -316,6 +305,7 @@ class MainActivity : AppCompatActivity() {
 
         if (DemoModeHelper.isDemoEnabled(this)) {
             startSnapshotTransition {
+                webView.stopLoading()
                 val html = when (tab) {
                     Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
                     Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
@@ -341,6 +331,7 @@ class MainActivity : AppCompatActivity() {
                 Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             }
             startSnapshotTransition {
+                webView.stopLoading()
                 val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
@@ -350,9 +341,12 @@ class MainActivity : AppCompatActivity() {
 
                 if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
                     scope.launch {
-                        val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
-                        if (ok) {
-                            prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+                        try {
+                            val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                            if (ok) {
+                                prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+                            }
+                        } catch (_: Exception) {
                         }
                         webView.loadUrl(url)
                     }
@@ -383,6 +377,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnNavSettings.setOnClickListener {
+            endSnapshotTransition()
             SettingsDialogHelper.showSettingsDialog(
                 context = this,
                 onManualSync = { startCalendarSync() },
