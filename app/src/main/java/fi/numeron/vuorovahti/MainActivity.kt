@@ -1481,12 +1481,24 @@ class MainActivity : AppCompatActivity() {
                         if (!cleaned) return { location: '', shiftName: '', role: '' };
 
                         // Vapaapäivät / poissaolot jätetään yhdelle riville
-                        if (/^(ei\s+(työ)?vuoroa|vapaa|vapaapäivä|vuosiloma|sairausloma|poissaolo)/i.test(cleaned)) {
+                        if (/^(ei\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|vuosiloma|sairausloma|poissaolo)/i.test(cleaned)) {
                             return { location: capFirst(cleaned), shiftName: '', role: '' };
                         }
 
                         var tokens = cleaned.split(/\s+/).filter(function(t) { return t.length > 0; });
                         if (tokens.length === 0) return { location: '', shiftName: '', role: '' };
+
+                        var kShiftIdx = -1;
+                        for (var k = 0; k < tokens.length; k++) {
+                            if (tokens[k].toLowerCase() === 'k-vuoro') {
+                                kShiftIdx = k;
+                                break;
+                            }
+                        }
+                        if (kShiftIdx !== -1) {
+                            var kLoc = tokens.filter(function(_, idx) { return idx !== kShiftIdx; }).join(' ');
+                            return { location: kLoc, shiftName: '', role: 'K-vuoro' };
+                        }
 
                         var shiftKeywords = {
                             'aamu': true, 'aamuvuoro': true,

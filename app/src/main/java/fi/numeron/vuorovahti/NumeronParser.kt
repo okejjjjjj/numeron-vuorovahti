@@ -5,6 +5,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 data class WorkShift(
     val title: String,
@@ -35,7 +36,7 @@ object NumeronParser {
             return ParsedShiftText(location = "", shiftName = "", role = "")
         }
         val noWorkRegex = Regex(
-            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|vuosiloma|sairausloma|poissaolo)",
+            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|vuosiloma|sairausloma|poissaolo)",
             RegexOption.IGNORE_CASE
         )
         if (noWorkRegex.containsMatchIn(cleaned)) {
@@ -45,6 +46,12 @@ object NumeronParser {
         val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
         if (tokens.isEmpty()) {
             return ParsedShiftText(location = "", shiftName = "", role = "")
+        }
+
+        val kShiftIdx = tokens.indexOfFirst { it.equals("k-vuoro", ignoreCase = true) }
+        if (kShiftIdx != -1) {
+            val location = tokens.filterIndexed { index, _ -> index != kShiftIdx }.joinToString(" ")
+            return ParsedShiftText(location = location, shiftName = "", role = "K-vuoro")
         }
 
         val shiftKeywords = setOf(
@@ -74,6 +81,24 @@ object NumeronParser {
         }
     }
 
+    private fun parseAbsenceSpanDays(styleAttr: String): Int {
+        val match = Regex("width\\s*:\\s*(\\d+(?:\\.\\d+)?)%", RegexOption.IGNORE_CASE).find(styleAttr)
+        val pct = match?.groupValues?.getOrNull(1)?.toDoubleOrNull() ?: return 1
+        return (pct / 100.0).roundToInt().coerceAtLeast(1)
+    }
+
+    private fun isIgnoredDayOffOrSick(nameText: String): Boolean {
+        val lower = nameText.trim().lowercase()
+        return lower == "vapaa" ||
+            lower.startsWith("vapaapäivä") ||
+            lower.startsWith("arkipyhä") ||
+            lower.startsWith("sairaus")
+    }
+
+    private fun isTrainingAbsence(nameText: String): Boolean {
+        return nameText.contains("koulutus", ignoreCase = true)
+    }
+
     fun parseCalendarHtml(html: String): List<WorkShift>? {
         val doc = Jsoup.parse(html)
         val shifts = mutableListOf<WorkShift>()
@@ -89,6 +114,45 @@ object NumeronParser {
 
         val dayCells = doc.select("table.month-table td.month-day")
         if (dayCells.isEmpty()) return null
+
+        val trainingTitleByDate = mutableMapOf<LocalDate, String>()
+        val matchedTrainingDates = mutableSetOf<LocalDate>()
+
+        for (cell in dayCells) {
+            if (cell.hasClass("day-different-month")) continue
+
+            val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
+            val date = LocalDate.of(currentYear, currentMonth, dayNum)
+
+            cell.select(".month-item.absence").forEach { item ->
+                val nameText = item.selectFirst(".itemName")?.text()?.trim() ?: return@forEach
+                if (nameText.isEmpty() || isIgnoredDayOffOrSick(nameText)) return@forEach
+
+                val spanDays = parseAbsenceSpanDays(item.attr("style"))
+
+                if (isTrainingAbsence(nameText)) {
+                    for (offset in 0 until spanDays) {
+                        trainingTitleByDate[date.plusDays(offset.toLong())] = nameText
+                    }
+                } else {
+                    val leaveStart = date.atStartOfDay()
+                    val leaveEnd = date.plusDays(spanDays.toLong()).atStartOfDay()
+                    if (!leaveEnd.isAfter(now)) return@forEach
+
+                    shifts.add(
+                        WorkShift(
+                            title = nameText,
+                            start = leaveStart,
+                            end = leaveEnd,
+                            isAllDayLeave = true,
+                            location = "",
+                            description = ""
+                        )
+                    )
+                }
+            }
+        }
+
         for (cell in dayCells) {
             if (cell.hasClass("day-different-month")) continue
 
@@ -97,6 +161,8 @@ object NumeronParser {
 
             // Sallitaan eilinen yövuorojen varalta, jotka päättyvät tänään nykyhetken jälkeen
             if (date.isBefore(today.minusDays(1))) continue
+
+            val trainingTitle = trainingTitleByDate[date]
 
             cell.select(".month-item.work").forEach { item ->
                 val timesText = item.selectFirst(".itemTimes")?.text()?.trim() ?: ""
@@ -122,6 +188,10 @@ object NumeronParser {
                     }
                     val endDateTime = LocalDateTime.of(endDate, endTime)
 
+                    if (trainingTitle != null) {
+                        matchedTrainingDates.add(date)
+                    }
+
                     // Huomioidaan tulevat sekä parhaillaan meneillään olevat työvuorot
                     if (!endDateTime.isAfter(now)) return@forEach
 
@@ -132,7 +202,7 @@ object NumeronParser {
 
                     shifts.add(
                         WorkShift(
-                            title = "Työvuoro",
+                            title = trainingTitle ?: "Työvuoro",
                             start = startDateTime,
                             end = endDateTime,
                             isAllDayLeave = false,
@@ -142,24 +212,24 @@ object NumeronParser {
                     )
                 }
             }
+        }
 
-            cell.select(".month-item.absence").forEach { item ->
-                val nameText = item.selectFirst(".itemName")?.text()?.trim() ?: "Loma / Poissaolo"
-                val leaveStart = date.atStartOfDay()
-                val leaveEnd = date.plusDays(1).atStartOfDay()
-                if (!leaveEnd.isAfter(now)) return@forEach
+        for ((date, trainingTitle) in trainingTitleByDate) {
+            if (date in matchedTrainingDates) continue
+            val leaveStart = date.atStartOfDay()
+            val leaveEnd = date.plusDays(1).atStartOfDay()
+            if (!leaveEnd.isAfter(now)) continue
 
-                shifts.add(
-                    WorkShift(
-                        title = nameText,
-                        start = leaveStart,
-                        end = leaveEnd,
-                        isAllDayLeave = true,
-                        location = "",
-                        description = ""
-                    )
+            shifts.add(
+                WorkShift(
+                    title = trainingTitle,
+                    start = leaveStart,
+                    end = leaveEnd,
+                    isAllDayLeave = true,
+                    location = "",
+                    description = ""
                 )
-            }
+            )
         }
 
         return shifts
@@ -174,8 +244,9 @@ object NumeronParser {
         var currentLeave = leaves.first()
         for (i in 1 until leaves.size) {
             val next = leaves[i]
-            if (next.title == currentLeave.title && next.start.toLocalDate() == currentLeave.end.toLocalDate()) {
-                currentLeave = currentLeave.copy(end = next.end)
+            if (next.title == currentLeave.title && !next.start.toLocalDate().isAfter(currentLeave.end.toLocalDate())) {
+                val mergedEnd = if (next.end.isAfter(currentLeave.end)) next.end else currentLeave.end
+                currentLeave = currentLeave.copy(end = mergedEnd)
             } else {
                 workShifts.add(currentLeave)
                 currentLeave = next
