@@ -9,7 +9,7 @@ def find_file(filename):
     return None
 
 
-def remove_brace_block(text: str, marker: str) -> str:
+def remove_balanced_from_marker(text: str, marker: str) -> str:
     idx = text.find(marker)
     if idx == -1:
         return text
@@ -53,9 +53,9 @@ def remove_exact_alarm_status_block(text: str) -> str:
     if if_idx == -1:
         return text
 
-    brace_start = text.find("{", if_idx)
+    brace_idx = text.find("{", if_idx)
     depth = 0
-    pos = brace_start
+    pos = brace_idx
     while pos < len(text):
         if text[pos] == "{":
             depth += 1
@@ -80,48 +80,16 @@ def remove_exact_alarm_notice_box(text: str) -> str:
     line_start = text.rfind("\n", 0, idx)
     block_start = 0 if line_start == -1 else line_start
 
-    add_view_marker = "reminderDetailsContainer.addView(exactAlarmNoticeBox)"
-    add_idx = text.find(add_view_marker, idx)
+    add_marker = "reminderDetailsContainer.addView(exactAlarmNoticeBox)"
+    add_idx = text.find(add_marker, idx)
     if add_idx == -1:
         return text
 
-    end_pos = add_idx + len(add_view_marker)
+    end_pos = add_idx + len(add_marker)
     while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
         end_pos += 1
 
     return text[:block_start] + "\n" + text[end_pos:]
-
-
-def remove_now_exact_allowed_block(text: str) -> str:
-    marker = "val nowExactAllowed = canScheduleExactAlarmsCompat()"
-    idx = text.find(marker)
-    if idx == -1:
-        return text
-
-    line_start = text.rfind("\n", 0, idx)
-    block_start = 0 if line_start == -1 else line_start
-
-    if_marker = "if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
-    if_idx = text.find(if_marker, idx)
-    if if_idx == -1:
-        return text
-
-    brace_start = text.find("{", if_idx)
-    depth = 0
-    pos = brace_start
-    while pos < len(text):
-        if text[pos] == "{":
-            depth += 1
-        elif text[pos] == "}":
-            depth -= 1
-            if depth == 0:
-                end_pos = pos + 1
-                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
-                    end_pos += 1
-                return text[:block_start] + "\n" + text[end_pos:]
-        pos += 1
-
-    return text
 
 
 def patch_manifest(path):
@@ -155,8 +123,8 @@ def patch_settings_dialog_helper(path):
         content = f.read()
 
     updated = content
-    updated = remove_brace_block(updated, "fun canScheduleExactAlarmsCompat(): Boolean {")
-    updated = remove_brace_block(updated, "fun openExactAlarmSettings() {")
+    updated = remove_balanced_from_marker(updated, "fun canScheduleExactAlarmsCompat(): Boolean {")
+    updated = remove_balanced_from_marker(updated, "fun openExactAlarmSettings() {")
     updated = remove_exact_alarm_status_block(updated)
     updated = remove_exact_alarm_notice_box(updated)
 
@@ -165,8 +133,8 @@ def patch_settings_dialog_helper(path):
         "",
         updated,
     )
-    updated = remove_now_exact_allowed_block(updated)
-    updated = remove_brace_block(updated, "if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
+    updated = remove_balanced_from_marker(updated, "val nowExactAllowed = canScheduleExactAlarmsCompat()")
+    updated = remove_balanced_from_marker(updated, "if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
     updated, _ = re.subn(
         r"\r?\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
         "",
@@ -174,15 +142,15 @@ def patch_settings_dialog_helper(path):
     )
 
     assert "fun showSettingsDialog(" in updated, "VIRHE: showSettingsDialog puuttuu SettingsDialogHelper.kt:stä!"
-    assert updated.count("{") == updated.count("}"), (
-        f"VIRHE: SettingsDialogHelper.kt aaltosulut eivät ole tasan ({{={updated.count('{')}, }}={updated.count('}')})"
+    open_c = updated.count("{")
+    close_c = updated.count("}")
+    assert open_c == close_c, (
+        f"VIRHE: SettingsDialogHelper.kt aaltosulut eivät ole tasan ({{={open_c}, }}={close_c})"
     )
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(updated)
-    print(
-        f"OK: {path} — tarkat vuorohälytykset ja duplikaatti poistettu ({{={updated.count('{')}, }}={updated.count('}')})."
-    )
+    print(f"OK: {path} — tarkat vuorohälytykset ja duplikaatti poistettu ({{={open_c}, }}={close_c}).")
 
 
 def patch_calendar_sync_helper(path):
