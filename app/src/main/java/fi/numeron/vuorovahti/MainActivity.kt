@@ -157,6 +157,11 @@ class MainActivity : AppCompatActivity() {
     private var transitionOverlay: FrameLayout? = null
     private var snapshotView: ImageView? = null
     private var isTransitionActive: Boolean = false
+    private val transitionFallbackRunnable = Runnable {
+        if (isTransitionActive) {
+            endSnapshotTransition()
+        }
+    }
 
         private fun ensureTransitionOverlay(): FrameLayout {
         transitionOverlay?.let { overlay ->
@@ -218,6 +223,7 @@ class MainActivity : AppCompatActivity() {
 
         rootContent.addView(overlay, FrameLayout.LayoutParams(webView.width, webView.height))
         syncOverlayBoundsToWebView(overlay)
+        webView.post { syncOverlayBoundsToWebView(overlay) }
         transitionOverlay = overlay
         return overlay
     }
@@ -264,6 +270,9 @@ class MainActivity : AppCompatActivity() {
             overlay.alpha = 1f
             overlay.visibility = View.VISIBLE
             webView.alpha = 0f
+            webView.post { syncOverlayBoundsToWebView(overlay) }
+            webView.removeCallbacks(transitionFallbackRunnable)
+            webView.postDelayed(transitionFallbackRunnable, 8000L)
 
             if (onReady != null) {
                 webView.post { onReady() }
@@ -274,11 +283,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun endSnapshotTransition() {
-        val overlay = transitionOverlay ?: return
+        webView.removeCallbacks(transitionFallbackRunnable)
+        webView.alpha = 1f
+        val overlay = transitionOverlay ?: run {
+            isTransitionActive = false
+            return
+        }
         if (!isTransitionActive) return
 
         overlay.animate().cancel()
-        webView.alpha = 1f
 
         overlay.animate()
             .alpha(0f)
@@ -314,6 +327,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val baseUrl = getBaseUrl()
             if (baseUrl.isEmpty()) {
+                endSnapshotTransition()
                 Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
                 btnNavSettings.performClick()
                 return
@@ -632,6 +646,17 @@ class MainActivity : AppCompatActivity() {
                 super.onPageCommitVisible(view, url)
                 if (url != null && !url.startsWith("https://demo.local/")) {
                     injectDarkTheme(view)
+                }
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: android.webkit.WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame == true) {
+                    endSnapshotTransition()
                 }
             }
 
