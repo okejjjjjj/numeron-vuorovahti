@@ -70,7 +70,7 @@ object SettingsDialogHelper {
     )
 
     val DEFAULT_MORNING_RGB = Color.rgb(11, 128, 67)
-    val DEFAULT_EVENING_RGB = Color.rgb(244, 81, 30)
+    val DEFAULT_EVENING_RGB = Color.rgb(246, 191, 38)
     val DEFAULT_NIGHT_RGB = Color.rgb(142, 36, 170)
 
     fun getAvailableCalendars(context: Context): List<CalendarOption> {
