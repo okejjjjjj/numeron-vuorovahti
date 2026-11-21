@@ -9,8 +9,8 @@ def find_file(filename):
     return None
 
 
-def remove_brace_block(text: str, start_marker: str) -> str:
-    idx = text.find(start_marker)
+def remove_brace_block(text: str, marker: str) -> str:
+    idx = text.find(marker)
     if idx == -1:
         return text
 
@@ -40,7 +40,7 @@ def remove_brace_block(text: str, start_marker: str) -> str:
 
 
 def remove_exact_alarm_status_block(text: str) -> str:
-    start_marker = "        val exactAlarmAllowed = canScheduleExactAlarmsCompat()"
+    start_marker = "val exactAlarmAllowed = canScheduleExactAlarmsCompat()"
     start_idx = text.find(start_marker)
     if start_idx == -1:
         return text
@@ -48,7 +48,7 @@ def remove_exact_alarm_status_block(text: str) -> str:
     line_start = text.rfind("\n", 0, start_idx)
     block_start = 0 if line_start == -1 else line_start
 
-    if_marker = "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
+    if_marker = "if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
     if_idx = text.find(if_marker, start_idx)
     if if_idx == -1:
         return text
@@ -72,7 +72,7 @@ def remove_exact_alarm_status_block(text: str) -> str:
 
 
 def remove_exact_alarm_notice_box(text: str) -> str:
-    marker = "        val exactAlarmNoticeBox = LinearLayout(context).apply {"
+    marker = "val exactAlarmNoticeBox = LinearLayout(context).apply {"
     idx = text.find(marker)
     if idx == -1:
         return text
@@ -80,7 +80,7 @@ def remove_exact_alarm_notice_box(text: str) -> str:
     line_start = text.rfind("\n", 0, idx)
     block_start = 0 if line_start == -1 else line_start
 
-    add_view_marker = "        reminderDetailsContainer.addView(exactAlarmNoticeBox)"
+    add_view_marker = "reminderDetailsContainer.addView(exactAlarmNoticeBox)"
     add_idx = text.find(add_view_marker, idx)
     if add_idx == -1:
         return text
@@ -93,7 +93,7 @@ def remove_exact_alarm_notice_box(text: str) -> str:
 
 
 def remove_now_exact_allowed_block(text: str) -> str:
-    marker = "            val nowExactAllowed = canScheduleExactAlarmsCompat()"
+    marker = "val nowExactAllowed = canScheduleExactAlarmsCompat()"
     idx = text.find(marker)
     if idx == -1:
         return text
@@ -101,7 +101,7 @@ def remove_now_exact_allowed_block(text: str) -> str:
     line_start = text.rfind("\n", 0, idx)
     block_start = 0 if line_start == -1 else line_start
 
-    if_marker = "            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
+    if_marker = "if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
     if_idx = text.find(if_marker, idx)
     if if_idx == -1:
         return text
@@ -155,8 +155,8 @@ def patch_settings_dialog_helper(path):
         content = f.read()
 
     updated = content
-    updated = remove_brace_block(updated, "        fun canScheduleExactAlarmsCompat(): Boolean {")
-    updated = remove_brace_block(updated, "        fun openExactAlarmSettings() {")
+    updated = remove_brace_block(updated, "fun canScheduleExactAlarmsCompat(): Boolean {")
+    updated = remove_brace_block(updated, "fun openExactAlarmSettings() {")
     updated = remove_exact_alarm_status_block(updated)
     updated = remove_exact_alarm_notice_box(updated)
 
@@ -166,7 +166,7 @@ def patch_settings_dialog_helper(path):
         updated,
     )
     updated = remove_now_exact_allowed_block(updated)
-    updated = remove_brace_block(updated, "            if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
+    updated = remove_brace_block(updated, "if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
     updated, _ = re.subn(
         r"\r?\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
         "",
