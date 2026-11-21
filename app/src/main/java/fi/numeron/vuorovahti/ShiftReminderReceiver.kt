@@ -70,7 +70,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
 
             if (action != ACTION_SHIFT_REMINDER) return
 
-            val title = intent.getStringExtra("SHIFT_TITLE") ?: "Työvuoro"
+            val title = intent.getStringExtra("SHIFT_TITLE") ?: if (DemoModeHelper.isEnglish(context)) "Work Shift" else "Työvuoro"
             val timeStr = intent.getStringExtra("SHIFT_TIME") ?: ""
             val isEnding = intent.getBooleanExtra("IS_ENDING", false)
             val shiftStartMs = intent.getLongExtra("SHIFT_START_MS", 0L)
@@ -537,7 +537,7 @@ class BackgroundSyncWorker(
                         changed = true
                         ShiftReminderReceiver.showRequestDecisionNotification(
                             appContext,
-                            "Toive käsitelty: $statusDesc",
+                            if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
                             typeName,
                             id
                         )

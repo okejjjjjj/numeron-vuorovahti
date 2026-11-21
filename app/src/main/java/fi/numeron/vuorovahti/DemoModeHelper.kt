@@ -35,14 +35,20 @@ object DemoModeHelper {
     }
 
     fun isEnglish(context: Context): Boolean {
-        if (!isDemoEnabled(context)) return false
-        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val saved = prefs.getString("demo_language", null)
-        return when (saved) {
-            "en" -> true
-            "fi" -> false
-            else -> !Locale.getDefault().language.equals("fi", ignoreCase = true)
+        if (isDemoEnabled(context)) {
+            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            when (prefs.getString("demo_language", null)) {
+                "en" -> return true
+                "fi" -> return false
+            }
         }
+        val sysLang = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            context.resources.configuration.locales.get(0)?.language ?: Locale.getDefault().language
+        } else {
+            @Suppress("DEPRECATION")
+            context.resources.configuration.locale?.language ?: Locale.getDefault().language
+        }
+        return !sysLang.equals("fi", ignoreCase = true)
     }
 
     fun setDemoLanguage(context: Context, lang: String) {

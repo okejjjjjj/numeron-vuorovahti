@@ -314,7 +314,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             val baseUrl = getBaseUrl()
             if (baseUrl.isEmpty()) {
-                Toast.makeText(this, "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista", Toast.LENGTH_LONG).show()
                 btnNavSettings.performClick()
                 return
             }
@@ -493,17 +493,16 @@ class MainActivity : AppCompatActivity() {
             intent.removeExtra("IS_TEST")
 
             if (isTest) {
-                val dir = if (isEnding) "Ulos" else "Sisään"
-                Toast.makeText(
-                    this,
-                    "Testi-ilmoitus ($dir): Oikeaa leimausta ei suoritettu",
-                    Toast.LENGTH_LONG
-                ).show()
+                val en = DemoModeHelper.isEnglish(this)
+                val dir = if (en) (if (isEnding) "Out" else "In") else (if (isEnding) "Ulos" else "Sisään")
+                val msg = if (en) "Test notification ($dir): No real stamp was performed" else "Testi-ilmoitus ($dir): Oikeaa leimausta ei suoritettu"
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 return
             }
 
             pendingAction = if (isEnding) Action.STAMP_OUT else Action.STAMP_IN
-            Toast.makeText(this, "Suoritetaan automaattinen leimaus...", Toast.LENGTH_SHORT).show()
+            val autoMsg = if (DemoModeHelper.isEnglish(this)) "Performing automatic stamp..." else "Suoritetaan automaattinen leimaus..."
+            Toast.makeText(this, autoMsg, Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -2067,7 +2066,7 @@ class MainActivity : AppCompatActivity() {
         if (inFlightStampAction == Action.STAMP_IN || inFlightStampAction == Action.STAMP_OUT) {
             pendingAction = inFlightStampAction
             inFlightStampAction = Action.NONE
-            Toast.makeText(this, "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Session expired – re-authenticating and stamping..." else "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()
         }
 
         getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
@@ -2140,13 +2139,17 @@ class MainActivity : AppCompatActivity() {
                     pendingAction = Action.NONE
                     val beforeBtn = obj?.optString("btn", "") ?: ""
                     val beforeRow = obj?.optString("row", "") ?: ""
-                    Toast.makeText(this, "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
+                    val en = DemoModeHelper.isEnglish(this)
+                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
+                    Toast.makeText(this, if (en) "Stamping ($dirLabel)..." else "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
                     verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
                 }
                 status == "WRONG_DIRECTION" -> {
                     pendingAction = Action.NONE
                     inFlightStampAction = Action.NONE
-                    Toast.makeText(this, "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
+                    val en = DemoModeHelper.isEnglish(this)
+                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
+                    Toast.makeText(this, if (en) "Already clocked $dirLabel" else "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
                 status == "NO_BUTTON" && attempt < 10 -> {
@@ -2229,7 +2232,7 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     Toast.makeText(
                         this,
-                        "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
+                        if (DemoModeHelper.isEnglish(this)) "Could not verify stamp automatically – please check status on screen" else "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
                         Toast.LENGTH_LONG
                     ).show()
                 }
@@ -2261,7 +2264,7 @@ class MainActivity : AppCompatActivity() {
                         withContext(Dispatchers.Main) {
                             Toast.makeText(
                                 this@MainActivity,
-                                "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
+                                if (DemoModeHelper.isEnglish(this@MainActivity)) "Failed to read shifts – calendar was not modified" else "Työvuorojen luku epäonnistui – kalenteria ei muutettu",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
@@ -2294,24 +2297,25 @@ class MainActivity : AppCompatActivity() {
                     CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
 
                     withContext(Dispatchers.Main) {
+                        val en = DemoModeHelper.isEnglish(this@MainActivity)
                         if (syncCalendar && calId == null) {
                             Toast.makeText(
                                 this@MainActivity,
-                                "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
+                                if (en) "Shifts fetched (${allShifts.size}), but no calendar is selected" else "Vuorot haettu (${allShifts.size} kpl), mutta kalenteria ei ole valittu",
                                 Toast.LENGTH_LONG
                             ).show()
                         } else if (changes.isNotEmpty()) {
                             Toast.makeText(
                                 this@MainActivity,
-                                "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
+                                if (en) "Calendar updated: ${CalendarChangeTracker.formatSummary(changes)}" else "Kalenteria päivitetty: ${CalendarChangeTracker.formatSummary(changes)}",
                                 Toast.LENGTH_LONG
                             ).show()
                             CalendarChangeTracker.showManageChangesDialog(this@MainActivity)
                         } else {
                             val msg = if (syncCalendar) {
-                                "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
+                                if (en) "Calendar is up to date (${allShifts.size} shifts)" else "Kalenteri on ajan tasalla (${allShifts.size} vuoroa)"
                             } else {
-                                "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
+                                if (en) "Shifts and reminders updated (${allShifts.size} shifts)" else "Työvuorot ja muistutukset päivitetty (${allShifts.size} vuoroa)"
                             }
                             Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                         }
