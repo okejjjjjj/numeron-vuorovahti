@@ -434,7 +434,18 @@ class BackgroundSyncWorker(
                 if (parsed.any { it == null }) {
                     null
                 } else {
-                    NumeronParser.mergeConsecutiveLeaves(parsed.filterNotNull().flatten())
+                    val cookies = try {
+                        CookieManager.getInstance().getCookie(baseUrl)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val enriched = NumeronParser.enrichShiftsWithListComments(
+                        baseUrl = baseUrl,
+                        cookieHeader = cookies,
+                        htmlPages = pages,
+                        shifts = parsed.filterNotNull().flatten()
+                    )
+                    NumeronParser.mergeConsecutiveLeaves(enriched)
                 }
             }
         } else {

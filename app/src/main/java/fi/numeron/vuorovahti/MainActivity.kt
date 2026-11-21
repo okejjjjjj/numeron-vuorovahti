@@ -917,6 +917,34 @@ class MainActivity : AppCompatActivity() {
                 margin-top: 16px !important;
                 font-weight: 700 !important;
             }
+            #punchButton.vv-punch-in {
+                background-color: #15803D !important;
+                border-color: #22C55E !important;
+                color: #FFFFFF !important;
+            }
+            #punchButton.vv-punch-out {
+                background-color: #B91C1C !important;
+                border-color: #F87171 !important;
+                color: #FFFFFF !important;
+            }
+            .vv-stamp-badge {
+                display: inline-block !important;
+                padding: 2px 10px !important;
+                border-radius: 999px !important;
+                font-size: 12px !important;
+                font-weight: 700 !important;
+                letter-spacing: 0.02em !important;
+            }
+            .vv-stamp-badge.vv-stamp-in {
+                background-color: rgba(22, 163, 74, 0.22) !important;
+                border: 1px solid rgba(74, 222, 128, 0.45) !important;
+                color: #4ADE80 !important;
+            }
+            .vv-stamp-badge.vv-stamp-out {
+                background-color: rgba(220, 38, 38, 0.22) !important;
+                border: 1px solid rgba(248, 113, 113, 0.45) !important;
+                color: #F87171 !important;
+            }
             .nav-tabs-wts {
                 list-style: none !important;
                 padding: 0 !important;
@@ -1327,7 +1355,7 @@ class MainActivity : AppCompatActivity() {
             td.month-day:not(.has-spanning-absence) {
                 overflow: hidden !important;
             }
-            .month-item.absence {
+            .month-item.absence, .month-item.dummy-item {
                 display: none !important;
             }
             .month-item.absence.vuorovahti-visible {
@@ -1548,7 +1576,7 @@ class MainActivity : AppCompatActivity() {
                         if (!cleaned) return { location: '', shiftName: '', role: '' };
 
                         // Vapaapäivät / poissaolot jätetään yhdelle riville
-                        if (/^(ei\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|vuosiloma|sairausloma|poissaolo)/i.test(cleaned)) {
+                        if (/^(ei\s+suunniteltuja\s+töitä|ei\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|vuosiloma|sairaus|hoitovapaa|poissaolo)(?=$|[\s,.:;!?()\-–—])/i.test(cleaned)) {
                             return { location: capFirst(cleaned), shiftName: '', role: '' };
                         }
 
@@ -1617,11 +1645,61 @@ class MainActivity : AppCompatActivity() {
                             : (nameEl.textContent || '').replace(/\s+/g, ' ').trim();
                         if (!rawText) return;
 
-                        if (existingWp && nameEl.getAttribute('data-formatted-for') === 'v2:' + rawText) {
+                        if (existingWp && nameEl.getAttribute('data-formatted-for') === 'v3:' + rawText) {
                             return;
                         }
                         nameEl.setAttribute('data-raw-shift', rawText);
-                        nameEl.setAttribute('data-formatted-for', 'v2:' + rawText);
+                        nameEl.setAttribute('data-formatted-for', 'v3:' + rawText);
+
+                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
+                (function setupStampingColorCoding() {
+                    function applyStampingColors() {
+                        var btn = document.getElementById('punchButton');
+                        if (btn) {
+                            var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
+                            if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
+                                btn.classList.remove('vv-punch-in');
+                                btn.classList.add('vv-punch-out');
+                            } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
+                                btn.classList.remove('vv-punch-out');
+                                btn.classList.add('vv-punch-in');
+                            }
+                        }
+
+                        var rows = document.querySelectorAll('#table-latest-stamps tr');
+                        for (var i = 0; i < rows.length; i++) {
+                            var cells = rows[i].querySelectorAll('td');
+                            if (!cells || cells.length === 0) continue;
+                            for (var j = 0; j < cells.length; j++) {
+                                var cell = cells[j];
+                                var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+                                var lower = raw.toLowerCase();
+                                if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
+                                    var isIn = (lower === 'sisään' || lower === 'in');
+                                    var badge = cell.querySelector('.vv-stamp-badge');
+                                    if (!badge) {
+                                        cell.textContent = '';
+                                        badge = document.createElement('span');
+                                        badge.className = 'vv-stamp-badge';
+                                        cell.appendChild(badge);
+                                    }
+                                    badge.textContent = raw;
+                                    badge.classList.toggle('vv-stamp-in', isIn);
+                                    badge.classList.toggle('vv-stamp-out', !isIn);
+                                }
+                            }
+                        }
+                    }
+
+                    applyStampingColors();
+                    if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
+                        window._stampingColorObserverInstalled = true;
+                        var stampObs = new MutationObserver(function() {
+                            applyStampingColors();
+                        });
+                        stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                    }
+                })();
 
                         var parsed = parseShiftText(rawText);
                         var thirdLine = [parsed.shiftName, parsed.role]
@@ -1713,7 +1791,7 @@ class MainActivity : AppCompatActivity() {
 
                 // === KALENTERIN POISSAOLOJEN SIISTINTÄ JA LOMAPALKKIEN YHDISTÄMINEN ===
                 (function setupCalendarCleanup() {
-                    var ignoreRegex = /^(vapaa|vapaapäivä|arkipyhä|arkipyhävapaa|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|ei\s+(suunniteltuja\s+töitä|(työ)?vuoroa))\b/i;
+                    var ignoreRegex = /^(vapaa|vapaapäivä|arkipyhä|arkipyhävapaa|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|ei\s+(suunniteltuja\s+töitä|(työ)?vuoroa))(?=$|[\s,.:;!?()\-–—])/i;
                     var sickRegex = /sairaus|hoitovapaa/i;
                     var vacationRegex = /loma|säästövapaa|lomarahavapaa/i;
 
@@ -1760,6 +1838,10 @@ class MainActivity : AppCompatActivity() {
                             var cellEntries = [];
                             for (var c = 0; c < cells.length; c++) {
                                 cells[c].classList.remove('has-spanning-absence');
+                                var dummies = cells[c].querySelectorAll('.month-item.dummy-item');
+                                for (var d = 0; d < dummies.length; d++) {
+                                    dummies[d].style.display = 'none';
+                                }
                                 var items = cells[c].querySelectorAll('.month-item.absence');
                                 var visibleList = [];
                                 for (var i = 0; i < items.length; i++) {
