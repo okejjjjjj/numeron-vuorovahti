@@ -1552,14 +1552,23 @@ class MainActivity : AppCompatActivity() {
             }
         """.trimIndent().replace("\n", " ")
 
-        val safeCss = css.replace("\\", "\\\\").replace("'", "\\'")
+        val safeCss = css
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
         val js = """
             (function() {
                 var style = document.getElementById('custom-dark-theme');
                 if (!style) {
                     style = document.createElement('style');
                     style.id = 'custom-dark-theme';
-                    (document.head || document.documentElement).appendChild(style);
+                }
+                var targetParent = document.head || document.documentElement;
+                if (targetParent && style.parentNode !== targetParent) {
+                    targetParent.appendChild(style);
+                }
+                if (style.textContent !== '$safeCss') {
                     style.textContent = '$safeCss';
                 }
 
@@ -1733,6 +1742,58 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 })();
+
+                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
+                try {
+                    (function setupStampingColorCoding() {
+                        function applyStampingColors() {
+                            var btn = document.getElementById('punchButton');
+                            if (btn) {
+                                var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
+                                if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
+                                    btn.classList.remove('vv-punch-in');
+                                    btn.classList.add('vv-punch-out');
+                                } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
+                                    btn.classList.remove('vv-punch-out');
+                                    btn.classList.add('vv-punch-in');
+                                }
+                            }
+
+                            var rows = document.querySelectorAll('#table-latest-stamps tr');
+                            for (var i = 0; i < rows.length; i++) {
+                                var cells = rows[i].querySelectorAll('td');
+                                if (!cells || cells.length === 0) continue;
+                                for (var j = 0; j < cells.length; j++) {
+                                    var cell = cells[j];
+                                    var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
+                                    var lower = raw.toLowerCase();
+                                    if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
+                                        var isIn = (lower === 'sisään' || lower === 'in');
+                                        var badge = cell.querySelector('.vv-stamp-badge');
+                                        if (!badge) {
+                                            cell.textContent = '';
+                                            badge = document.createElement('span');
+                                            badge.className = 'vv-stamp-badge';
+                                            cell.appendChild(badge);
+                                        }
+                                        badge.textContent = raw;
+                                        badge.classList.toggle('vv-stamp-in', isIn);
+                                        badge.classList.toggle('vv-stamp-out', !isIn);
+                                    }
+                                }
+                            }
+                        }
+
+                        applyStampingColors();
+                        if (!window._stampingColorObserverInstalled && document.body && typeof MutationObserver !== 'undefined') {
+                            window._stampingColorObserverInstalled = true;
+                            var stampObs = new MutationObserver(function() {
+                                applyStampingColors();
+                            });
+                            stampObs.observe(document.body, { childList: true, subtree: true, characterData: true });
+                        }
+                    })();
+                } catch (_e) {}
 
                 if (!window._sessionWatchInstalled) {
                     window._sessionWatchInstalled = true;
