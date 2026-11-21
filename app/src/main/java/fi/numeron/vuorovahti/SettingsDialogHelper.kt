@@ -536,7 +536,7 @@ object SettingsDialogHelper {
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
         val authCard = createSectionCard(if (en) "Login and connection" else "Kirjautuminen ja yhteys")
 
-        authCard.addView(createLabel(if (en) "Organization ID (e.g. demo)" else "Organisaatiotunnus (esim. demo)"))
+        authCard.addView(createLabel(if (en) "Organization ID or address (e.g. demo or https://demo.numeronwfm.com)" else "Organisaatiotunnus tai kirjautumisosoite (esim. demo tai https://demo.numeronwfm.com)"))
         val savedOrgPref = (prefs.getString("org_raw_input", "") ?: "").trim()
             .ifEmpty { (prefs.getString("server_url", "") ?: "").trim() }
         val editOrg = EditText(context).apply {
@@ -626,7 +626,17 @@ object SettingsDialogHelper {
         }
         authCard.addView(btnTestCredentials)
         authCard.addView(tvTestStatus)
-
+        authCard.addView(TextView(context).apply {
+            text = if (en) {
+                "Credentials are stored only on your device and sent solely to the Numeron address you enter. They are never shared with third parties or external servers."
+            } else {
+                "Tunnukset tallennetaan vain laitteellesi ja välitetään ainoastaan antamaasi Numeron-osoitteeseen. Niitä ei tallenneta tai jaeta ulkopuolisille palvelimille."
+            }
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, dp(8), 0, dp(2))
+        })
+        
         // === KORTTI 3: KALENTERISYNRONOINTI JA VÄRIKOODIT ===
         val calCard = createSectionCard(if (en) "Calendar sync and color codes" else "Kalenterisynkronointi ja värikoodit")
 
