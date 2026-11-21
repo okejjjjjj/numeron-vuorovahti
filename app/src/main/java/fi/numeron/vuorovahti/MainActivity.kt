@@ -732,6 +732,10 @@ class MainActivity : AppCompatActivity() {
                 margin-top: 4px !important;
                 margin-bottom: 12px !important;
             }
+            .container h1:not(#monthText), .container-fluid h1:not(#monthText),
+            .container .h1:not(#monthText), .container-fluid .h1:not(#monthText) {
+                display: none !important;
+            }
             label, span, p, div {
                 color: inherit;
             }
