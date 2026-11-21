@@ -48,20 +48,27 @@ def remove_exact_alarm_status_block(text: str) -> str:
     line_start = text.rfind("\n", 0, start_idx)
     block_start = 0 if line_start == -1 else line_start
 
-    click_marker = "openExactAlarmSettings()"
-    click_idx = text.find(click_marker, start_idx)
-    if click_idx == -1:
+    if_marker = "        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
+    if_idx = text.find(if_marker, start_idx)
+    if if_idx == -1:
         return text
 
-    end_brace = text.find("}", click_idx)
-    if end_brace == -1:
-        return text
+    brace_start = text.find("{", if_idx)
+    depth = 0
+    pos = brace_start
+    while pos < len(text):
+        if text[pos] == "{":
+            depth += 1
+        elif text[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                end_pos = pos + 1
+                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
+                    end_pos += 1
+                return text[:block_start] + "\n" + text[end_pos:]
+        pos += 1
 
-    end_pos = end_brace + 1
-    while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
-        end_pos += 1
-
-    return text[:block_start] + "\n" + text[end_pos:]
+    return text
 
 
 def remove_exact_alarm_notice_box(text: str) -> str:
