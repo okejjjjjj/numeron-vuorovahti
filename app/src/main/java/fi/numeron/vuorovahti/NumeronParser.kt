@@ -36,7 +36,7 @@ object NumeronParser {
             return ParsedShiftText(location = "", shiftName = "", role = "")
         }
         val noWorkRegex = Regex(
-            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|vuosiloma|sairausloma|poissaolo)",
+            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|vuosiloma|sairaus|hoitovapaa|poissaolo)",
             RegexOption.IGNORE_CASE
         )
         if (noWorkRegex.containsMatchIn(cleaned)) {
@@ -92,7 +92,16 @@ object NumeronParser {
         return lower == "vapaa" ||
             lower.startsWith("vapaapäivä") ||
             lower.startsWith("arkipyhä") ||
-            lower.startsWith("sairaus")
+            lower.startsWith("viikkolepo") ||
+            lower.startsWith("viikkovapaa") ||
+            lower.startsWith("tasausvapaa") ||
+            lower.startsWith("saldovapaa") ||
+            lower.startsWith("pekkanen") ||
+            lower.startsWith("pekkaspäivä") ||
+            lower.startsWith("ei suunniteltuja töitä") ||
+            lower == "ei työvuoroa" ||
+            lower == "ei vuoroa" ||
+            lower.contains("sairaus")
     }
 
     private fun isTrainingAbsence(nameText: String): Boolean {
