@@ -66,43 +66,38 @@ def increment_version() -> None:
     gradle_file.write_text(text, encoding="utf-8")
 
 
-def patch_numeron_parser() -> None:
-    path = find_file("NumeronParser.kt")
+def patch_main_activity() -> None:
+    path = find_file("MainActivity.kt")
     src = path.read_text(encoding="utf-8")
 
-    old_block = r"""    private fun parseShiftText(rawName: String): ParsedShiftText {
-        val cleaned = rawName.trim().replace(Regex("^\\d+\\s*"), "").trim()
-        val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (tokens.isEmpty()) {
-            return ParsedShiftText(location = "", shiftName = "", role = "")
-        }"""
+    old_heading_css = r"""            h1, h2, h3, h4, .h1, .h2, .h3, .h4 {
+                color: #F1F5F9 !important;
+                font-size: 20px !important;
+                font-weight: 600 !important;
+                margin-top: 4px !important;
+                margin-bottom: 12px !important;
+            }"""
 
-    new_block = r"""    private fun parseShiftText(rawName: String): ParsedShiftText {
-        val cleaned = rawName.trim().replace(Regex("^\\d+\\s*"), "").trim()
-        if (cleaned.isEmpty()) {
-            return ParsedShiftText(location = "", shiftName = "", role = "")
-        }
-        val noWorkRegex = Regex(
-            "^(ei\\s+suunniteltuja\\s+töitä|ei\\s+(työ)?vuoroa|vapaa|vapaapäivä|vuosiloma|sairausloma|poissaolo)",
-            RegexOption.IGNORE_CASE
-        )
-        if (noWorkRegex.containsMatchIn(cleaned)) {
-            val formatted = cleaned.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-            return ParsedShiftText(location = formatted, shiftName = "", role = "")
-        }
-        val tokens = cleaned.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (tokens.isEmpty()) {
-            return ParsedShiftText(location = "", shiftName = "", role = "")
-        }"""
+    new_heading_css = r"""            h1, h2, h3, h4, .h1, .h2, .h3, .h4 {
+                color: #F1F5F9 !important;
+                font-size: 20px !important;
+                font-weight: 600 !important;
+                margin-top: 4px !important;
+                margin-bottom: 12px !important;
+            }
+            .container h1:not(#monthText), .container-fluid h1:not(#monthText),
+            .container .h1:not(#monthText), .container-fluid .h1:not(#monthText) {
+                display: none !important;
+            }"""
 
-    src = replace_exact(path, src, old_block, new_block)
+    src = replace_exact(path, src, old_heading_css, new_heading_css)
     verify_kotlin_delimiters(path, src)
     path.write_text(src, encoding="utf-8")
     print(f"Päivitetty: {path}")
 
 
 def main() -> None:
-    patch_numeron_parser()
+    patch_main_activity()
     increment_version()
 
 
