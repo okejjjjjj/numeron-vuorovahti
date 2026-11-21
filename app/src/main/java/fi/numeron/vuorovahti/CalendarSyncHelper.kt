@@ -816,11 +816,7 @@ object CalendarSyncHelper {
         )
 
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-            } else {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
-            }
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
         } catch (_: SecurityException) {
             alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
         }
