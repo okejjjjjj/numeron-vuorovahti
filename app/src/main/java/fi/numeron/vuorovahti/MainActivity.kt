@@ -305,7 +305,6 @@ class MainActivity : AppCompatActivity() {
 
         if (DemoModeHelper.isDemoEnabled(this)) {
             startSnapshotTransition {
-                webView.stopLoading()
                 val html = when (tab) {
                     Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
                     Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
@@ -325,13 +324,13 @@ class MainActivity : AppCompatActivity() {
                 btnNavSettings.performClick()
                 return
             }
+            val now = LocalDate.now()
             val url = when (tab) {
                 Tab.STAMP -> "$baseUrl/WorktimeStamping"
                 Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
-                Tab.SHIFTS -> "$baseUrl/Calendar/Month"
+                Tab.SHIFTS -> "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
             }
             startSnapshotTransition {
-                webView.stopLoading()
                 val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
@@ -656,6 +655,26 @@ class MainActivity : AppCompatActivity() {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame == true) {
                     endSnapshotTransition()
+                    val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.errorCode ?: 0 else 0
+                    val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else ""
+                    if (code != android.webkit.WebViewClient.ERROR_UNKNOWN) {
+                        Toast.makeText(this@MainActivity, "Sivun latausvirhe ($code): $desc", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request?.isForMainFrame == true) {
+                    endSnapshotTransition()
+                    val status = errorResponse?.statusCode ?: 0
+                    if (status >= 400) {
+                        Toast.makeText(this@MainActivity, "Palvelinvirhe HTTP $status", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
 
