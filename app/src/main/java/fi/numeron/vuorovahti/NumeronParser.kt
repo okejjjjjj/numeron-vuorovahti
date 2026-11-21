@@ -1,6 +1,9 @@
 package fi.numeron.vuorovahti
 
 import org.jsoup.Jsoup
+import java.net.HttpURLConnection
+import java.net.URL
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
@@ -242,6 +245,153 @@ object NumeronParser {
         }
 
         return shifts
+    }
+
+    fun extractCircleDates(html: String): Set<LocalDate> {
+        val doc = Jsoup.parse(html)
+        val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return emptySet()
+        val parts = monthHeader.split(Regex("\\s+"))
+        if (parts.size < 2) return emptySet()
+
+        val currentMonth = finnishMonths[parts[0]] ?: return emptySet()
+        val currentYear = parts[1].toIntOrNull() ?: return emptySet()
+
+        val result = mutableSetOf<LocalDate>()
+        for (cell in doc.select("table.month-table td.month-day")) {
+            if (cell.hasClass("day-different-month")) continue
+            if (cell.selectFirst(".circle") == null) continue
+            val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
+            try {
+                result.add(LocalDate.of(currentYear, currentMonth, dayNum))
+            } catch (_: Exception) {
+            }
+        }
+        return result
+    }
+
+    fun parseListCommentsHtml(listHtml: String): Map<Pair<LocalDate, LocalTime?>, String> {
+        val doc = Jsoup.parse(listHtml)
+        val comments = mutableMapOf<Pair<LocalDate, LocalTime?>, String>()
+        val timeFormatter = DateTimeFormatter.ofPattern("H:mm")
+
+        for (dayContainer in doc.select("div.schedule-day-container[date]")) {
+            val dateAttr = dayContainer.attr("date").trim()
+            val dateParts = dateAttr.split("-")
+            if (dateParts.size != 3) continue
+            val month = dateParts[0].toIntOrNull() ?: continue
+            val day = dateParts[1].toIntOrNull() ?: continue
+            val year = dateParts[2].toIntOrNull() ?: continue
+            val date = try {
+                LocalDate.of(year, month, day)
+            } catch (_: Exception) {
+                continue
+            }
+
+            val workItems = dayContainer.select(".schedule-item-container.schedule-item-work")
+            for (workItem in workItems) {
+                val commentParts = workItem.select(".schedule-item-comment")
+                    .map { it.text().replace(Regex("\\s+"), " ").trim() }
+                    .filter { it.isNotEmpty() }
+                if (commentParts.isEmpty()) continue
+
+                val commentText = commentParts.joinToString("; ")
+                val timesText = workItem.selectFirst(".schedule-item-times")?.text()?.trim() ?: ""
+                val startToken = timesText.split("-").firstOrNull()?.trim() ?: ""
+                val startTime = try {
+                    if (startToken.isNotEmpty()) LocalTime.parse(startToken, timeFormatter) else null
+                } catch (_: Exception) {
+                    null
+                }
+
+                if (startTime != null) {
+                    comments[date to startTime] = commentText
+                }
+                if (workItems.size == 1) {
+                    comments[date to null] = commentText
+                }
+            }
+        }
+        return comments
+    }
+
+    private fun fetchHtmlWithCookies(targetUrl: String, cookieHeader: String?): String? {
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (URL(targetUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                instanceFollowRedirects = true
+                if (!cookieHeader.isNullOrBlank()) {
+                    setRequestProperty("Cookie", cookieHeader)
+                }
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                )
+            }
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    fun enrichShiftsWithListComments(
+        baseUrl: String,
+        cookieHeader: String?,
+        htmlPages: List<String>,
+        shifts: List<WorkShift>
+    ): List<WorkShift> {
+        if (baseUrl.isBlank() || shifts.isEmpty()) return shifts
+
+        val circleDates = htmlPages.flatMapTo(mutableSetOf()) { extractCircleDates(it) }
+        if (circleDates.isEmpty()) return shifts
+
+        val relevantDates = shifts
+            .filter { !it.isAllDayLeave && it.start.toLocalDate() in circleDates }
+            .mapTo(mutableSetOf()) { it.start.toLocalDate() }
+        if (relevantDates.isEmpty()) return shifts
+
+        val weekSampleDates = relevantDates
+            .groupBy { it.with(DayOfWeek.MONDAY) }
+            .values
+            .map { it.first() }
+
+        val commentsMap = mutableMapOf<Pair<LocalDate, LocalTime?>, String>()
+        val cleanBase = baseUrl.trimEnd('/')
+        for (sampleDate in weekSampleDates) {
+            val listUrl = "$cleanBase/Calendar/List?date=${sampleDate.monthValue}%2F${sampleDate.dayOfMonth}%2F${sampleDate.year}%2000%3A00%3A00"
+            val listHtml = fetchHtmlWithCookies(listUrl, cookieHeader) ?: continue
+            commentsMap.putAll(parseListCommentsHtml(listHtml))
+        }
+
+        if (commentsMap.isEmpty()) return shifts
+
+        return shifts.map { shift ->
+            if (shift.isAllDayLeave) {
+                shift
+            } else {
+                val shiftDate = shift.start.toLocalDate()
+                val shiftTime = shift.start.toLocalTime()
+                val comment = commentsMap[shiftDate to shiftTime] ?: commentsMap[shiftDate to null]
+                if (!comment.isNullOrBlank() && !shift.description.contains(comment, ignoreCase = true)) {
+                    val newDesc = if (shift.description.isNotBlank()) {
+                        "${shift.description}\n$comment"
+                    } else {
+                        comment
+                    }
+                    shift.copy(description = newDesc)
+                } else {
+                    shift
+                }
+            }
+        }
     }
 
     fun mergeConsecutiveLeaves(rawShifts: List<WorkShift>): List<WorkShift> {

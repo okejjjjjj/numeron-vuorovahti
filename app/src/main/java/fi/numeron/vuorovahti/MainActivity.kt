@@ -2185,10 +2185,22 @@ class MainActivity : AppCompatActivity() {
                         }
                         return@launch
                     }
+                    val baseUrl = getBaseUrl()
+                    val cookies = try {
+                        CookieManager.getInstance().getCookie(baseUrl)
+                    } catch (_: Exception) {
+                        null
+                    }
+                    val rawShifts = NumeronParser.enrichShiftsWithListComments(
+                        baseUrl = baseUrl,
+                        cookieHeader = cookies,
+                        htmlPages = pagesToParse,
+                        shifts = parsedPages.filterNotNull().flatten()
+                    )
                     val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                     val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
                     val calId = if (syncCalendar) CalendarSyncHelper.getTargetCalendarId(this@MainActivity) else null
-                    val allShifts = NumeronParser.mergeConsecutiveLeaves(parsedPages.filterNotNull().flatten())
+                    val allShifts = NumeronParser.mergeConsecutiveLeaves(rawShifts)
                     CalendarSyncHelper.saveCachedShifts(this@MainActivity, allShifts)
 
                     val changes = if (syncCalendar && calId != null) {
