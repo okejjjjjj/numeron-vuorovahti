@@ -852,14 +852,21 @@ object DemoModeHelper {
                 border: 1px solid #2A394A;
                 text-align: center;
             }
+            .month-week-days td:first-child {
+                width: 24px;
+                padding-left: 1px;
+                padding-right: 1px;
+                font-size: 10px;
+                white-space: nowrap;
+            }
             .month-week-number {
-                width: 26px;
+                width: 24px;
                 background-color: #131C28;
                 color: #64748B;
-                font-size: 11px;
+                font-size: 10px;
                 text-align: center;
                 vertical-align: top;
-                padding-top: 6px;
+                padding: 6px 1px 0 1px;
                 border: 1px solid #2A394A;
             }
             td.month-day {

@@ -1558,14 +1558,21 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #2A394A !important;
                 text-align: center !important;
             }
+            .month-week-days td:first-child {
+                width: 24px !important;
+                padding-left: 1px !important;
+                padding-right: 1px !important;
+                font-size: 10px !important;
+                white-space: nowrap !important;
+            }
             .month-week-number {
-                width: 26px !important;
+                width: 24px !important;
                 background-color: #131C28 !important;
                 color: #64748B !important;
-                font-size: 11px !important;
+                font-size: 10px !important;
                 text-align: center !important;
                 vertical-align: top !important;
-                padding-top: 6px !important;
+                padding: 6px 1px 0 1px !important;
                 border: 1px solid #2A394A !important;
             }
             td.month-day {
