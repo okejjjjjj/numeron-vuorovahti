@@ -118,12 +118,16 @@ class ShiftReminderReceiver : BroadcastReceiver() {
 
         val en = DemoModeHelper.isEnglish(context)
         val notifId = if (isEnding) 2002 else 1001
-        val fullButtonLabel = if (en) {
+        val fullButtonLabel = if (isTest) {
+            if (en) "TEST (NO STAMP)" else "TESTI (EI LEIMAA)"
+        } else if (en) {
             if (isEnding) "CLOCK OUT" else "CLOCK IN"
         } else {
             if (isEnding) "LEIMAA ULOS" else "LEIMAA SISÄÄN"
         }
-        val shortButtonLabel = if (en) {
+        val shortButtonLabel = if (isTest) {
+            if (en) "TEST" else "TESTI"
+        } else if (en) {
             if (isEnding) "OUT" else "IN"
         } else {
             if (isEnding) "ULOS" else "SISÄÄN"
