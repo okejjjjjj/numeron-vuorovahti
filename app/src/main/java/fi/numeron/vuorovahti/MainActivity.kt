@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
     private var navigateJob: Job? = null
     private var navigationToken: Int = 0
     private var isAutoSubmittingLogin: Boolean = false
+    private var lastThemedUrl: String? = null
+    private var lastThemedAtMs: Long = 0L
 
     private var pendingAction: Action = Action.NONE
     private var inFlightStampAction: Action = Action.NONE
@@ -666,6 +668,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
+                lastThemedUrl = null
                 startSnapshotTransition()
             }
 
@@ -834,6 +837,13 @@ class MainActivity : AppCompatActivity() {
     }
 
         private fun injectDarkTheme(view: WebView?) {
+        val currentUrl = view?.url
+        val nowMs = System.currentTimeMillis()
+        if (!currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {
+            return
+        }
+        lastThemedUrl = currentUrl
+        lastThemedAtMs = nowMs
         val css = """
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
@@ -2626,6 +2636,22 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    override fun onPause() {
+        try {
+            webView.onPause()
+            webView.pauseTimers()
+        } catch (_: Exception) {}
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        try {
+            webView.resumeTimers()
+            webView.onResume()
+        } catch (_: Exception) {}
     }
 
     override fun onDestroy() {

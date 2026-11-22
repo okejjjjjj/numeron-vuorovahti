@@ -16,6 +16,10 @@ import java.util.concurrent.ConcurrentHashMap
 
 object BackgroundAuthHelper {
     private val cookieSyncLock = Any()
+    @Volatile
+    private var lastAuthSuccessMs: Long = 0L
+    @Volatile
+    private var lastAuthBaseUrl: String = ""
 
     suspend fun ensureAuthenticatedSession(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (DemoModeHelper.isDemoEnabled(context)) return@withContext false
@@ -26,6 +30,19 @@ object BackgroundAuthHelper {
 
         if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
             return@withContext false
+        }
+
+        val nowMs = System.currentTimeMillis()
+        val cachedCookies = try {
+            CookieManager.getInstance().getCookie(baseUrl)
+        } catch (_: Exception) {
+            null
+        }
+        if (!cachedCookies.isNullOrBlank() &&
+            baseUrl == lastAuthBaseUrl &&
+            (nowMs - lastAuthSuccessMs) < 90_000L
+        ) {
+            return@withContext true
         }
 
         val cookieStore = mutableMapOf<String, String>()
@@ -98,6 +115,8 @@ object BackgroundAuthHelper {
                 cm.setCookie(baseUrl, "$name=$value; Path=/$secureAttr")
             }
             cm.flush()
+            lastAuthBaseUrl = baseUrl
+            lastAuthSuccessMs = System.currentTimeMillis()
 
             true
         } catch (_: Exception) {
