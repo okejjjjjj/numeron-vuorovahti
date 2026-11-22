@@ -15,7 +15,7 @@ Korjaukset ja optimoinnit:
 2. BackgroundAuthHelper.kt:
    - persistUpdatedCookies: synkronointi olemassa olevalla cookieSyncLock-lukolla
 3. CalendarChangeTracker.kt:
-   - revertSingleChange & updateSingleEvent: I/O-operaatiot taustasäikeeseen (Dispatchers.IO)
+   - revertSingleChange: I/O-operaatio taustasäikeeseen (Dispatchers.IO)
 4. QuickStampActivity.kt:
    - closeRunnable-viitteen tallennus ja peruutus onNewIntent / finishCleanly -vaiheissa
 5. NumeronParser.kt:
@@ -34,7 +34,6 @@ BACKUP_DIR = Path(".patch_backups")
 
 def find_file(filename: str) -> Path | None:
     for root, dirs, files in os.walk("."):
-        # Ohitetaan build- ja piilokansiot
         dirs[:] = [d for d in dirs if d not in {".git", ".gradle", "build", ".idea", ".patch_backups"}]
         if filename in files:
             return Path(root) / filename
@@ -80,7 +79,7 @@ def patch_main_activity(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # 1a. Lisää autoLoginAttempt-laskuri ja korjaa handleAutoLogin yritysrajalla
+    # 1a. Lisää attempt-parametri ja korjaa handleAutoLogin yritysrajalla
     old_login_sig = "private fun handleAutoLogin(view: WebView?) {"
     new_login_sig = "private fun handleAutoLogin(view: WebView?, attempt: Int = 0) {"
     text = replace_exact(text, old_login_sig, new_login_sig, "MainActivity: handleAutoLogin yritysparametri", path)
@@ -123,7 +122,6 @@ def patch_background_auth_helper(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # Synkronoi CookieManager-päivitykset olemassa olevalla cookieSyncLock-lukolla
     old_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) {
         val cm = CookieManager.getInstance()"""
     new_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) = synchronized(cookieSyncLock) {
@@ -141,50 +139,29 @@ def patch_calendar_change_tracker(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # Siirrä yksittäisen muutoksen peruminen taustasäikeeseen
-    old_revert_click = """            btnRevert.setOnClickListener {
-                val ok = revertSingleChange(context, item)"""
-    new_revert_click = """            btnRevert.setOnClickListener {
-                btnRevert.isEnabled = false
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    val ok = revertSingleChange(context, item)
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {"""
-    if old_revert_click in text and "btnRevert.isEnabled = false" not in text:
-        # Etsitään lohkon loppu turvallisesti
+    if "btnRevert.setOnClickListener" in text and "btnRevert.isEnabled = false" not in text:
         pattern = re.compile(
             r'(btnRevert\.setOnClickListener\s*\{\s*)'
             r'(val ok = revertSingleChange\(context, item\)\s*'
             r'dialog\.dismiss\(\)\s*'
-            r'Toast\.makeText\([^
-]+\)\.show\(\)\s*'
+            r'Toast\.makeText\([^\n]+\)\.show\(\)\s*'
             r'if \(ok\) \{\s*showManageChangesDialog\(context, onAllReverted\)\s*\})',
             re.MULTILINE
         )
         m = pattern.search(text)
         if m:
             replacement = (
-                "btnRevert.setOnClickListener {
-"
-                "                btnRevert.isEnabled = false
-"
-                "                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-"
-                "                    val ok = revertSingleChange(context, item)
-"
-                "                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-"
-                "                        dialog.dismiss()
-"
-                "                        Toast.makeText(context, if (ok) "Muutos peruttu" else "Peruminen epäonnistui", Toast.LENGTH_SHORT).show()
-"
-                "                        if (ok) {
-"
-                "                            showManageChangesDialog(context, onAllReverted)
-"
-                "                        }
-"
-                "                    }
-"
+                "btnRevert.setOnClickListener {\n"
+                "                btnRevert.isEnabled = false\n"
+                "                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {\n"
+                "                    val ok = revertSingleChange(context, item)\n"
+                "                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {\n"
+                "                        dialog.dismiss()\n"
+                '                        Toast.makeText(context, if (ok) "Muutos peruttu" else "Peruminen epäonnistui", Toast.LENGTH_SHORT).show()\n'
+                "                        if (ok) {\n"
+                "                            showManageChangesDialog(context, onAllReverted)\n"
+                "                        }\n"
+                "                    }\n"
                 "                }"
             )
             text = text[:m.start()] + replacement + text[m.end():]
@@ -240,7 +217,6 @@ def patch_numeron_parser(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # Lisätään Document-ylikuormitus, jotta samaa HTML:ää ei jäsennetä kahteen kertaan
     old_extract = """    fun extractCircleDates(html: String): Set<LocalDate> {
         val doc = Jsoup.parse(html)"""
     new_extract = """    fun extractCircleDates(html: String): Set<LocalDate> = extractCircleDatesFromDoc(Jsoup.parse(html))
