@@ -114,6 +114,7 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
         setupBottomBar()
+        setupBackNavigation()
         handleIncomingIntent(intent)
 
         // Näytetään heti käynnistyksessä splash-ruutu "Kirjaudutaan..."
@@ -423,6 +424,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun setupBackNavigation() {
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    if (::webView.isInitialized && webView.canGoBack()) {
+                        startSnapshotTransition()
+                        webView.goBack()
+                    } else {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+        )
+    }
+
     private fun triggerTestReminderNotification() {
         val en = DemoModeHelper.isEnglish(this)
         val timeStr = LocalTime.now().plusMinutes(30).format(DateTimeFormatter.ofPattern("HH:mm"))
@@ -592,6 +610,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 101 && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+            CalendarSyncHelper.scheduleShiftReminders(this)
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
+            val calGranted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_CALENDAR
+            ) == PackageManager.PERMISSION_GRANTED
+            if (calGranted &&
+                !DemoModeHelper.isDemoEnabled(this) &&
+                !CalendarSyncHelper.hasCachedShifts(this) &&
+                getBaseUrl().isNotEmpty()
+            ) {
+                ShiftReminderReceiver.triggerImmediateSync(this)
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         webView.setBackgroundColor(Color.parseColor("#0F1722"))
@@ -621,6 +662,13 @@ class MainActivity : AppCompatActivity() {
                 fun onSessionExpired() {
                     runOnUiThread {
                         handleWebSessionExpired()
+                    }
+                }
+
+                @android.webkit.JavascriptInterface
+                fun onSessionExpiringSoon() {
+                    runOnUiThread {
+                        handleWebSessionExpiringSoon()
                     }
                 }
             },
@@ -741,8 +789,12 @@ class MainActivity : AppCompatActivity() {
             ) {
                 super.onReceivedHttpError(view, request, errorResponse)
                 if (request?.isForMainFrame == true) {
-                    endSnapshotTransition()
                     val status = errorResponse?.statusCode ?: 0
+                    if (status == 401 || status == 403) {
+                        handleWebSessionExpired()
+                        return
+                    }
+                    endSnapshotTransition()
                     if (status >= 400) {
                         Toast.makeText(this@MainActivity, "Palvelinvirhe HTTP $status", Toast.LENGTH_LONG).show()
                     }
@@ -1401,6 +1453,23 @@ class MainActivity : AppCompatActivity() {
                 border-color: #F59E0B !important;
                 color: #FEF3C7 !important;
             }
+            .alert-success {
+                background-color: #0F2E26 !important;
+                border-color: #10B981 !important;
+                color: #D1FAE5 !important;
+            }
+            .alert-info {
+                background-color: #1E3A5F !important;
+                border-color: #38BDF8 !important;
+                color: #E0F2FE !important;
+            }
+            .modal-header .close,
+            .alert .close,
+            button.close {
+                color: #F1F5F9 !important;
+                text-shadow: none !important;
+                opacity: 0.85 !important;
+            }
             .input-group-addon {
                 background-color: #233040 !important;
                 border: 1px solid #37475A !important;
@@ -1991,7 +2060,8 @@ class MainActivity : AppCompatActivity() {
                     function checkSessionModal() {
                         if (window._sessionExpiredHandled) return;
                         var expired = false;
-                        var candidates = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
+                        var soonModal = null;
+                        var candidates = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, #session-expiring-soon-modal, .modal, [role="dialog"]');
                         for (var i = 0; i < candidates.length; i++) {
                             var m = candidates[i];
                             var style = window.getComputedStyle(m);
@@ -2002,6 +2072,9 @@ class MainActivity : AppCompatActivity() {
                                 expired = true;
                                 break;
                             }
+                            if (m.id === 'session-expiring-soon-modal' || txt.indexOf('istunto päättyy pian') !== -1) {
+                                soonModal = m;
+                            }
                         }
                         if (expired) {
                             window._sessionExpiredHandled = true;
@@ -2009,6 +2082,21 @@ class MainActivity : AppCompatActivity() {
                                 window.SessionBridge.onSessionExpired();
                             } else {
                                 window.location.href = '/Login/Login';
+                            }
+                        } else if (soonModal && !window._sessionExpiringHandled) {
+                            window._sessionExpiringHandled = true;
+                            try {
+                                if (typeof window.HideSessionExpirationSoonNotify === 'function') {
+                                    window.HideSessionExpirationSoonNotify();
+                                }
+                                if (window.jQuery) {
+                                    window.jQuery(soonModal).modal('hide');
+                                } else {
+                                    soonModal.style.display = 'none';
+                                }
+                            } catch (_err) {}
+                            if (window.SessionBridge && typeof window.SessionBridge.onSessionExpiringSoon === 'function') {
+                                window.SessionBridge.onSessionExpiringSoon();
                             }
                         }
                     }
@@ -2371,7 +2459,12 @@ class MainActivity : AppCompatActivity() {
                     var monthsFi = {
                         'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
                         'toukokuu': 5, 'kesäkuu': 6, 'heinäkuu': 7, 'elokuu': 8,
-                        'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12
+                        'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12,
+                        'january': 1, 'february': 2, 'march': 3, 'april': 4,
+                        'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                        'september': 9, 'october': 10, 'november': 11, 'december': 12,
+                        'januari': 1, 'februari': 2, 'mars': 3, 'maj': 5,
+                        'juni': 6, 'juli': 7, 'augusti': 8, 'oktober': 10
                     };
                     document.addEventListener('click', function(e) {
                         if (e.target && e.target.closest('a, button, #numeron-quick-req-bar')) return;
@@ -2464,6 +2557,27 @@ class MainActivity : AppCompatActivity() {
 
 
 
+
+    private fun handleWebSessionExpiringSoon() {
+        val now = System.currentTimeMillis()
+        if (now - lastSessionRecoveryMs < 15_000L) return
+        lastSessionRecoveryMs = now
+        val baseUrl = getBaseUrl()
+        if (baseUrl.isEmpty() || DemoModeHelper.isDemoEnabled(this)) return
+
+        scope.launch {
+            val ok = BackgroundAuthHelper.ensureAuthenticatedSession(
+                this@MainActivity,
+                forceRefresh = true
+            )
+            if (ok) {
+                getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putLong("last_valid_session_ms", System.currentTimeMillis())
+                    .apply()
+            }
+        }
+    }
 
     private fun handleWebSessionExpired() {
         val now = System.currentTimeMillis()
@@ -2601,7 +2715,15 @@ class MainActivity : AppCompatActivity() {
 
         webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
             if (rawHtml == null || rawHtml == "null") return@evaluateJavascript
-            val unescapedHtml = JSONTokener(rawHtml).nextValue() as? String ?: return@evaluateJavascript
+            val unescapedHtml = try {
+                JSONTokener(rawHtml).nextValue() as? String
+            } catch (_: Exception) {
+                null
+            } ?: run {
+                pendingAction = Action.NONE
+                collectedCalendarHtml.clear()
+                return@evaluateJavascript
+            }
             collectedCalendarHtml.add(unescapedHtml)
 
             if (syncStep == 0) {

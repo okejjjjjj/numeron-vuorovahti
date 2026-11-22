@@ -393,33 +393,46 @@ object SettingsDialogHelper {
         
         fun openBatteryOptimizationSettings() {
             val pkgUri = android.net.Uri.parse("package:${context.packageName}")
-            val isAlreadyIgnored = (context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager)
-                .isIgnoringBatteryOptimizations(context.packageName)
-            val openedDirect = if (!isAlreadyIgnored) {
+            val openedList = launchSystemSettingsIntent(
+                android.content.Intent(
+                    android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                )
+            )
+            if (!openedList) {
                 launchSystemSettingsIntent(
                     android.content.Intent(
-                        android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                         pkgUri
                     )
                 )
-            } else {
-                false
             }
-            if (!openedDirect) {
-                val openedList = launchSystemSettingsIntent(
+        }
+
+        fun openNotificationSettings() {
+            val pkgUri = android.net.Uri.parse("package:${context.packageName}")
+            val notifIntent = android.content.Intent(
+                android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            ).apply {
+                putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+            }
+            if (!launchSystemSettingsIntent(notifIntent)) {
+                launchSystemSettingsIntent(
                     android.content.Intent(
-                        android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        pkgUri
                     )
                 )
-                if (!openedList) {
-                    launchSystemSettingsIntent(
-                        android.content.Intent(
-                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                            pkgUri
-                        )
-                    )
-                }
             }
+        }
+
+        fun areAppNotificationsAllowed(): Boolean {
+            val hasRuntimePerm = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            return hasRuntimePerm &&
+                androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()
         }
 
         fun addStatusRow(parent: LinearLayout, title: String, value: String, subValue: String? = null): Pair<TextView, TextView> {
@@ -533,6 +546,16 @@ object SettingsDialogHelper {
         )
         statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
             openBatteryOptimizationSettings()
+        }
+
+        val (notifPermValueTv, notifPermSubTv) = addStatusRow(
+            statusCard,
+            if (en) "Notification permission" else "Ilmoitusten tila",
+            "",
+            ""
+        )
+        statusCard.getChildAt(statusCard.childCount - 1).setOnClickListener {
+            openNotificationSettings()
         }
 
         // === KORTTI 2: KIRJAUTUMINEN JA YHTEYS ===
@@ -743,8 +766,10 @@ object SettingsDialogHelper {
         }
         actionCard.addView(btnSync)
 
+        val pendingChangesCount = CalendarChangeTracker.getLastChanges(context).size
         val btnChanges = Button(context).apply {
-            text = if (en) "Manage calendar changes" else "Hallitse kalenterimuutoksia"
+            val baseLabel = if (en) "Manage calendar changes" else "Hallitse kalenterimuutoksia"
+            text = if (pendingChangesCount > 0) "$baseLabel ($pendingChangesCount)" else baseLabel
             styleButton(this, "#233040", "#37475A", "#F1F5F9")
         }
         actionCard.addView(btnChanges)
@@ -970,33 +995,48 @@ object SettingsDialogHelper {
             }
 
             if (initialSyncCalendar && !newSyncCalendar) {
-                val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(context)
-                val futureCount = if (targetCalId != null) {
-                    CalendarSyncHelper.countFutureSyncedEvents(context, targetCalId)
-                } else {
-                    0
-                }
-                if (targetCalId != null && futureCount > 0) {
-                    AlertDialog.Builder(context)
-                        .setTitle(if (en) "Delete calendar events?" else "Poistetaanko kalenterimerkinnät?")
-                        .setMessage(
-                            if (en) {
-                                "Calendar sync was disabled. Do you want to delete the upcoming events added by this app to Google Calendar ($futureCount events)?"
-                            } else {
-                                "Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?"
-                            }
-                        )
-                        .setPositiveButton(if (en) "Delete events" else "Poista merkinnät") { _, _ ->
-                            CalendarSyncHelper.deleteFutureSyncedEvents(context, targetCalId)
-                            finishSave(forceSync = missingCacheForReminders)
-                        }
-                        .setNegativeButton(if (en) "Keep in calendar" else "Jätä kalenteriin") { _, _ ->
+                btnSave.isEnabled = false
+                val appCtx = context.applicationContext
+                CoroutineScope(Dispatchers.IO).launch {
+                    val targetCalId = selectedCal?.id ?: CalendarSyncHelper.getTargetCalendarId(appCtx)
+                    val futureCount = if (targetCalId != null) {
+                        CalendarSyncHelper.countFutureSyncedEvents(appCtx, targetCalId)
+                    } else {
+                        0
+                    }
+                    withContext(Dispatchers.Main) {
+                        val act = context as? android.app.Activity
+                        if (act != null && (act.isFinishing || act.isDestroyed)) return@withContext
+                        if (targetCalId != null && futureCount > 0) {
+                            AlertDialog.Builder(context)
+                                .setTitle(if (en) "Delete calendar events?" else "Poistetaanko kalenterimerkinnät?")
+                                .setMessage(
+                                    if (en) {
+                                        "Calendar sync was disabled. Do you want to delete the upcoming events added by this app to Google Calendar ($futureCount events)?"
+                                    } else {
+                                        "Kalenterisynkronointi otettiin pois käytöstä. Haluatko poistaa sovelluksen Google-kalenteriin lisäämät tulevat merkinnät ($futureCount kpl)?"
+                                    }
+                                )
+                                .setPositiveButton(if (en) "Delete events" else "Poista merkinnät") { _, _ ->
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        CalendarSyncHelper.deleteFutureSyncedEvents(appCtx, targetCalId)
+                                        withContext(Dispatchers.Main) {
+                                            val curAct = context as? android.app.Activity
+                                            if (curAct == null || (!curAct.isFinishing && !curAct.isDestroyed)) {
+                                                finishSave(forceSync = missingCacheForReminders)
+                                            }
+                                        }
+                                    }
+                                }
+                                .setNegativeButton(if (en) "Keep in calendar" else "Jätä kalenteriin") { _, _ ->
+                                    finishSave()
+                                }
+                                .setCancelable(false)
+                                .show()
+                        } else {
                             finishSave()
                         }
-                        .setCancelable(false)
-                        .show()
-                } else {
-                    finishSave()
+                    }
                 }
             } else {
                 finishSave()
@@ -1018,6 +1058,19 @@ object SettingsDialogHelper {
                 batteryOptValueTv.setTextColor(Color.parseColor("#F1F5F9"))
                 batteryOptSubTv.text = if (en) "Ensures background sync works in sleep mode" else "Varmistaa tausta-ajojen toiminnan lepotilassa"
                 batteryOptSubTv.visibility = View.VISIBLE
+            }
+
+            val notifsAllowed = areAppNotificationsAllowed()
+            if (notifsAllowed) {
+                notifPermValueTv.text = if (en) "Enabled" else "Käytössä"
+                notifPermValueTv.setTextColor(Color.parseColor("#34D399"))
+                notifPermSubTv.text = if (en) "Tap to open notification settings" else "Napauta avataksesi ilmoitusasetukset"
+                notifPermSubTv.visibility = View.VISIBLE
+            } else {
+                notifPermValueTv.text = if (en) "Blocked – tap to enable" else "Estetty – napauta ottaaksesi käyttöön"
+                notifPermValueTv.setTextColor(Color.parseColor("#F87171"))
+                notifPermSubTv.text = if (en) "Required for shift and calendar alerts" else "Vaaditaan leimaus- ja kalenteri-ilmoituksiin"
+                notifPermSubTv.visibility = View.VISIBLE
             }
 
         }

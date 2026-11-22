@@ -32,12 +32,14 @@ class SupportBillingHelper(
         )
     }
 
+    private val appContext: Context = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val pendingConsumes = java.util.concurrent.atomic.AtomicInteger(0)
 
     @Volatile
     private var isDestroyed = false
 
-    private val billingClient: BillingClient = BillingClient.newBuilder(context)
+    private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
         .setListener(this)
         .enablePendingPurchases(
             PendingPurchasesParams.newBuilder()
@@ -163,12 +165,20 @@ class SupportBillingHelper(
                 .setPurchaseToken(purchase.purchaseToken)
                 .build()
 
+            pendingConsumes.incrementAndGet()
             billingClient.consumeAsync(consumeParams) { billingResult, _ ->
-                if (isDestroyed) return@consumeAsync
-                if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                    postStatus("Lämmin kiitos tuestasi! ☕", true)
-                } else {
-                    postStatus("Tuki rekisteröitiin, mutta kuittaus viivästyi (koodi ${billingResult.responseCode}).", false)
+                try {
+                    if (!isDestroyed) {
+                        if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                            postStatus("Lämmin kiitos tuestasi! ☕", true)
+                        } else {
+                            postStatus("Tuki rekisteröitiin, mutta kuittaus viivästyi (koodi ${billingResult.responseCode}).", false)
+                        }
+                    }
+                } finally {
+                    if (pendingConsumes.decrementAndGet() <= 0 && isDestroyed) {
+                        endConnectionSafe()
+                    }
                 }
             }
         } else if (purchase.purchaseState == Purchase.PurchaseState.PENDING) {
@@ -205,13 +215,19 @@ class SupportBillingHelper(
         return null
     }
 
-    fun destroy() {
-        isDestroyed = true
+    private fun endConnectionSafe() {
         try {
             if (billingClient.connectionState != BillingClient.ConnectionState.CLOSED) {
                 billingClient.endConnection()
             }
         } catch (_: Exception) {
+        }
+    }
+
+    fun destroy() {
+        isDestroyed = true
+        if (pendingConsumes.get() <= 0) {
+            endConnectionSafe()
         }
     }
 }

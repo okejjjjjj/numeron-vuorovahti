@@ -962,12 +962,29 @@ object CalendarChangeTracker {
                 finalEndMs = eDt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             }
 
-            if (updateSingleEvent(context, item, titleStr, finalStartMs, finalEndMs, allDay)) {
-                Toast.makeText(context, "Tapahtuma päivitetty kalenteriin", Toast.LENGTH_SHORT).show()
-                dialog.dismiss()
-                onSaved()
-            } else {
-                Toast.makeText(context, "Tapahtuman päivitys epäonnistui", Toast.LENGTH_SHORT).show()
+            btnSave.isEnabled = false
+            val appCtx = context.applicationContext
+            val exec = java.util.concurrent.Executors.newSingleThreadExecutor()
+            exec.execute {
+                val ok = try {
+                    updateSingleEvent(appCtx, item, titleStr, finalStartMs, finalEndMs, allDay)
+                } finally {
+                    exec.shutdown()
+                }
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    val act = context as? android.app.Activity
+                    if (act != null && (act.isFinishing || act.isDestroyed)) return@post
+                    if (ok) {
+                        Toast.makeText(appCtx, "Tapahtuma päivitetty kalenteriin", Toast.LENGTH_SHORT).show()
+                        if (dialog.isShowing) {
+                            dialog.dismiss()
+                        }
+                        onSaved()
+                    } else {
+                        btnSave.isEnabled = true
+                        Toast.makeText(appCtx, "Tapahtuman päivitys epäonnistui", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
 

@@ -151,7 +151,10 @@ object NumeronParser {
 
                 if (isTrainingAbsence(nameText)) {
                     for (offset in 0 until spanDays) {
-                        trainingTitleByDate[date.plusDays(offset.toLong())] = nameText
+                        val targetDate = date.plusDays(offset.toLong())
+                        if (targetDate.monthValue == currentMonth && targetDate.year == currentYear) {
+                            trainingTitleByDate[targetDate] = nameText
+                        }
                     }
                 } else {
                     val leaveStart = date.atStartOfDay()

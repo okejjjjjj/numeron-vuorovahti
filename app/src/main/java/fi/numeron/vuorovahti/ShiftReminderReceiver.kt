@@ -1,38 +1,32 @@
 package fi.numeron.vuorovahti
 
-import android.annotation.SuppressLint
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.webkit.CookieManager
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import org.json.JSONTokener
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
 
 class ShiftReminderReceiver : BroadcastReceiver() {
 
@@ -106,6 +100,13 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         isTest: Boolean = false,
         rescheduleNext: Boolean = true
     ) {
+        if (!canPostNotifications(context)) {
+            if (!isTest && rescheduleNext) {
+                CalendarSyncHelper.scheduleShiftReminders(context)
+            }
+            return
+        }
+
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channelId = "numeron_vuorovahti_reminders"
 
@@ -221,8 +222,17 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         const val ACTION_REVERT_ALL_CALENDAR_CHANGES = "fi.numeron.vuorovahti.ACTION_REVERT_ALL_CALENDAR_CHANGES"
         const val NOTIF_ID_CALENDAR_CHANGES = 4001
 
+        fun canPostNotifications(context: Context): Boolean {
+            val hasPerm = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) == PackageManager.PERMISSION_GRANTED
+            return hasPerm && NotificationManagerCompat.from(context).areNotificationsEnabled()
+        }
+
         fun showCalendarChangesNotification(context: Context, changes: List<CalendarChangeItem>) {
-            if (changes.isEmpty()) return
+            if (changes.isEmpty() || !canPostNotifications(context)) return
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channelId = "numeron_vuorovahti_reminders"
 
@@ -378,6 +388,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         }
 
         fun showRequestDecisionNotification(context: Context, title: String, body: String, id: Int) {
+            if (!canPostNotifications(context)) return
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channelId = "numeron_vuorovahti_reminders"
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -555,6 +566,8 @@ class BackgroundSyncWorker(
                 val statusId = item.optInt("Status", -1)
                 val typeName = item.optString("Type", "Toive")
                 val statusDesc = item.optString("StatusDescription", "")
+                val dateStr = formatRequestDate(item.optString("DateFrom", ""))
+                val bodyText = if (dateStr.isNotEmpty()) "$typeName ($dateStr)" else typeName
 
                 if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
                     val key = "${id}_$statusId"
@@ -565,7 +578,7 @@ class BackgroundSyncWorker(
                             ShiftReminderReceiver.showRequestDecisionNotification(
                                 appContext,
                                 if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
-                                typeName,
+                                bodyText,
                                 id
                             )
                         }
@@ -580,5 +593,29 @@ class BackgroundSyncWorker(
             }
         } catch (_: Exception) {
         }
+    }
+
+    private fun formatRequestDate(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) return ""
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
+        val msMatch = Regex("/Date\\((-?\\d+)\\)/").find(trimmed)
+        if (msMatch != null) {
+            val ms = msMatch.groupValues[1].toLongOrNull() ?: return ""
+            return java.time.Instant.ofEpochMilli(ms)
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate()
+                .format(fmt)
+        }
+        val isoMatch = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(trimmed)
+        if (isoMatch != null) {
+            return try {
+                LocalDate.parse(isoMatch.groupValues[1]).format(fmt)
+            } catch (_: Exception) {
+                ""
+            }
+        }
+        val fiMatch = Regex("^\\d{1,2}\\.\\d{1,2}\\.\\d{4}").find(trimmed)
+        return fiMatch?.value ?: ""
     }
 }

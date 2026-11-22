@@ -25,6 +25,7 @@ import java.util.UUID
 object CalendarSyncHelper {
 
     const val EVENT_DESCRIPTION_TAG = "Synkronoitu Numeron Vuorovahti -sovelluksesta"
+    private val syncLock = Any()
 
     private val KNOWN_SHIFT_OR_LEAVE_KEYWORDS = listOf(
         "työvuoro", "vuoro", "aamuvuoro", "iltavuoro", "yövuoro", "päivävuoro", "välivuoro",
@@ -195,22 +196,29 @@ object CalendarSyncHelper {
         }
     }
 
-    fun syncShiftsToCalendar(context: Context, calendarId: Long, shifts: List<WorkShift>): List<CalendarChangeItem> {
+    fun syncShiftsToCalendar(
+        context: Context,
+        calendarId: Long,
+        shifts: List<WorkShift>
+    ): List<CalendarChangeItem> = synchronized(syncLock) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
-            return emptyList()
+            return@synchronized emptyList()
         }
 
         val resolver = context.contentResolver
         val now = LocalDateTime.now()
+        val today = now.toLocalDate()
         val nowMs = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val todayStartUtcMs = today.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli()
+        val queryMinEndMs = minOf(nowMs, todayStartUtcMs)
         val colorKeys = resolveGoogleShiftColorKeys(context, calendarId)
         val userTag = getUserTag(context)
 
         // Jo alkaneita työvuoroja ei ylikirjoiteta toteutuneilla leimausajoilla;
-        // koko päivän lomat huomioidaan päättymishetkeen saakka.
+        // koko päivän lomat suodatetaan paikallisen päivän ja UTC-keskiyön mukaan.
         val upcomingShifts = shifts.filter { shift ->
-            if (shift.isAllDayLeave) shift.end.isAfter(now) else shift.start.isAfter(now)
+            if (shift.isAllDayLeave) shift.end.toLocalDate().isAfter(today) else shift.start.isAfter(now)
         }
 
         val ownedEvents = mutableListOf<ExistingEvent>()
@@ -229,7 +237,7 @@ object CalendarSyncHelper {
         val selection = "${CalendarContract.Events.CALENDAR_ID} = ? AND " +
                 "${CalendarContract.Events.DTEND} > ? AND " +
                 "${CalendarContract.Events.DELETED} = 0"
-        val selectionArgs = arrayOf(calendarId.toString(), nowMs.toString())
+        val selectionArgs = arrayOf(calendarId.toString(), queryMinEndMs.toString())
 
         resolver.query(CalendarContract.Events.CONTENT_URI, projection, selection, selectionArgs, null)?.use { c ->
             while (c.moveToNext()) {
@@ -241,6 +249,9 @@ object CalendarSyncHelper {
                 val sMs = c.getLong(5)
                 val eMs = c.getLong(6)
                 val allDay = c.getInt(7) == 1
+
+                if (allDay && eMs <= todayStartUtcMs) continue
+                if (!allDay && eMs <= nowMs) continue
 
                 if (belongsToAnotherUser(desc, userTag)) {
                     continue
@@ -433,7 +444,12 @@ object CalendarSyncHelper {
         }
 
         for (removedEx in unmatchedOwned) {
-            if (removedEx.startMs <= nowMs) continue
+            val alreadyStarted = if (removedEx.isAllDay) {
+                removedEx.startMs <= todayStartUtcMs
+            } else {
+                removedEx.startMs <= nowMs
+            }
+            if (alreadyStarted) continue
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, removedEx.eventId)
             resolver.delete(uri, null, null)
 
@@ -468,7 +484,7 @@ object CalendarSyncHelper {
             CalendarChangeTracker.mergeChanges(context, detectedChanges)
         }
 
-        return detectedChanges
+        detectedChanges
     }
 
     private fun isSameCalendarDay(ms1: Long, ms2: Long, isAllDay: Boolean): Boolean {
