@@ -27,6 +27,11 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
 
 enum class ChangeType {
     ADDED, MODIFIED, REMOVED
@@ -609,24 +614,24 @@ object CalendarChangeTracker {
                         showManageChangesDialog(context, onChanged)
                     }
                 }
+btnRevert.setOnClickListener {
+    btnRevert.isEnabled = false
+    CoroutineScope(Dispatchers.IO).launch {
+        val ok = revertSingleChangeAndSave(context, item)
+        withContext(Dispatchers.Main) {
+            if (ok) {
+                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                dialogRef?.dismiss()
+                onChanged?.invoke()
+                showManageChangesDialog(context, onChanged)
+            } else {
+                btnRevert.isEnabled = true
+                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
 
-                btnRevert.setOnClickListener {
-                    btnRevert.isEnabled = false
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        val ok = revertSingleChangeAndSave(context, item)
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                            if (ok) {
-                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                                dialogRef?.dismiss()
-                                onChanged?.invoke()
-                                showManageChangesDialog(context, onChanged)
-                            } else {
-                                btnRevert.isEnabled = true
-                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                }
             }
         }
 
