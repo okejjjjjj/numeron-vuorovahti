@@ -1897,6 +1897,7 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
+                        window.vvApplyStampingColors = applyStampingColors;
                         applyStampingColors();
                         var stampTblForColor = document.getElementById('table-latest-stamps');
                         if (stampTblForColor && !stampTblForColor._colorObsInstalled && typeof MutationObserver !== 'undefined') {
@@ -2000,6 +2001,9 @@ class MainActivity : AppCompatActivity() {
                             hiddenRows[i].classList.remove('hidden', 'hide');
                             hiddenRows[i].style.display = 'table-row';
                         }
+                        if (typeof window.vvApplyStampingColors === 'function') {
+                            window.vvApplyStampingColors();
+                        }
                     }
 
                     function isShowMoreTrigger(el) {
@@ -2028,6 +2032,7 @@ class MainActivity : AppCompatActivity() {
                             revealHiddenStampRows();
                             setTimeout(revealHiddenStampRows, 150);
                             setTimeout(revealHiddenStampRows, 500);
+                            setTimeout(revealHiddenStampRows, 1100);
                         }
                     }, true);
 
