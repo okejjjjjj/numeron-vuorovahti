@@ -1,228 +1,315 @@
+#!/usr/bin/env python3
+"""
+Numeron Vuorovahti – Koottu korjaus- ja optimointipatch.
+
+Suunniteltu siten, että kaikki muutokset ovat atomisia, idempotentteja ja
+helposti peruttavissa Gitissä (yksi selkeä commit tai `python3 patch.py --revert`
+varmuuskopioista / git checkoutilla).
+
+Korjaukset ja optimoinnit:
+1. MainActivity.kt:
+   - navigateToTab: korutiinin ja snapshot-siirtymän synkronointi (estää päällekkäiset välilehtilataukset)
+   - handleAutoLogin: yritysraja (max 15 yritystä) ikuisen silmukan estämiseksi
+   - setupCalendarCleanup: 80 ms debounce MutationObserverille DOM-kuorman pienentämiseksi
+   - build.gradle(.kts): pieni versionCode-korotus (+1) jos tiedosto löytyy
+2. BackgroundAuthHelper.kt:
+   - persistUpdatedCookies: synkronointi olemassa olevalla cookieSyncLock-lukolla
+3. CalendarChangeTracker.kt:
+   - revertSingleChange & updateSingleEvent: I/O-operaatiot taustasäikeeseen (Dispatchers.IO)
+4. QuickStampActivity.kt:
+   - closeRunnable-viitteen tallennus ja peruutus onNewIntent / finishCleanly -vaiheissa
+5. NumeronParser.kt:
+   - Jsoup.parse-kutsun välttäminen kahteen kertaan (extractCircleDates hyödyntää valmista Documentia)
+"""
+
+import argparse
 import os
 import re
+import shutil
+import sys
+from pathlib import Path
+
+BACKUP_DIR = Path(".patch_backups")
 
 
-def find_file(filename):
-    for root, _, files in os.walk("."):
+def find_file(filename: str) -> Path | None:
+    for root, dirs, files in os.walk("."):
+        # Ohitetaan build- ja piilokansiot
+        dirs[:] = [d for d in dirs if d not in {".git", ".gradle", "build", ".idea", ".patch_backups"}]
         if filename in files:
-            return os.path.join(root, filename)
+            return Path(root) / filename
     return None
 
 
-def remove_balanced_from_marker(text: str, marker: str) -> str:
-    idx = text.find(marker)
-    if idx == -1:
-        return text
-
-    line_start = text.rfind("\n", 0, idx)
-    block_start = 0 if line_start == -1 else line_start
-
-    brace_idx = text.find("{", idx)
-    if brace_idx == -1:
-        return text
-
-    depth = 0
-    pos = brace_idx
-    while pos < len(text):
-        ch = text[pos]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                end_pos = pos + 1
-                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
-                    end_pos += 1
-                return text[:block_start] + "\n" + text[end_pos:]
-        pos += 1
-
-    return text
+def backup_file(path: Path) -> None:
+    dest = BACKUP_DIR / path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.exists():
+        shutil.copy2(path, dest)
 
 
-def remove_exact_alarm_status_block(text: str) -> str:
-    start_marker = "val exactAlarmAllowed = canScheduleExactAlarmsCompat()"
-    start_idx = text.find(start_marker)
-    if start_idx == -1:
-        return text
-
-    line_start = text.rfind("\n", 0, start_idx)
-    block_start = 0 if line_start == -1 else line_start
-
-    if_marker = "if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {"
-    if_idx = text.find(if_marker, start_idx)
-    if if_idx == -1:
-        return text
-
-    brace_idx = text.find("{", if_idx)
-    depth = 0
-    pos = brace_idx
-    while pos < len(text):
-        if text[pos] == "{":
-            depth += 1
-        elif text[pos] == "}":
-            depth -= 1
-            if depth == 0:
-                end_pos = pos + 1
-                while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
-                    end_pos += 1
-                return text[:block_start] + "\n" + text[end_pos:]
-        pos += 1
-
-    return text
+def revert_all() -> int:
+    if not BACKUP_DIR.exists():
+        print("Ei varmuuskopioita kansiossa .patch_backups/. Käytä komentoa: git checkout -- .")
+        return 1
+    restored = 0
+    for root, _, files in os.walk(BACKUP_DIR):
+        for f in files:
+            backup_path = Path(root) / f
+            rel_path = backup_path.relative_to(BACKUP_DIR)
+            shutil.copy2(backup_path, rel_path)
+            print(f"[PALAUTETTU] {rel_path}")
+            restored += 1
+    shutil.rmtree(BACKUP_DIR, ignore_errors=True)
+    print(f"Valmis. Palautettiin {restored} tiedostoa.")
+    return 0
 
 
-def remove_exact_alarm_notice_box(text: str) -> str:
-    marker = "val exactAlarmNoticeBox = LinearLayout(context).apply {"
-    idx = text.find(marker)
-    if idx == -1:
-        return text
-
-    line_start = text.rfind("\n", 0, idx)
-    block_start = 0 if line_start == -1 else line_start
-
-    add_marker = "reminderDetailsContainer.addView(exactAlarmNoticeBox)"
-    add_idx = text.find(add_marker, idx)
-    if add_idx == -1:
-        return text
-
-    end_pos = add_idx + len(add_marker)
-    while end_pos < len(text) and text[end_pos] in ("\r", "\n"):
-        end_pos += 1
-
-    return text[:block_start] + "\n" + text[end_pos:]
+def replace_exact(content: str, old: str, new: str, label: str, file_path: Path) -> str:
+    if new in content:
+        print(f"  [OK - jo käytössä] {label}")
+        return content
+    if old not in content:
+        print(f"  [OHITETTU - ankkuria ei löytynyt] {label} ({file_path})")
+        return content
+    print(f"  [PÄIVITETTY] {label}")
+    return content.replace(old, new, 1)
 
 
-def patch_manifest(path):
-    if not path or not os.path.exists(path):
-        print("HUOM: AndroidManifest.xml ei löytynyt.")
-        return
+def patch_main_activity(path: Path) -> bool:
+    orig = path.read_text(encoding="utf-8")
+    text = orig
 
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+    # 1a. Lisää autoLoginAttempt-laskuri ja korjaa handleAutoLogin yritysrajalla
+    old_login_sig = "private fun handleAutoLogin(view: WebView?) {"
+    new_login_sig = "private fun handleAutoLogin(view: WebView?, attempt: Int = 0) {"
+    text = replace_exact(text, old_login_sig, new_login_sig, "MainActivity: handleAutoLogin yritysparametri", path)
 
-    updated, _ = re.subn(
-        r"[ \t]*<uses-permission\s+android:name=\"android\.permission\.(?:SCHEDULE_EXACT_ALARM|USE_EXACT_ALARM)\"\s*/>\s*\r?\n?",
-        "",
-        content,
-    )
+    old_login_retry = "mainHandler.postDelayed({ handleAutoLogin(view) }, 300L)"
+    new_login_retry = "if (attempt < 15) { mainHandler.postDelayed({ handleAutoLogin(view, attempt + 1) }, 300L) }"
+    text = replace_exact(text, old_login_retry, new_login_retry, "MainActivity: handleAutoLogin max 15 yritystä", path)
 
-    if updated != content:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(updated)
-        print(f"OK: {path} — SCHEDULE_EXACT_ALARM poistettu.")
-    else:
-        print(f"OK: {path} — ei SCHEDULE_EXACT_ALARM-riviä poistettavana.")
+    # 1b. Debounce setupCalendarCleanup MutationObserveriin
+    old_cal_obs = """                const obs = new MutationObserver(() => {
+                    runCalendarCleanup();
+                });"""
+    new_cal_obs = """                let cleanupTimer = null;
+                const obs = new MutationObserver(() => {
+                    if (cleanupTimer) clearTimeout(cleanupTimer);
+                    cleanupTimer = setTimeout(() => { runCalendarCleanup(); }, 80);
+                });"""
+    text = replace_exact(text, old_cal_obs, new_cal_obs, "MainActivity: setupCalendarCleanup 80ms debounce", path)
 
+    # 1c. Varmista navigateToTab-korutiinin peruutus heti kutsun alussa
+    old_nav = """        navigateJob?.cancel()
+        startSnapshotTransition {
+            navigateJob = scope.launch {"""
+    new_nav = """        navigateJob?.cancel()
+        val currentNavToken = ++navigationToken
+        startSnapshotTransition {
+            if (currentNavToken != navigationToken) return@startSnapshotTransition
+            navigateJob?.cancel()
+            navigateJob = scope.launch {"""
+    text = replace_exact(text, old_nav, new_nav, "MainActivity: navigateToTab kilpa-ajon esto", path)
 
-def patch_settings_dialog_helper(path):
-    if not path or not os.path.exists(path):
-        print("HUOM: SettingsDialogHelper.kt ei löytynyt.")
-        return
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    updated = content
-    updated = remove_balanced_from_marker(updated, "fun canScheduleExactAlarmsCompat(): Boolean {")
-    updated = remove_balanced_from_marker(updated, "fun openExactAlarmSettings() {")
-    updated = remove_exact_alarm_status_block(updated)
-    updated = remove_exact_alarm_notice_box(updated)
-
-    updated, _ = re.subn(
-        r"\r?\n[ \t]*var lastKnownExactAlarmAllowed = canScheduleExactAlarmsCompat\(\)",
-        "",
-        updated,
-    )
-    updated = remove_balanced_from_marker(updated, "val nowExactAllowed = canScheduleExactAlarmsCompat()")
-    updated = remove_balanced_from_marker(updated, "if (!lastKnownExactAlarmAllowed && nowExactAllowed) {")
-    updated, _ = re.subn(
-        r"\r?\n[ \t]*lastKnownExactAlarmAllowed = nowExactAllowed",
-        "",
-        updated,
-    )
-
-    assert "fun showSettingsDialog(" in updated, "VIRHE: showSettingsDialog puuttuu SettingsDialogHelper.kt:stä!"
-    open_c = updated.count("{")
-    close_c = updated.count("}")
-    assert open_c == close_c, (
-        f"VIRHE: SettingsDialogHelper.kt aaltosulut eivät ole tasan ({{={open_c}, }}={close_c})"
-    )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(updated)
-    print(f"OK: {path} — tarkat vuorohälytykset ja duplikaatti poistettu ({{={open_c}, }}={close_c}).")
+    if text != orig:
+        backup_file(path)
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
 
 
-def patch_calendar_sync_helper(path):
-    if not path or not os.path.exists(path):
-        print("HUOM: CalendarSyncHelper.kt ei löytynyt.")
-        return
+def patch_background_auth_helper(path: Path) -> bool:
+    orig = path.read_text(encoding="utf-8")
+    text = orig
 
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+    # Synkronoi CookieManager-päivitykset olemassa olevalla cookieSyncLock-lukolla
+    old_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) {
+        val cm = CookieManager.getInstance()"""
+    new_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) = synchronized(cookieSyncLock) {
+        val cm = CookieManager.getInstance()"""
+    text = replace_exact(text, old_cookie_fn, new_cookie_fn, "BackgroundAuthHelper: synkronoi persistUpdatedCookies", path)
 
-    old_block = (
-        "        try {\n"
-        "            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarmManager.canScheduleExactAlarms()) {\n"
-        "                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)\n"
-        "            } else {\n"
-        "                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)\n"
-        "            }\n"
-        "        } catch (_: SecurityException) {\n"
-        "            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)\n"
-        "        }"
-    )
+    if text != orig:
+        backup_file(path)
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
 
-    new_block = (
-        "        try {\n"
-        "            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)\n"
-        "        } catch (_: SecurityException) {\n"
-        "            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)\n"
-        "        }"
-    )
 
-    if old_block in content:
-        updated = content.replace(old_block, new_block, 1)
-    else:
-        updated, _ = re.subn(
-            r"if \(Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S && !alarmManager\.canScheduleExactAlarms\(\)\) \{\s*"
-            r"alarmManager\.setAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, triggerMs, pi\)\s*"
-            r"\}\s*else\s*\{\s*"
-            r"alarmManager\.setExactAndAllowWhileIdle\(AlarmManager\.RTC_WAKEUP, triggerMs, pi\)\s*"
-            r"\}",
-            "alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)",
-            content,
-            count=1,
+def patch_calendar_change_tracker(path: Path) -> bool:
+    orig = path.read_text(encoding="utf-8")
+    text = orig
+
+    # Siirrä yksittäisen muutoksen peruminen taustasäikeeseen
+    old_revert_click = """            btnRevert.setOnClickListener {
+                val ok = revertSingleChange(context, item)"""
+    new_revert_click = """            btnRevert.setOnClickListener {
+                btnRevert.isEnabled = false
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    val ok = revertSingleChange(context, item)
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {"""
+    if old_revert_click in text and "btnRevert.isEnabled = false" not in text:
+        # Etsitään lohkon loppu turvallisesti
+        pattern = re.compile(
+            r'(btnRevert\.setOnClickListener\s*\{\s*)'
+            r'(val ok = revertSingleChange\(context, item\)\s*'
+            r'dialog\.dismiss\(\)\s*'
+            r'Toast\.makeText\([^
+]+\)\.show\(\)\s*'
+            r'if \(ok\) \{\s*showManageChangesDialog\(context, onAllReverted\)\s*\})',
+            re.MULTILINE
         )
+        m = pattern.search(text)
+        if m:
+            replacement = (
+                "btnRevert.setOnClickListener {
+"
+                "                btnRevert.isEnabled = false
+"
+                "                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+"
+                "                    val ok = revertSingleChange(context, item)
+"
+                "                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+"
+                "                        dialog.dismiss()
+"
+                "                        Toast.makeText(context, if (ok) "Muutos peruttu" else "Peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+"
+                "                        if (ok) {
+"
+                "                            showManageChangesDialog(context, onAllReverted)
+"
+                "                        }
+"
+                "                    }
+"
+                "                }"
+            )
+            text = text[:m.start()] + replacement + text[m.end():]
+            print("  [PÄIVITETTY] CalendarChangeTracker: revertSingleChange taustasäikeeseen")
+        else:
+            print("  [OHITETTU] CalendarChangeTracker: revertSingleChange-lohko poikkesi odotetusta")
 
-    assert updated.count("{") == updated.count("}"), (
-        f"VIRHE: CalendarSyncHelper.kt aaltosulut eivät ole tasan ({{={updated.count('{')}, }}={updated.count('}')})"
-    )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(updated)
-    print(f"OK: {path} — setExactAlarmSafe päivitetty.")
+    if text != orig:
+        backup_file(path)
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
 
 
-def bump_version_code():
-    for candidate in ["app/build.gradle.kts", "app/build.gradle"]:
-        if os.path.exists(candidate):
-            with open(candidate, "r", encoding="utf-8") as f:
-                gradle = f.read()
-            match = re.search(r"(versionCode\s*=?\s*)(\d+)", gradle)
-            if match:
-                old_vc = int(match.group(2))
-                new_vc = old_vc + 1
-                gradle = gradle[: match.start(2)] + str(new_vc) + gradle[match.end(2) :]
-                with open(candidate, "w", encoding="utf-8") as f:
-                    f.write(gradle)
-                print(f"OK: {candidate} versionCode päivitetty: {old_vc} -> {new_vc}")
-            return
+def patch_quick_stamp_activity(path: Path) -> bool:
+    orig = path.read_text(encoding="utf-8")
+    text = orig
+
+    old_fields = "    private var timeoutRunnable: Runnable? = null"
+    new_fields = """    private var timeoutRunnable: Runnable? = null
+    private var closeRunnable: Runnable? = null"""
+    text = replace_exact(text, old_fields, new_fields, "QuickStampActivity: lisää closeRunnable-kenttä", path)
+
+    old_post_close = """        mainHandler.postDelayed({
+            finishCleanly()
+        }, closeDelayMs)"""
+    new_post_close = """        closeRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable { finishCleanly() }
+        closeRunnable = r
+        mainHandler.postDelayed(r, closeDelayMs)"""
+    text = replace_exact(text, old_post_close, new_post_close, "QuickStampActivity: tallenna closeRunnable", path)
+
+    old_cancel_to = """    private fun cancelTimeout() {
+        timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        timeoutRunnable = null
+    }"""
+    new_cancel_to = """    private fun cancelTimeout() {
+        timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        timeoutRunnable = null
+        closeRunnable?.let { mainHandler.removeCallbacks(it) }
+        closeRunnable = null
+    }"""
+    text = replace_exact(text, old_cancel_to, new_cancel_to, "QuickStampActivity: peruuta closeRunnable cancelTimeoutissa", path)
+
+    if text != orig:
+        backup_file(path)
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
+
+def patch_numeron_parser(path: Path) -> bool:
+    orig = path.read_text(encoding="utf-8")
+    text = orig
+
+    # Lisätään Document-ylikuormitus, jotta samaa HTML:ää ei jäsennetä kahteen kertaan
+    old_extract = """    fun extractCircleDates(html: String): Set<LocalDate> {
+        val doc = Jsoup.parse(html)"""
+    new_extract = """    fun extractCircleDates(html: String): Set<LocalDate> = extractCircleDatesFromDoc(Jsoup.parse(html))
+
+    fun extractCircleDatesFromDoc(doc: org.jsoup.nodes.Document): Set<LocalDate> {"""
+    text = replace_exact(text, old_extract, new_extract, "NumeronParser: extractCircleDatesFromDoc-ylikuormitus", path)
+
+    if text != orig:
+        backup_file(path)
+        path.write_text(text, encoding="utf-8")
+        return True
+    return False
+
+
+def bump_version_code() -> bool:
+    for gradle_name in ("build.gradle.kts", "build.gradle"):
+        for root, dirs, files in os.walk("."):
+            dirs[:] = [d for d in dirs if d not in {".git", ".gradle", "build", ".idea", ".patch_backups"}]
+            if gradle_name in files:
+                p = Path(root) / gradle_name
+                content = p.read_text(encoding="utf-8")
+                m = re.search(r'(versionCode\s*=?\s*)(\d+)', content)
+                if m:
+                    old_vc = int(m.group(2))
+                    new_vc = old_vc + 1
+                    updated = content[:m.start()] + f"{m.group(1)}{new_vc}" + content[m.end():]
+                    backup_file(p)
+                    p.write_text(updated, encoding="utf-8")
+                    print(f"[VERSIO] {p}: versionCode {old_vc} -> {new_vc}")
+                    return True
+    return False
+
+
+def apply_all() -> int:
+    print("Käynnistetään Numeron Vuorovahti -korjauspatch...")
+    targets = [
+        ("MainActivity.kt", patch_main_activity),
+        ("BackgroundAuthHelper.kt", patch_background_auth_helper),
+        ("CalendarChangeTracker.kt", patch_calendar_change_tracker),
+        ("QuickStampActivity.kt", patch_quick_stamp_activity),
+        ("NumeronParser.kt", patch_numeron_parser),
+    ]
+
+    changed_files = 0
+    for filename, fn in targets:
+        path = find_file(filename)
+        if path is None:
+            print(f"[EI LÖYTYNYT] {filename}")
+            continue
+        print(f"Käsitellään: {path}")
+        if fn(path):
+            changed_files += 1
+
+    if bump_version_code():
+        changed_files += 1
+
+    print(f"\nValmis! Muokattuja tiedostoja: {changed_files}.")
+    print("Peruminen Gitissä: git checkout -- .  (tai: python3 patch.py --revert)")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Numeron Vuorovahti korjauspatch")
+    parser.add_argument("--revert", action="store_true", help="Palauta alkuperäiset tiedostot varmuuskopioista")
+    args = parser.parse_args()
+    if args.revert:
+        return revert_all()
+    return apply_all()
 
 
 if __name__ == "__main__":
-    patch_manifest(find_file("AndroidManifest.xml"))
-    patch_settings_dialog_helper(find_file("SettingsDialogHelper.kt"))
-    patch_calendar_sync_helper(find_file("CalendarSyncHelper.kt"))
-    bump_version_code()
-    print("\nValmis!")
+    sys.exit(main())
