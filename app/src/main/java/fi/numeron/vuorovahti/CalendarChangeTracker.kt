@@ -611,13 +611,20 @@ object CalendarChangeTracker {
                 }
 
                 btnRevert.setOnClickListener {
-                    if (revertSingleChangeAndSave(context, item)) {
-                        Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                        dialogRef?.dismiss()
-                        onChanged?.invoke()
-                        showManageChangesDialog(context, onChanged)
-                    } else {
-                        Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                    btnRevert.isEnabled = false
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        val ok = revertSingleChangeAndSave(context, item)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            if (ok) {
+                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                                dialogRef?.dismiss()
+                                onChanged?.invoke()
+                                showManageChangesDialog(context, onChanged)
+                            } else {
+                                btnRevert.isEnabled = true
+                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             }

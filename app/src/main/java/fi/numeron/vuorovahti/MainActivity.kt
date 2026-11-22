@@ -352,6 +352,7 @@ class MainActivity : AppCompatActivity() {
             }
             startSnapshotTransition {
                 if (token != navigationToken) return@startSnapshotTransition
+                navigateJob?.cancel()
                 val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
@@ -2260,8 +2261,10 @@ class MainActivity : AppCompatActivity() {
                     runCalendarCleanup();
                     if (!window._calendarCleanupObserver && document.body && typeof MutationObserver !== 'undefined') {
                         window._calendarCleanupObserver = true;
+                        var calCleanupTimer = null;
                         var calObs = new MutationObserver(function() {
-                            runCalendarCleanup();
+                            if (calCleanupTimer) clearTimeout(calCleanupTimer);
+                            calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
                         });
                         calObs.observe(document.body, { childList: true, subtree: true });
                     }
@@ -2316,7 +2319,7 @@ class MainActivity : AppCompatActivity() {
         view?.evaluateJavascript(js, null)
     }
 
-            private fun handleAutoLogin() {
+            private fun handleAutoLogin(attempt: Int = 0) {
         val rawUser = SecureCredentialManager.getUsername(this) ?: ""
         val rawPass = SecureCredentialManager.getPassword(this) ?: ""
         if (rawUser.isEmpty() || rawPass.isEmpty()) return
@@ -2347,7 +2350,7 @@ class MainActivity : AppCompatActivity() {
 
         webView.evaluateJavascript(js) { res ->
             if (res?.contains("WAITING") == true) {
-                webView.postDelayed({ handleAutoLogin() }, 300L)
+                if (attempt < 15) { webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L) }
             }
         }
     }

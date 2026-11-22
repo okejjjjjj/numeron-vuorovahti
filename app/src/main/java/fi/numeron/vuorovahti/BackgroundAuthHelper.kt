@@ -277,7 +277,7 @@ object BackgroundAuthHelper {
             return map
         }
 
-        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) {
+        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) = synchronized(cookieSyncLock) {
             if (updated == original) return
             val cm = CookieManager.getInstance()
             val secureAttr = if (baseUrl.startsWith("https://", ignoreCase = true)) "; Secure" else ""
