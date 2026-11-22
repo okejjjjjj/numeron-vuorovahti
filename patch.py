@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
 """
-Numeron Vuorovahti – Koottu korjaus- ja optimointipatch.
-
-Suunniteltu siten, että kaikki muutokset ovat atomisia, idempotentteja ja
-helposti peruttavissa Gitissä (yksi selkeä commit tai `python3 patch.py --revert`
-varmuuskopioista / git checkoutilla).
-
-Korjaukset ja optimoinnit:
-1. MainActivity.kt:
-   - navigateToTab: korutiinin ja snapshot-siirtymän synkronointi (estää päällekkäiset välilehtilataukset)
-   - handleAutoLogin: yritysraja (max 15 yritystä) ikuisen silmukan estämiseksi
-   - setupCalendarCleanup: 80 ms debounce MutationObserverille DOM-kuorman pienentämiseksi
-   - build.gradle(.kts): pieni versionCode-korotus (+1) jos tiedosto löytyy
-2. BackgroundAuthHelper.kt:
-   - persistUpdatedCookies: synkronointi olemassa olevalla cookieSyncLock-lukolla
-3. CalendarChangeTracker.kt:
-   - revertSingleChange: I/O-operaatio taustasäikeeseen (Dispatchers.IO)
-4. QuickStampActivity.kt:
-   - closeRunnable-viitteen tallennus ja peruutus onNewIntent / finishCleanly -vaiheissa
-5. NumeronParser.kt:
-   - Jsoup.parse-kutsun välttäminen kahteen kertaan (extractCircleDates hyödyntää valmista Documentia)
+Numeron Vuorovahti - Koottu korjaus- ja optimointipatch.
+Helposti peruttavissa Gitissä: git revert HEAD, git checkout -- . tai python3 patch.py --revert
 """
 
 import argparse
@@ -30,11 +12,12 @@ import sys
 from pathlib import Path
 
 BACKUP_DIR = Path(".patch_backups")
+IGNORED_DIRS = {".git", ".gradle", "build", ".idea", ".patch_backups"}
 
 
 def find_file(filename: str) -> Path | None:
     for root, dirs, files in os.walk("."):
-        dirs[:] = [d for d in dirs if d not in {".git", ".gradle", "build", ".idea", ".patch_backups"}]
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
         if filename in files:
             return Path(root) / filename
     return None
@@ -45,6 +28,16 @@ def backup_file(path: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists():
         shutil.copy2(path, dest)
+
+
+def ensure_gitignore_entry(entry: str) -> None:
+    gitignore = Path(".gitignore")
+    if gitignore.exists():
+        content = gitignore.read_text(encoding="utf-8")
+        lines = [line.strip() for line in content.splitlines()]
+        if entry not in lines:
+            suffix = "" if content.endswith("\n") or content == "" else "\n"
+            gitignore.write_text(content + suffix + entry + "\n", encoding="utf-8")
 
 
 def revert_all() -> int:
@@ -79,37 +72,32 @@ def patch_main_activity(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # 1a. Lisää attempt-parametri ja korjaa handleAutoLogin yritysrajalla
-    old_login_sig = "private fun handleAutoLogin(view: WebView?) {"
-    new_login_sig = "private fun handleAutoLogin(view: WebView?, attempt: Int = 0) {"
+    old_login_sig = "private fun handleAutoLogin() {"
+    new_login_sig = "private fun handleAutoLogin(attempt: Int = 0) {"
     text = replace_exact(text, old_login_sig, new_login_sig, "MainActivity: handleAutoLogin yritysparametri", path)
 
-    old_login_retry = "mainHandler.postDelayed({ handleAutoLogin(view) }, 300L)"
-    new_login_retry = "if (attempt < 15) { mainHandler.postDelayed({ handleAutoLogin(view, attempt + 1) }, 300L) }"
+    old_login_retry = "webView.postDelayed({ handleAutoLogin() }, 300L)"
+    new_login_retry = "if (attempt < 15) { webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L) }"
     text = replace_exact(text, old_login_retry, new_login_retry, "MainActivity: handleAutoLogin max 15 yritystä", path)
 
-    # 1b. Debounce setupCalendarCleanup MutationObserveriin
-    old_cal_obs = """                const obs = new MutationObserver(() => {
-                    runCalendarCleanup();
-                });"""
-    new_cal_obs = """                let cleanupTimer = null;
-                const obs = new MutationObserver(() => {
-                    if (cleanupTimer) clearTimeout(cleanupTimer);
-                    cleanupTimer = setTimeout(() => { runCalendarCleanup(); }, 80);
-                });"""
+    old_cal_obs = """                        var calObs = new MutationObserver(function() {
+                            runCalendarCleanup();
+                        });"""
+    new_cal_obs = """                        var calCleanupTimer = null;
+                        var calObs = new MutationObserver(function() {
+                            if (calCleanupTimer) clearTimeout(calCleanupTimer);
+                            calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
+                        });"""
     text = replace_exact(text, old_cal_obs, new_cal_obs, "MainActivity: setupCalendarCleanup 80ms debounce", path)
 
-    # 1c. Varmista navigateToTab-korutiinin peruutus heti kutsun alussa
-    old_nav = """        navigateJob?.cancel()
-        startSnapshotTransition {
-            navigateJob = scope.launch {"""
-    new_nav = """        navigateJob?.cancel()
-        val currentNavToken = ++navigationToken
-        startSnapshotTransition {
-            if (currentNavToken != navigationToken) return@startSnapshotTransition
-            navigateJob?.cancel()
-            navigateJob = scope.launch {"""
-    text = replace_exact(text, old_nav, new_nav, "MainActivity: navigateToTab kilpa-ajon esto", path)
+    old_nav = """            startSnapshotTransition {
+                if (token != navigationToken) return@startSnapshotTransition
+                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)"""
+    new_nav = """            startSnapshotTransition {
+                if (token != navigationToken) return@startSnapshotTransition
+                navigateJob?.cancel()
+                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)"""
+    text = replace_exact(text, old_nav, new_nav, "MainActivity: navigateToTab varmista vanhan jobin peruutus", path)
 
     if text != orig:
         backup_file(path)
@@ -122,10 +110,12 @@ def patch_background_auth_helper(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    old_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) {
-        val cm = CookieManager.getInstance()"""
-    new_cookie_fn = """    private fun persistUpdatedCookies(url: String, conn: HttpURLConnection) = synchronized(cookieSyncLock) {
-        val cm = CookieManager.getInstance()"""
+    old_cookie_fn = """        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) {
+            if (updated == original) return
+            val cm = CookieManager.getInstance()"""
+    new_cookie_fn = """        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) = synchronized(cookieSyncLock) {
+            if (updated == original) return
+            val cm = CookieManager.getInstance()"""
     text = replace_exact(text, old_cookie_fn, new_cookie_fn, "BackgroundAuthHelper: synkronoi persistUpdatedCookies", path)
 
     if text != orig:
@@ -139,35 +129,36 @@ def patch_calendar_change_tracker(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    if "btnRevert.setOnClickListener" in text and "btnRevert.isEnabled = false" not in text:
-        pattern = re.compile(
-            r'(btnRevert\.setOnClickListener\s*\{\s*)'
-            r'(val ok = revertSingleChange\(context, item\)\s*'
-            r'dialog\.dismiss\(\)\s*'
-            r'Toast\.makeText\([^\n]+\)\.show\(\)\s*'
-            r'if \(ok\) \{\s*showManageChangesDialog\(context, onAllReverted\)\s*\})',
-            re.MULTILINE
-        )
-        m = pattern.search(text)
-        if m:
-            replacement = (
-                "btnRevert.setOnClickListener {\n"
-                "                btnRevert.isEnabled = false\n"
-                "                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {\n"
-                "                    val ok = revertSingleChange(context, item)\n"
-                "                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {\n"
-                "                        dialog.dismiss()\n"
-                '                        Toast.makeText(context, if (ok) "Muutos peruttu" else "Peruminen epäonnistui", Toast.LENGTH_SHORT).show()\n'
-                "                        if (ok) {\n"
-                "                            showManageChangesDialog(context, onAllReverted)\n"
-                "                        }\n"
-                "                    }\n"
-                "                }"
-            )
-            text = text[:m.start()] + replacement + text[m.end():]
-            print("  [PÄIVITETTY] CalendarChangeTracker: revertSingleChange taustasäikeeseen")
-        else:
-            print("  [OHITETTU] CalendarChangeTracker: revertSingleChange-lohko poikkesi odotetusta")
+    old_revert_block = """                btnRevert.setOnClickListener {
+                    if (revertSingleChangeAndSave(context, item)) {
+                        Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                        dialogRef?.dismiss()
+                        onChanged?.invoke()
+                        showManageChangesDialog(context, onChanged)
+                    } else {
+                        Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                    }
+                }"""
+
+    new_revert_block = """                btnRevert.setOnClickListener {
+                    btnRevert.isEnabled = false
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                        val ok = revertSingleChangeAndSave(context, item)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            if (ok) {
+                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                                dialogRef?.dismiss()
+                                onChanged?.invoke()
+                                showManageChangesDialog(context, onChanged)
+                            } else {
+                                btnRevert.isEnabled = true
+                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }"""
+
+    text = replace_exact(text, old_revert_block, new_revert_block, "CalendarChangeTracker: revertSingleChangeAndSave taustasäikeeseen", path)
 
     if text != orig:
         backup_file(path)
@@ -234,7 +225,7 @@ def patch_numeron_parser(path: Path) -> bool:
 def bump_version_code() -> bool:
     for gradle_name in ("build.gradle.kts", "build.gradle"):
         for root, dirs, files in os.walk("."):
-            dirs[:] = [d for d in dirs if d not in {".git", ".gradle", "build", ".idea", ".patch_backups"}]
+            dirs[:] = [d for d in dirs if d not in IGNORED_DIRS]
             if gradle_name in files:
                 p = Path(root) / gradle_name
                 content = p.read_text(encoding="utf-8")
@@ -252,6 +243,8 @@ def bump_version_code() -> bool:
 
 def apply_all() -> int:
     print("Käynnistetään Numeron Vuorovahti -korjauspatch...")
+    ensure_gitignore_entry(".patch_backups/")
+
     targets = [
         ("MainActivity.kt", patch_main_activity),
         ("BackgroundAuthHelper.kt", patch_background_auth_helper),
@@ -274,7 +267,7 @@ def apply_all() -> int:
         changed_files += 1
 
     print(f"\nValmis! Muokattuja tiedostoja: {changed_files}.")
-    print("Peruminen Gitissä: git checkout -- .  (tai: python3 patch.py --revert)")
+    print("Peruminen Gitissä: git revert HEAD  (tai: git checkout -- . / python3 patch.py --revert)")
     return 0
 
 
