@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-IGNORED_DIRS = {".git", ".gradle", ".idea", "build", "node_modules", "__pycache__"}
+IGNORED_DIRS = {".git", ".gradle", ".patch_backups", ".idea", "build", "node_modules", "__pycache__"}
 
 
 def find_file(root: Path, filename: str, must_contain: str | None = None) -> Path:
