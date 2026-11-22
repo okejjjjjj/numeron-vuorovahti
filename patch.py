@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-IGNORED_DIRS = {".git", ".gradle", ".idea", "build", "node_modules", "__pycache__"}
+IGNORED_DIRS = {".git", ".patch_backups", ".gradle", ".idea", "build", "node_modules", "__pycache__"}
 
 DATA_EXTRACTION_RULES_XML = '''<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
