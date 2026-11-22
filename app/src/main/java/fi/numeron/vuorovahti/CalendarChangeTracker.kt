@@ -288,6 +288,16 @@ object CalendarChangeTracker {
         return "$tag ${item.title}\n$whenStr"
     }
 
+    private fun invalidateShiftCacheAndReschedule(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove("cached_work_shifts_json")
+            .apply()
+        CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
+            CalendarSyncHelper.scheduleShiftReminders(context, calId)
+        }
+    }
+
     fun revertSingleChange(context: Context, item: CalendarChangeItem): Boolean {
         return try {
             val resolver = context.contentResolver
@@ -309,13 +319,15 @@ object CalendarChangeTracker {
                             item.startMs.toString(),
                             item.endMs.toString()
                         )
-                        resolver.delete(CalendarContract.Events.CONTENT_URI, sel, args)
+                        removedFromCal = resolver.delete(CalendarContract.Events.CONTENT_URI, sel, args) > 0
                     }
+                    removedFromCal
                 }
                 ChangeType.MODIFIED -> {
                     val prevTitle = item.prevTitle
                     val prevStart = item.prevStartMs
                     val prevEnd = item.prevEndMs
+                    var restored = false
                     if (!prevTitle.isNullOrEmpty() && prevStart != null && prevEnd != null && prevStart > 0L && prevEnd > 0L) {
                         val values = ContentValues().apply {
                             put(CalendarContract.Events.TITLE, prevTitle)
@@ -333,7 +345,6 @@ object CalendarChangeTracker {
                                 if (item.prevIsAllDay) "UTC" else ZoneId.systemDefault().id
                             )
                         }
-                        var restored = false
                         val eid = item.eventId
                         if (eid != null && eid > 0L) {
                             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eid)
@@ -348,9 +359,10 @@ object CalendarChangeTracker {
                                 item.title,
                                 item.startMs.toString()
                             )
-                            resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args)
+                            restored = resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args) > 0
                         }
                     }
+                    restored
                 }
                 ChangeType.REMOVED -> {
                     val targetCalId = if (item.calendarId > 0L) {
@@ -372,11 +384,12 @@ object CalendarChangeTracker {
                                 if (item.isAllDay) "UTC" else ZoneId.systemDefault().id
                             )
                         }
-                        resolver.insert(CalendarContract.Events.CONTENT_URI, values)
+                        resolver.insert(CalendarContract.Events.CONTENT_URI, values) != null
+                    } else {
+                        false
                     }
                 }
             }
-            true
         } catch (_: Exception) {
             false
         }
@@ -386,9 +399,7 @@ object CalendarChangeTracker {
         if (!revertSingleChange(context, item)) return false
         val remaining = getLastChanges(context).filterNot { it.id == item.id }
         saveChanges(context, remaining)
-        CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
-            CalendarSyncHelper.scheduleShiftReminders(context, calId)
-        }
+        invalidateShiftCacheAndReschedule(context)
         return true
     }
 
@@ -403,9 +414,7 @@ object CalendarChangeTracker {
         if (succeededIds.isNotEmpty()) {
             val remaining = current.filterNot { it.id in succeededIds }
             saveChanges(context, remaining)
-            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
-                CalendarSyncHelper.scheduleShiftReminders(context, calId)
-            }
+            invalidateShiftCacheAndReschedule(context)
         }
         return succeededIds.size
     }
@@ -418,6 +427,7 @@ object CalendarChangeTracker {
         newEndMs: Long,
         newIsAllDay: Boolean
     ): Boolean {
+        if (item.type == ChangeType.REMOVED) return false
         return try {
             val resolver = context.contentResolver
             val values = ContentValues().apply {
@@ -446,8 +456,9 @@ object CalendarChangeTracker {
                     item.startMs.toString(),
                     item.endMs.toString()
                 )
-                resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args)
+                updatedInCal = resolver.update(CalendarContract.Events.CONTENT_URI, values, sel, args) > 0
             }
+            if (!updatedInCal) return false
             val updatedItem = item.copy(
                 title = newTitle,
                 startMs = newStartMs,
@@ -456,9 +467,7 @@ object CalendarChangeTracker {
             )
             val updatedList = getLastChanges(context).map { if (it.id == item.id) updatedItem else it }
             saveChanges(context, updatedList)
-            CalendarSyncHelper.getTargetCalendarId(context)?.let { calId ->
-                CalendarSyncHelper.scheduleShiftReminders(context, calId)
-            }
+            invalidateShiftCacheAndReschedule(context)
             true
         } catch (_: Exception) {
             false
@@ -606,7 +615,9 @@ object CalendarChangeTracker {
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
 
-                btnRow.addView(btnEdit)
+                if (item.type != ChangeType.REMOVED) {
+                    btnRow.addView(btnEdit)
+                }
                 btnRow.addView(btnRevert)
                 card.addView(btnRow)
                 rootLayout.addView(card)
@@ -621,8 +632,13 @@ object CalendarChangeTracker {
                 btnRevert.setOnClickListener {
                     btnRevert.isEnabled = false
                     val appCtx = context.applicationContext
-                    java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-                        val ok = revertSingleChangeAndSave(appCtx, item)
+                    val exec = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    exec.execute {
+                        val ok = try {
+                            revertSingleChangeAndSave(appCtx, item)
+                        } finally {
+                            exec.shutdown()
+                        }
                         android.os.Handler(android.os.Looper.getMainLooper()).post {
                             val act = context as? android.app.Activity
                             if (act != null && (act.isFinishing || act.isDestroyed)) return@post
@@ -670,10 +686,25 @@ object CalendarChangeTracker {
                     marginEnd = dp(10)
                 }
                 setOnClickListener {
-                    val reverted = revertAllChanges(context)
-                    Toast.makeText(context, "Peruttu $reverted kalenterimuutosta", Toast.LENGTH_LONG).show()
-                    dialogRef?.dismiss()
-                    onChanged?.invoke()
+                    isEnabled = false
+                    val appCtx = context.applicationContext
+                    val exec = java.util.concurrent.Executors.newSingleThreadExecutor()
+                    exec.execute {
+                        val reverted = try {
+                            revertAllChanges(appCtx)
+                        } finally {
+                            exec.shutdown()
+                        }
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            val act = context as? android.app.Activity
+                            if (act != null && (act.isFinishing || act.isDestroyed)) return@post
+                            Toast.makeText(appCtx, "Peruttu $reverted kalenterimuutosta", Toast.LENGTH_LONG).show()
+                            if (dialogRef?.isShowing == true) {
+                                dialogRef?.dismiss()
+                            }
+                            onChanged?.invoke()
+                        }
+                    }
                 }
             }
             footerBar.addView(btnRevertAll)
@@ -692,6 +723,7 @@ object CalendarChangeTracker {
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply { marginEnd = dp(8) }
             setOnClickListener {
+                clearChanges(context)
                 dialogRef?.dismiss()
                 onChanged?.invoke()
             }

@@ -26,7 +26,12 @@ object NumeronParser {
     private val finnishMonths = mapOf(
         "tammikuu" to 1, "helmikuu" to 2, "maaliskuu" to 3, "huhtikuu" to 4,
         "toukokuu" to 5, "kesäkuu" to 6, "heinäkuu" to 7, "elokuu" to 8,
-        "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12
+        "syyskuu" to 9, "lokakuu" to 10, "marraskuu" to 11, "joulukuu" to 12,
+        "january" to 1, "february" to 2, "march" to 3, "april" to 4,
+        "may" to 5, "june" to 6, "july" to 7, "august" to 8,
+        "september" to 9, "october" to 10, "november" to 11, "december" to 12,
+        "januari" to 1, "februari" to 2, "mars" to 3, "maj" to 5,
+        "juni" to 6, "juli" to 7, "augusti" to 8, "oktober" to 10
     )
 
     private data class ParsedShiftText(
@@ -421,7 +426,8 @@ object NumeronParser {
 
     fun mergeConsecutiveLeaves(rawShifts: List<WorkShift>): List<WorkShift> {
         val workShifts = rawShifts.filter { !it.isAllDayLeave }.toMutableList()
-        val leaves = rawShifts.filter { it.isAllDayLeave }.sortedBy { it.start }
+        val leaves = rawShifts.filter { it.isAllDayLeave }
+            .sortedWith(compareBy<WorkShift> { it.title }.thenBy { it.start })
 
         if (leaves.isEmpty()) return workShifts
 

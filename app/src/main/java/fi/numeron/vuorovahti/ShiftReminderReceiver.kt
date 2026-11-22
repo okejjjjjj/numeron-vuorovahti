@@ -88,7 +88,9 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             val pendingResult = goAsync()
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    BackgroundAuthHelper.ensureAuthenticatedSession(appCtx)
+                    kotlinx.coroutines.withTimeoutOrNull(7_000L) {
+                        BackgroundAuthHelper.ensureAuthenticatedSession(appCtx)
+                    }
                 } finally {
                     pendingResult.finish()
                 }
@@ -117,7 +119,11 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         }
 
         val en = DemoModeHelper.isEnglish(context)
-        val notifId = if (isEnding) 2002 else 1001
+        val notifId = when {
+            isTest -> 2999
+            isEnding -> 2002
+            else -> 1001
+        }
         val fullButtonLabel = if (isTest) {
             if (en) "TEST (NO STAMP)" else "TESTI (EI LEIMAA)"
         } else if (en) {
@@ -311,7 +317,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             return nowMs + TimeUnit.HOURS.toMillis(12)
         }
 
-        fun ensureBackgroundSyncScheduled(context: Context) {
+        fun ensureBackgroundSyncScheduled(context: Context, forceReplace: Boolean = false) {
             val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             val syncCalendar = prefs.getBoolean("sync_calendar_enabled", true)
             val shiftReminders = prefs.getBoolean("shift_reminders_enabled", true)
@@ -336,15 +342,23 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 .setConstraints(constraints)
                 .build()
 
+            val policy = if (forceReplace) {
+                androidx.work.ExistingWorkPolicy.REPLACE
+            } else {
+                androidx.work.ExistingWorkPolicy.KEEP
+            }
+
             WorkManager.getInstance(context).enqueueUniqueWork(
                 "NumeronVuorovahtiSync",
-                androidx.work.ExistingWorkPolicy.REPLACE,
+                policy,
                 syncRequest
             )
 
-            prefs.edit()
-                .putLong("next_calendar_sync_ms", nextTargetMs)
-                .apply()
+            if (forceReplace || prefs.getLong("next_calendar_sync_ms", 0L) <= nowMs) {
+                prefs.edit()
+                    .putLong("next_calendar_sync_ms", nextTargetMs)
+                    .apply()
+            }
         }
 
         fun triggerImmediateSync(context: Context) {
@@ -482,18 +496,24 @@ class BackgroundSyncWorker(
             prefs.edit()
                 .putLong("last_valid_session_ms", System.currentTimeMillis())
                 .apply()
-            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext)
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext, forceReplace = true)
             Result.success()
         } else {
-            Result.retry()
+            if (runAttemptCount >= 3) {
+                ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext, forceReplace = true)
+                Result.failure()
+            } else {
+                Result.retry()
+            }
         }
     }
 
     private fun fetchRequestsJson(baseUrl: String): String? {
+        var conn: java.net.HttpURLConnection? = null
         return try {
             val cookies = CookieManager.getInstance().getCookie(baseUrl)
             if (cookies.isNullOrBlank()) return null
-            val conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
+            conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
                 requestMethod = "POST"
                 setRequestProperty("Cookie", cookies)
                 setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
@@ -511,16 +531,18 @@ class BackgroundSyncWorker(
             } else {
                 null
             }
-            conn.disconnect()
             if (text != null && text.trim().startsWith("{")) text else null
         } catch (_: Exception) {
             null
+        } finally {
+            conn?.disconnect()
         }
     }
 
     private fun checkRequestUpdates(jsonStr: String) {
         try {
             val prefs = appContext.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false)
             val notifiedIds = prefs.getStringSet("notified_request_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
             var changed = false
 
@@ -539,17 +561,22 @@ class BackgroundSyncWorker(
                     if (!notifiedIds.contains(key)) {
                         notifiedIds.add(key)
                         changed = true
-                        ShiftReminderReceiver.showRequestDecisionNotification(
-                            appContext,
-                            if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
-                            typeName,
-                            id
-                        )
+                        if (baselineInitialized) {
+                            ShiftReminderReceiver.showRequestDecisionNotification(
+                                appContext,
+                                if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
+                                typeName,
+                                id
+                            )
+                        }
                     }
                 }
             }
-            if (changed) {
-                prefs.edit().putStringSet("notified_request_ids", notifiedIds).apply()
+            if (changed || !baselineInitialized) {
+                prefs.edit()
+                    .putStringSet("notified_request_ids", notifiedIds)
+                    .putBoolean("requests_baseline_initialized", true)
+                    .apply()
             }
         } catch (_: Exception) {
         }

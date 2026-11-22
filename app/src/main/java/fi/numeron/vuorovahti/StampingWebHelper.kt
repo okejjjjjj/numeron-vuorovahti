@@ -8,25 +8,49 @@ import org.json.JSONTokener
  */
 object StampingWebHelper {
 
-    fun buildClickStampJs(targetLower: String): String = """
+    fun buildClickStampJs(wantIn: Boolean): String {
+        val expectedDir = if (wantIn) "IN" else "OUT"
+        val wordPattern = if (wantIn) {
+            "(?:^|[^a-zäöå])(sisään|in)(?:$|[^a-zäöå])"
+        } else {
+            "(?:^|[^a-zäöå])(ulos|out)(?:$|[^a-zäöå])"
+        }
+        return """
         (function() {
             var btn = document.getElementById('punchButton');
             if (!btn) return JSON.stringify({ status: 'NO_BUTTON' });
             var btnText = (btn.innerText || btn.textContent || '').trim();
             if (!btnText) return JSON.stringify({ status: 'NO_BUTTON' });
+
+            var dirEl = document.querySelector('[data-next-stamp-direction]');
+            var nextDir = dirEl ? (dirEl.getAttribute('data-next-stamp-direction') || '').trim().toUpperCase() : '';
+
             var firstRow = '';
+            var firstRowId = '';
             var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
             if (rowEl) {
                 firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim();
+                var idInput = rowEl.querySelector('input[name^="RowID_"]');
+                if (idInput && idInput.value) firstRowId = String(idInput.value).trim();
             }
-            if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
-                btn.click();
-                return JSON.stringify({ status: 'CLICKED', btn: btnText, row: firstRow });
+
+            var matchesDir = false;
+            if (nextDir === 'IN' || nextDir === 'OUT') {
+                matchesDir = (nextDir === '$expectedDir');
             } else {
-                return JSON.stringify({ status: 'WRONG_DIRECTION', btn: btnText, row: firstRow });
+                var rx = new RegExp('$wordPattern', 'i');
+                matchesDir = rx.test(btnText);
+            }
+
+            if (matchesDir) {
+                btn.click();
+                return JSON.stringify({ status: 'CLICKED', dir: nextDir, btn: btnText, row: firstRow, rowId: firstRowId });
+            } else {
+                return JSON.stringify({ status: 'WRONG_DIRECTION', dir: nextDir, btn: btnText, row: firstRow, rowId: firstRowId });
             }
         })();
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     fun buildVerifyStampJs(): String = """
         (function() {
@@ -47,11 +71,19 @@ object StampingWebHelper {
             if (window.location.pathname.toLowerCase().indexOf('/login') !== -1) {
                 expired = true;
             }
+            var dirEl = document.querySelector('[data-next-stamp-direction]');
+            var nextDir = dirEl ? (dirEl.getAttribute('data-next-stamp-direction') || '').trim().toUpperCase() : '';
             var btn = document.getElementById('punchButton');
             var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
+            var firstRow = '';
+            var firstRowId = '';
             var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
-            var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-            return JSON.stringify({ btn: btnText, row: firstRow, expired: expired });
+            if (rowEl) {
+                firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim();
+                var idInput = rowEl.querySelector('input[name^="RowID_"]');
+                if (idInput && idInput.value) firstRowId = String(idInput.value).trim();
+            }
+            return JSON.stringify({ dir: nextDir, btn: btnText, row: firstRow, rowId: firstRowId, expired: expired });
         })();
     """.trimIndent()
 
@@ -69,15 +101,27 @@ object StampingWebHelper {
     }
 
     fun isStampConfirmed(
-        targetLower: String,
+        wantIn: Boolean,
+        beforeDir: String,
         beforeBtn: String,
         beforeRow: String,
+        beforeRowId: String,
+        nowDir: String,
         nowBtn: String,
-        nowRow: String
+        nowRow: String,
+        nowRowId: String
     ): Boolean {
-        val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
-            nowBtn.lowercase().indexOf(targetLower) == -1
+        val oppositeDir = if (wantIn) "OUT" else "IN"
+        val dirFlipped = nowDir.equals(oppositeDir, ignoreCase = true) &&
+            !nowDir.equals(beforeDir, ignoreCase = true)
+        val rowIdChanged = nowRowId.isNotEmpty() && nowRowId != beforeRowId
+        val targetRegex = if (wantIn) {
+            Regex("(?:^|[^a-zäöå])(sisään|in)(?:$|[^a-zäöå])", RegexOption.IGNORE_CASE)
+        } else {
+            Regex("(?:^|[^a-zäöå])(ulos|out)(?:$|[^a-zäöå])", RegexOption.IGNORE_CASE)
+        }
+        val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn && !targetRegex.containsMatchIn(nowBtn)
         val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
-        return buttonFlipped || rowUpdated
+        return dirFlipped || rowIdChanged || buttonFlipped || rowUpdated
     }
 }

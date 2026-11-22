@@ -190,7 +190,9 @@ object CalendarSyncHelper {
             return false
         }
         if (lower == desiredTitle.lowercase() || lower.startsWith("työvuoro")) return true
-        return KNOWN_SHIFT_OR_LEAVE_KEYWORDS.any { kw -> lower.contains(kw) }
+        return KNOWN_SHIFT_OR_LEAVE_KEYWORDS.any { kw ->
+            lower == kw || lower.startsWith("$kw ") || lower.startsWith("$kw(") || lower.startsWith("$kw-")
+        }
     }
 
     fun syncShiftsToCalendar(context: Context, calendarId: Long, shifts: List<WorkShift>): List<CalendarChangeItem> {
@@ -205,7 +207,11 @@ object CalendarSyncHelper {
         val colorKeys = resolveGoogleShiftColorKeys(context, calendarId)
         val userTag = getUserTag(context)
 
-        val upcomingShifts = shifts.filter { it.end.isAfter(now) }
+        // Jo alkaneita työvuoroja ei ylikirjoiteta toteutuneilla leimausajoilla;
+        // koko päivän lomat huomioidaan päättymishetkeen saakka.
+        val upcomingShifts = shifts.filter { shift ->
+            if (shift.isAllDayLeave) shift.end.isAfter(now) else shift.start.isAfter(now)
+        }
 
         val ownedEvents = mutableListOf<ExistingEvent>()
         val unownedCandidateEvents = mutableListOf<ExistingEvent>()

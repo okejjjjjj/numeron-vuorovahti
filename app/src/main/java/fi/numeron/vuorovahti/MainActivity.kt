@@ -466,6 +466,7 @@ class MainActivity : AppCompatActivity() {
                 CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
 
                 withContext(Dispatchers.Main) {
+                    if (isFinishing || isDestroyed) return@withContext
                     val en = DemoModeHelper.isEnglish(this@MainActivity)
                     if (syncCalendar && calId == null) {
                         Toast.makeText(
@@ -771,6 +772,12 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 when {
+                    url.contains("/Login/LogOff", ignoreCase = true) -> {
+                        isAutoSubmittingLogin = true
+                        startSnapshotTransition()
+                        webView.loadUrl("${getBaseUrl()}/Login/Login")
+                        return
+                    }
                     url.contains("/Login/Login", ignoreCase = true) -> {
                         isAutoSubmittingLogin = true
                         startSnapshotTransition()
@@ -1341,6 +1348,59 @@ class MainActivity : AppCompatActivity() {
                 background-color: #1982C4 !important;
                 border-color: #38BDF8 !important;
             }
+            #FullDaySwitch::after,
+            #SeriesRequestSwitch::after {
+                content: "" !important;
+                position: absolute !important;
+                top: 3px !important;
+                left: 4px !important;
+                width: 20px !important;
+                height: 20px !important;
+                border-radius: 50% !important;
+                background-color: #F1F5F9 !important;
+                transition: left 0.15s ease !important;
+            }
+            #FullDaySwitch.active::after,
+            #SeriesRequestSwitch.active::after {
+                left: 28px !important;
+            }
+            .bootstrap-datetimepicker-widget,
+            .bootstrap-datetimepicker-widget.dropdown-menu {
+                background-color: #182332 !important;
+                color: #F1F5F9 !important;
+                border: 1px solid #37475A !important;
+            }
+            .bootstrap-datetimepicker-widget table td,
+            .bootstrap-datetimepicker-widget table th {
+                color: #F1F5F9 !important;
+                background-color: transparent !important;
+            }
+            .bootstrap-datetimepicker-widget table td.day:hover,
+            .bootstrap-datetimepicker-widget table td.hour:hover,
+            .bootstrap-datetimepicker-widget table td.minute:hover,
+            .bootstrap-datetimepicker-widget table th:hover {
+                background-color: #2A394A !important;
+                color: #FFFFFF !important;
+            }
+            .bootstrap-datetimepicker-widget table td.active,
+            .bootstrap-datetimepicker-widget table td.active:hover {
+                background-color: #1982C4 !important;
+                color: #FFFFFF !important;
+            }
+            .bootstrap-datetimepicker-widget table td.old,
+            .bootstrap-datetimepicker-widget table td.new {
+                color: #64748B !important;
+            }
+            .alert-danger {
+                background-color: #3F1D24 !important;
+                border-color: #DC2626 !important;
+                color: #FEE2E2 !important;
+            }
+            .alert-warning {
+                background-color: #3B2810 !important;
+                border-color: #F59E0B !important;
+                color: #FEF3C7 !important;
+            }
             .input-group-addon {
                 background-color: #233040 !important;
                 border: 1px solid #37475A !important;
@@ -1580,9 +1640,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             /* === 8. KALENTERI: LUETTELONÄKYMÄ (/Calendar/List) === */
-            #calendar-content {
-                height: auto !important;
-                overflow-y: visible !important;
+            .schedule-content #calendar-content {
+                height: calc(100vh - 115px) !important;
+                overflow-y: auto !important;
+                -webkit-overflow-scrolling: touch !important;
             }
             .schedule-week-separator {
                 margin: 14px 0 8px 0 !important;
@@ -1899,19 +1960,28 @@ class MainActivity : AppCompatActivity() {
 
                         window.vvApplyStampingColors = applyStampingColors;
                         applyStampingColors();
-                        var stampTblForColor = document.getElementById('table-latest-stamps');
-                        if (stampTblForColor && !stampTblForColor._colorObsInstalled && typeof MutationObserver !== 'undefined') {
-                            stampTblForColor._colorObsInstalled = true;
+                        if (typeof MutationObserver !== 'undefined') {
+                            var colorContainers = [
+                                document.getElementById('bottomContainer'),
+                                document.getElementById('latestStampsContainer'),
+                                document.getElementById('table-latest-stamps')
+                            ];
                             var colorScheduled = false;
-                            var stampObs = new MutationObserver(function() {
+                            var scheduleColor = function() {
                                 if (colorScheduled) return;
                                 colorScheduled = true;
                                 setTimeout(function() {
                                     colorScheduled = false;
                                     applyStampingColors();
                                 }, 80);
-                            });
-                            stampObs.observe(stampTblForColor, { childList: true, subtree: true });
+                            };
+                            for (var ci = 0; ci < colorContainers.length; ci++) {
+                                var containerEl = colorContainers[ci];
+                                if (containerEl && !containerEl._colorObsInstalled) {
+                                    containerEl._colorObsInstalled = true;
+                                    new MutationObserver(scheduleColor).observe(containerEl, { childList: true, subtree: true });
+                                }
+                            }
                         }
                     })();
                 } catch (_e) {}
@@ -2017,7 +2087,8 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     document.addEventListener('click', function(e) {
-                        if (isForgotOpenTrigger(e.target)) {
+                        var editRow = e.target && e.target.closest('#table-latest-stamps tbody tr');
+                        if (isForgotOpenTrigger(e.target) || editRow) {
                             openForgotPanel();
                             setTimeout(openForgotPanel, 60);
                             setTimeout(openForgotPanel, 250);
@@ -2037,9 +2108,9 @@ class MainActivity : AppCompatActivity() {
                     }, true);
 
                     function watchStampPageDom() {
-                        var stampTbl = document.getElementById('table-latest-stamps');
-                        if (stampTbl && !stampTbl._vvWatched && typeof MutationObserver !== 'undefined') {
-                            stampTbl._vvWatched = true;
+                        var stampHost = document.getElementById('latestStampsContainer') || document.getElementById('table-latest-stamps');
+                        if (stampHost && !stampHost._vvWatched && typeof MutationObserver !== 'undefined') {
+                            stampHost._vvWatched = true;
                             var rowsScheduled = false;
                             new MutationObserver(function() {
                                 if (rowsScheduled) return;
@@ -2048,7 +2119,16 @@ class MainActivity : AppCompatActivity() {
                                     rowsScheduled = false;
                                     revealHiddenStampRows();
                                 }, 80);
-                            }).observe(stampTbl, { childList: true, subtree: true });
+                            }).observe(stampHost, { childList: true, subtree: true });
+                        }
+                        var forgotPanel = getForgotPanel();
+                        if (forgotPanel && !forgotPanel._vvCloseWatched && typeof MutationObserver !== 'undefined') {
+                            forgotPanel._vvCloseWatched = true;
+                            new MutationObserver(function() {
+                                if (forgotPanel.classList.contains('minimized') && forgotPanel.classList.contains('force-open')) {
+                                    closeForgotPanel();
+                                }
+                            }).observe(forgotPanel, { attributes: true, attributeFilter: ['class'] });
                         }
                     }
                     watchStampPageDom();
@@ -2294,7 +2374,7 @@ class MainActivity : AppCompatActivity() {
                         'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12
                     };
                     document.addEventListener('click', function(e) {
-                        if (e.target && e.target.closest('a, button')) return;
+                        if (e.target && e.target.closest('a, button, #numeron-quick-req-bar')) return;
                         var cell = e.target && e.target.closest('table.month-table td.month-day');
                         if (!cell || cell.classList.contains('day-different-month')) return;
 
@@ -2310,23 +2390,31 @@ class MainActivity : AppCompatActivity() {
                         var yNum = parseInt(parts[1], 10);
                         if (!mNum || !yNum) return;
 
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (typeof e.stopImmediatePropagation === 'function') {
+                            e.stopImmediatePropagation();
+                        }
+
                         var isoDate = yNum + '-' + String(mNum).padStart(2, '0') + '-' + String(dayNum).padStart(2, '0');
                         var fiDate = String(dayNum).padStart(2, '0') + '.' + String(mNum).padStart(2, '0') + '.' + yNum;
+                        var listDate = encodeURIComponent(mNum + '/' + dayNum + '/' + yNum + ' 00:00:00');
 
                         var existing = document.getElementById('numeron-quick-req-bar');
                         if (existing) existing.remove();
 
                         var bar = document.createElement('div');
                         bar.id = 'numeron-quick-req-bar';
-                        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:1100;background:#182332;border:1px solid #38BDF8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,0.6);';
+                        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:1100;background:#182332;border:1px solid #38BDF8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,0.6);';
                         bar.innerHTML = '<span style="color:#F1F5F9;font-size:14px;font-weight:600;">' + fiDate + '</span>' +
-                            '<div style="display:flex;gap:8px;">' +
-                            '<button id="numeron-qr-close" type="button" style="background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;padding:8px 12px;font-size:13px;">Sulje</button>' +
-                            '<a href="/PersonRequests/Edit?calendarView=Month&returnValue=' + isoDate + '" style="background:#1982C4;color:#FFFFFF !important;border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;text-decoration:none;">+ Lisää toive</a>' +
+                            '<div style="display:flex;gap:6px;align-items:center;">' +
+                            '<a href="/Calendar/List?date=' + listDate + '" style="background:#233040;color:#E2E8F0 !important;border:1px solid #37475A;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;text-decoration:none;">Avaa päivä</a>' +
+                            '<a href="/PersonRequests/Edit?calendarView=Month&returnValue=' + isoDate + '" style="background:#1982C4;color:#FFFFFF !important;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;text-decoration:none;">+ Toive</a>' +
+                            '<button id="numeron-qr-close" type="button" style="background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;padding:8px 10px;font-size:13px;">✕</button>' +
                             '</div>';
                         document.body.appendChild(bar);
                         document.getElementById('numeron-qr-close').onclick = function() { bar.remove(); };
-                    }, false);
+                    }, true);
                 }
             })();
         """.trimIndent()
@@ -2337,7 +2425,11 @@ class MainActivity : AppCompatActivity() {
             private fun handleAutoLogin(attempt: Int = 0) {
         val rawUser = SecureCredentialManager.getUsername(this) ?: ""
         val rawPass = SecureCredentialManager.getPassword(this) ?: ""
-        if (rawUser.isEmpty() || rawPass.isEmpty()) return
+        if (rawUser.isEmpty() || rawPass.isEmpty()) {
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            return
+        }
         val userJson = org.json.JSONObject.quote(rawUser)
         val passJson = org.json.JSONObject.quote(rawPass)
 
@@ -2394,7 +2486,10 @@ class MainActivity : AppCompatActivity() {
 
         startSnapshotTransition {
             scope.launch {
-                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(
+                    this@MainActivity,
+                    forceRefresh = true
+                )
                 if (ok) {
                     getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                         .edit()
@@ -2412,58 +2507,31 @@ class MainActivity : AppCompatActivity() {
     private fun handleStampingPage(attempt: Int = 0) {
         if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
 
-        val targetText = if (pendingAction == Action.STAMP_IN) "Sisään" else "Ulos"
-        val targetLower = targetText.lowercase()
+        val wantIn = (pendingAction == Action.STAMP_IN)
+        val targetText = if (wantIn) "Sisään" else "Ulos"
 
-        val js = """
-            (function() {
-                var btn = document.getElementById('punchButton');
-                if (!btn) return JSON.stringify({ status: 'NO_BUTTON' });
-                var btnText = (btn.innerText || btn.textContent || '').trim();
-                if (!btnText) return JSON.stringify({ status: 'NO_BUTTON' });
-                var firstRow = '';
-                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
-                if (rowEl) {
-                    firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim();
-                }
-                if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
-                    btn.click();
-                    return JSON.stringify({ status: 'CLICKED', btn: btnText, row: firstRow });
-                } else {
-                    return JSON.stringify({ status: 'WRONG_DIRECTION', btn: btnText, row: firstRow });
-                }
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(js) { rawResult ->
-            val unescaped = try {
-                if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
-            } catch (_: Exception) {
-                null
-            }
-            val obj = try {
-                if (unescaped != null) org.json.JSONObject(unescaped) else null
-            } catch (_: Exception) {
-                null
-            }
+        webView.evaluateJavascript(StampingWebHelper.buildClickStampJs(wantIn)) { rawResult ->
+            val obj = StampingWebHelper.parseJsonResult(rawResult)
             val status = obj?.optString("status", "") ?: ""
 
             when {
                 status == "CLICKED" -> {
                     inFlightStampAction = pendingAction
                     pendingAction = Action.NONE
+                    val beforeDir = obj?.optString("dir", "") ?: ""
                     val beforeBtn = obj?.optString("btn", "") ?: ""
                     val beforeRow = obj?.optString("row", "") ?: ""
+                    val beforeRowId = obj?.optString("rowId", "") ?: ""
                     val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
+                    val dirLabel = if (en) (if (wantIn) "In" else "Out") else targetText
                     Toast.makeText(this, if (en) "Stamping ($dirLabel)..." else "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
-                    verifyStampAndClose(targetText, beforeBtn, beforeRow, 0)
+                    verifyStampAndClose(wantIn, beforeDir, beforeBtn, beforeRow, beforeRowId, 0)
                 }
                 status == "WRONG_DIRECTION" -> {
                     pendingAction = Action.NONE
                     inFlightStampAction = Action.NONE
                     val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (targetText == "Sisään") "In" else "Out") else targetText
+                    val dirLabel = if (en) (if (wantIn) "In" else "Out") else targetText
                     Toast.makeText(this, if (en) "Already clocked $dirLabel" else "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
@@ -2478,54 +2546,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun verifyStampAndClose(
-        targetText: String,
+        wantIn: Boolean,
+        beforeDir: String,
         beforeBtn: String,
         beforeRow: String,
+        beforeRowId: String,
         checkAttempt: Int
     ) {
-        val targetLower = targetText.lowercase()
-        val verifyJs = """
-            (function() {
-                var expired = false;
-                var modals = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
-                for (var i = 0; i < modals.length; i++) {
-                    var m = modals[i];
-                    var st = window.getComputedStyle(m);
-                    var vis = (m.offsetParent !== null) || (st && st.display !== 'none' && st.visibility !== 'hidden');
-                    if (vis) {
-                        var t = (m.innerText || m.textContent || '').toLowerCase();
-                        if (m.id === 'session-expired-modal' || m.id === 'sessionExpiredModal' || t.indexOf('istunto vanhentunut') !== -1 || t.indexOf('session expired') !== -1) {
-                            expired = true;
-                            break;
-                        }
-                    }
-                }
-                if (window.location.pathname.toLowerCase().indexOf('/login') !== -1) {
-                    expired = true;
-                }
-                var btn = document.getElementById('punchButton');
-                var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
-                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
-                var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-                return JSON.stringify({ btn: btnText, row: firstRow, expired: expired });
-            })();
-        """.trimIndent()
-
         webView.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            webView.evaluateJavascript(verifyJs) { rawResult ->
-                val unescaped = try {
-                    if (rawResult != null && rawResult != "null") JSONTokener(rawResult).nextValue() as? String else null
-                } catch (_: Exception) {
-                    null
-                }
-                val obj = try {
-                    if (unescaped != null) org.json.JSONObject(unescaped) else null
-                } catch (_: Exception) {
-                    null
-                }
+            webView.evaluateJavascript(StampingWebHelper.buildVerifyStampJs()) { rawResult ->
+                val obj = StampingWebHelper.parseJsonResult(rawResult)
+                val nowDir = obj?.optString("dir", "") ?: ""
                 val nowBtn = obj?.optString("btn", "") ?: ""
                 val nowRow = obj?.optString("row", "") ?: ""
+                val nowRowId = obj?.optString("rowId", "") ?: ""
                 val sessionExpired = obj?.optBoolean("expired", false) ?: false
 
                 if (sessionExpired) {
@@ -2533,13 +2568,23 @@ class MainActivity : AppCompatActivity() {
                     return@evaluateJavascript
                 }
 
-                if (StampingWebHelper.isStampConfirmed(targetLower, beforeBtn, beforeRow, nowBtn, nowRow)) {
+                if (StampingWebHelper.isStampConfirmed(
+                        wantIn = wantIn,
+                        beforeDir = beforeDir,
+                        beforeBtn = beforeBtn,
+                        beforeRow = beforeRow,
+                        beforeRowId = beforeRowId,
+                        nowDir = nowDir,
+                        nowBtn = nowBtn,
+                        nowRow = nowRow,
+                        nowRowId = nowRowId
+                    )
+                ) {
                     inFlightStampAction = Action.NONE
                     CookieManager.getInstance().flush()
-                    // Poistettu ylimääräinen Toast, luotetaan visuaaliseen tilaan
                     webView.postDelayed({ finishAndRemoveTask() }, 1500L)
                 } else if (checkAttempt < 25) {
-                    verifyStampAndClose(targetText, beforeBtn, beforeRow, checkAttempt + 1)
+                    verifyStampAndClose(wantIn, beforeDir, beforeBtn, beforeRow, beforeRowId, checkAttempt + 1)
                 } else {
                     Toast.makeText(
                         this,
@@ -2613,6 +2658,7 @@ class MainActivity : AppCompatActivity() {
             CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
 
             withContext(Dispatchers.Main) {
+                if (isFinishing || isDestroyed) return@withContext
                 val en = DemoModeHelper.isEnglish(this@MainActivity)
                 if (syncCalendar && calId == null) {
                     Toast.makeText(
@@ -2642,7 +2688,6 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         try {
             webView.onPause()
-            webView.pauseTimers()
         } catch (_: Exception) {}
         super.onPause()
     }
@@ -2650,7 +2695,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         try {
-            webView.resumeTimers()
             webView.onResume()
         } catch (_: Exception) {}
     }

@@ -487,8 +487,8 @@ class QuickStampActivity : AppCompatActivity() {
             }
 
             if (!isCompleted) {
-                statusText.text = "Avataan työaikaleimaus…"
-                startHiddenStampingWebView(baseUrl, targetText)
+                statusText.text = if (en) "Opening time stamping…" else "Avataan työaikaleimaus…"
+                startHiddenStampingWebView(baseUrl, wantIn = !isEnding, targetText = targetText)
             }
         }
     }
@@ -503,7 +503,9 @@ class QuickStampActivity : AppCompatActivity() {
             if (wantIn != currentlyIn) {
                 val nowDate = LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
                 val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-                val oldHistory = prefs.getString("demo_stamp_history", "") ?: ""
+                val yest = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+                val defaultHistory = "$yest | 14:30 | Ulos\n$yest | 07:00 | Sisään"
+                val oldHistory = prefs.getString("demo_stamp_history", defaultHistory) ?: defaultHistory
                 val newHistory = "$nowDate | $nowTime | $targetText\n$oldHistory"
                 prefs.edit()
                     .putBoolean("demo_stamped_in", wantIn)
@@ -534,7 +536,7 @@ class QuickStampActivity : AppCompatActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun startHiddenStampingWebView(baseUrl: String, targetText: String) {
+    private fun startHiddenStampingWebView(baseUrl: String, wantIn: Boolean, targetText: String) {
         destroyHiddenWebView()
 
         val root = findViewById<ViewGroup>(android.R.id.content).getChildAt(0) as? ViewGroup
@@ -548,6 +550,8 @@ class QuickStampActivity : AppCompatActivity() {
         }
         webHolder?.addView(wv, ViewGroup.LayoutParams(1, 1))
         hiddenWebView = wv
+        wv.resumeTimers()
+        wv.onResume()
 
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
@@ -571,21 +575,22 @@ class QuickStampActivity : AppCompatActivity() {
 
             override fun onReceivedError(
                 view: WebView?,
-                errorCode: Int,
-                description: String?,
-                failingUrl: String?
+                request: WebResourceRequest?,
+                error: android.webkit.WebResourceError?
             ) {
-                if (!isCompleted && failingUrl?.contains(baseUrl, ignoreCase = true) == true) {
-                    showFinalState(
-                        title = "Yhteysvirhe",
-                        subtitle = "Verkkoyhteys epäonnistui",
-                        badgeText = "!",
-                        badgeFillHex = "#3B181E",
-                        badgeStrokeHex = "#EF4444",
-                        badgeTextHex = "#F87171",
-                        closeDelayMs = 1600L
-                    )
-                }
+                super.onReceivedError(view, request, error)
+                if (request?.isForMainFrame != true || isCompleted) return
+                val code = error?.errorCode ?: 0
+                if (code == -1 || code == WebViewClient.ERROR_UNKNOWN) return
+                showFinalState(
+                    title = "Yhteysvirhe",
+                    subtitle = "Verkkoyhteys epäonnistui",
+                    badgeText = "!",
+                    badgeFillHex = "#3B181E",
+                    badgeStrokeHex = "#EF4444",
+                    badgeTextHex = "#F87171",
+                    closeDelayMs = 1600L
+                )
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -611,6 +616,10 @@ class QuickStampActivity : AppCompatActivity() {
                 }
 
                 when {
+                    url.contains("/Login/LogOff", ignoreCase = true) -> {
+                        view?.loadUrl("$baseUrl/Login/Login")
+                    }
+
                     url.contains("/Login/Login", ignoreCase = true) -> {
                         if (!loginAttempted) {
                             loginAttempted = true
@@ -631,7 +640,7 @@ class QuickStampActivity : AppCompatActivity() {
 
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
                         if (!stampClicked) {
-                            triggerStampClick(view, targetText, 0) {
+                            triggerStampClick(view, wantIn, targetText, 0) {
                                 stampClicked = true
                             }
                         }
@@ -678,45 +687,27 @@ class QuickStampActivity : AppCompatActivity() {
 
     private fun triggerStampClick(
         view: WebView?,
+        wantIn: Boolean,
         targetText: String,
         attempt: Int,
         onClicked: () -> Unit
     ) {
         if (view == null || isCompleted) return
-        val targetLower = targetText.lowercase()
 
-        val js = """
-            (function() {
-                var btn = document.getElementById('punchButton');
-                if (!btn) return JSON.stringify({ status: 'NO_BUTTON' });
-                var btnText = (btn.innerText || btn.textContent || '').trim();
-                if (!btnText) return JSON.stringify({ status: 'NO_BUTTON' });
-                var firstRow = '';
-                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
-                if (rowEl) {
-                    firstRow = (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim();
-                }
-                if (btnText.toLowerCase().indexOf('$targetLower') !== -1) {
-                    btn.click();
-                    return JSON.stringify({ status: 'CLICKED', btn: btnText, row: firstRow });
-                } else {
-                    return JSON.stringify({ status: 'WRONG_DIRECTION', btn: btnText, row: firstRow });
-                }
-            })();
-        """.trimIndent()
-
-        view.evaluateJavascript(js) { rawResult ->
+        view.evaluateJavascript(StampingWebHelper.buildClickStampJs(wantIn)) { rawResult ->
             if (isCompleted) return@evaluateJavascript
-            val obj = parseJsonResult(rawResult)
+            val obj = StampingWebHelper.parseJsonResult(rawResult)
             val status = obj?.optString("status", "") ?: ""
 
             when {
                 status == "CLICKED" -> {
                     onClicked()
+                    val beforeDir = obj?.optString("dir", "") ?: ""
                     val beforeBtn = obj?.optString("btn", "") ?: ""
                     val beforeRow = obj?.optString("row", "") ?: ""
+                    val beforeRowId = obj?.optString("rowId", "") ?: ""
                     statusText.text = "Lähetetään leimaus ($targetText)…"
-                    verifyStampResult(view, targetText, beforeBtn, beforeRow, 0)
+                    verifyStampResult(view, wantIn, targetText, beforeDir, beforeBtn, beforeRow, beforeRowId, 0)
                 }
 
                 status == "WRONG_DIRECTION" -> {
@@ -733,7 +724,7 @@ class QuickStampActivity : AppCompatActivity() {
 
                 status == "NO_BUTTON" && attempt < 12 -> {
                     mainHandler.postDelayed({
-                        triggerStampClick(view, targetText, attempt + 1, onClicked)
+                        triggerStampClick(view, wantIn, targetText, attempt + 1, onClicked)
                     }, 250L)
                 }
 
@@ -754,48 +745,25 @@ class QuickStampActivity : AppCompatActivity() {
 
     private fun verifyStampResult(
         view: WebView?,
+        wantIn: Boolean,
         targetText: String,
+        beforeDir: String,
         beforeBtn: String,
         beforeRow: String,
+        beforeRowId: String,
         checkAttempt: Int
     ) {
         if (view == null || isCompleted) return
-        val targetLower = targetText.lowercase()
-
-        val verifyJs = """
-            (function() {
-                var expired = false;
-                var modals = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, .modal, [role="dialog"]');
-                for (var i = 0; i < modals.length; i++) {
-                    var m = modals[i];
-                    var st = window.getComputedStyle(m);
-                    var vis = (m.offsetParent !== null) || (st && st.display !== 'none' && st.visibility !== 'hidden');
-                    if (vis) {
-                        var t = (m.innerText || m.textContent || '').toLowerCase();
-                        if (m.id === 'session-expired-modal' || m.id === 'sessionExpiredModal' || t.indexOf('istunto vanhentunut') !== -1 || t.indexOf('session expired') !== -1) {
-                            expired = true;
-                            break;
-                        }
-                    }
-                }
-                if (window.location.pathname.toLowerCase().indexOf('/login') !== -1) {
-                    expired = true;
-                }
-                var btn = document.getElementById('punchButton');
-                var btnText = btn ? (btn.innerText || btn.textContent || '').trim() : '';
-                var rowEl = document.querySelector('#table-latest-stamps tbody tr, #table-latest-stamps tr');
-                var firstRow = rowEl ? (rowEl.innerText || rowEl.textContent || '').replace(/\s+/g, ' ').trim() : '';
-                return JSON.stringify({ btn: btnText, row: firstRow, expired: expired });
-            })();
-        """.trimIndent()
 
         mainHandler.postDelayed({
             if (isCompleted || isFinishing || isDestroyed) return@postDelayed
-            view.evaluateJavascript(verifyJs) { rawResult ->
+            view.evaluateJavascript(StampingWebHelper.buildVerifyStampJs()) { rawResult ->
                 if (isCompleted) return@evaluateJavascript
-                val obj = parseJsonResult(rawResult)
+                val obj = StampingWebHelper.parseJsonResult(rawResult)
+                val nowDir = obj?.optString("dir", "") ?: ""
                 val nowBtn = obj?.optString("btn", "") ?: ""
                 val nowRow = obj?.optString("row", "") ?: ""
+                val nowRowId = obj?.optString("rowId", "") ?: ""
                 val sessionExpired = obj?.optBoolean("expired", false) ?: false
 
                 if (sessionExpired) {
@@ -808,9 +776,12 @@ class QuickStampActivity : AppCompatActivity() {
                             .apply()
                         val baseUrl = UrlNormalizer.getSavedBaseUrl(this)
                         scope.launch {
-                            BackgroundAuthHelper.ensureAuthenticatedSession(this@QuickStampActivity)
+                            BackgroundAuthHelper.ensureAuthenticatedSession(
+                                this@QuickStampActivity,
+                                forceRefresh = true
+                            )
                             if (!isCompleted && baseUrl.isNotEmpty()) {
-                                startHiddenStampingWebView(baseUrl, targetText)
+                                startHiddenStampingWebView(baseUrl, wantIn, targetText)
                             }
                         }
                     } else {
@@ -827,11 +798,18 @@ class QuickStampActivity : AppCompatActivity() {
                     return@evaluateJavascript
                 }
 
-                val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
-                    nowBtn.lowercase().indexOf(targetLower) == -1
-                val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
-
-                if (buttonFlipped || rowUpdated) {
+                if (StampingWebHelper.isStampConfirmed(
+                        wantIn = wantIn,
+                        beforeDir = beforeDir,
+                        beforeBtn = beforeBtn,
+                        beforeRow = beforeRow,
+                        beforeRowId = beforeRowId,
+                        nowDir = nowDir,
+                        nowBtn = nowBtn,
+                        nowRow = nowRow,
+                        nowRowId = nowRowId
+                    )
+                ) {
                     CookieManager.getInstance().flush()
                     val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
                     showFinalState(
@@ -847,7 +825,9 @@ class QuickStampActivity : AppCompatActivity() {
                     if (checkAttempt == 2) {
                         statusText.text = "Vahvistetaan leimausta…"
                     }
-                    verifyStampResult(view, targetText, beforeBtn, beforeRow, checkAttempt + 1)
+                    verifyStampResult(
+                        view, wantIn, targetText, beforeDir, beforeBtn, beforeRow, beforeRowId, checkAttempt + 1
+                    )
                 } else {
                     showFinalState(
                         title = "Vahvistus viivästyi",

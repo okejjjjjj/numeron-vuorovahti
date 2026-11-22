@@ -16,7 +16,11 @@ import java.util.Locale
 object DemoModeHelper {
 
     fun isDemoCredentials(org: String, user: String, pass: String): Boolean {
-        return org.trim().equals("demo", ignoreCase = true) &&
+        val cleanOrg = org.trim().trimEnd('/')
+        val isDemoOrg = cleanOrg.equals("demo", ignoreCase = true) ||
+            cleanOrg.equals("demo.numeronwfm.com", ignoreCase = true) ||
+            cleanOrg.equals("https://demo.numeronwfm.com", ignoreCase = true)
+        return isDemoOrg &&
             user.trim().equals("demo", ignoreCase = true) &&
             pass.trim().equals("demo", ignoreCase = true)
     }
@@ -450,10 +454,13 @@ object DemoModeHelper {
                     p[2].contains("Hyväksytty", ignoreCase = true) ||
                     p[2].contains("Approved", ignoreCase = true)
                 ) "badge badge-ok" else "badge badge-wait"
+                val safeDate = android.text.TextUtils.htmlEncode(p[0])
+                val safeType = android.text.TextUtils.htmlEncode(p[1])
+                val safeStatus = android.text.TextUtils.htmlEncode(p[2])
                 """<tr>
-                    <td>${p[0]}</td>
-                    <td><strong>${p[1]}</strong></td>
-                    <td><span class="$badgeClass">${p[2]}</span></td>
+                    <td>$safeDate</td>
+                    <td><strong>$safeType</strong></td>
+                    <td><span class="$badgeClass">$safeStatus</span></td>
                 </tr>"""
             } else ""
         }
@@ -1020,7 +1027,9 @@ object DemoModeHelper {
 
             val nowDate = LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
             val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-            val oldHistory = prefs.getString("demo_stamp_history", "") ?: ""
+            val yest = LocalDate.now().minusDays(1).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+            val defaultHistory = "$yest | 14:30 | Ulos\n$yest | 07:00 | Sisään"
+            val oldHistory = prefs.getString("demo_stamp_history", defaultHistory) ?: defaultHistory
             val newHistory = "$nowDate | $nowTime | $actionLabel\n$oldHistory"
 
             prefs.edit()
@@ -1053,7 +1062,14 @@ object DemoModeHelper {
                 LocalDate.now().plusDays(10).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
             }
             val statusLabel = if (en) "Pending approval" else "Odottaa käsittelyä"
-            val oldList = prefs.getString("demo_requests", "") ?: ""
+            val today = LocalDate.now()
+            val fmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            val defaultRequests = if (en) {
+                "${today.plusDays(5).format(fmt)} | Annual leave | Approved\n${today.plusDays(12).format(fmt)} | Day off | Pending approval"
+            } else {
+                "${today.plusDays(5).format(fmt)} | Vuosiloma | Hyväksytty\n${today.plusDays(12).format(fmt)} | Vapaapäivä | Odottaa käsittelyä"
+            }
+            val oldList = prefs.getString("demo_requests", defaultRequests) ?: defaultRequests
             val newList = "$cleanDate | $type | $statusLabel\n$oldList"
             prefs.edit().putString("demo_requests", newList).apply()
 

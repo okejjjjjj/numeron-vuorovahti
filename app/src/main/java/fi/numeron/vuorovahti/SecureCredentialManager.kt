@@ -18,21 +18,33 @@ object SecureCredentialManager {
         cachedEncryptedPrefs?.let { return it }
         return synchronized(this) {
             cachedEncryptedPrefs?.let { return@synchronized it }
-            try {
-                val appCtx = context.applicationContext
+            val appCtx = context.applicationContext
+            fun createPrefs(): SharedPreferences {
                 val masterKey = MasterKey.Builder(appCtx, MasterKey.DEFAULT_MASTER_KEY_ALIAS)
                     .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                     .build()
-
-                EncryptedSharedPreferences.create(
+                return EncryptedSharedPreferences.create(
                     appCtx,
                     PREFS_FILE,
                     masterKey,
                     EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                     EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-                ).also { cachedEncryptedPrefs = it }
+                )
+            }
+            try {
+                createPrefs().also { cachedEncryptedPrefs = it }
             } catch (_: Exception) {
-                null
+                try {
+                    appCtx.deleteSharedPreferences(PREFS_FILE)
+                    val ks = java.security.KeyStore.getInstance("AndroidKeyStore")
+                    ks.load(null)
+                    if (ks.containsAlias(MasterKey.DEFAULT_MASTER_KEY_ALIAS)) {
+                        ks.deleteEntry(MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+                    }
+                    createPrefs().also { cachedEncryptedPrefs = it }
+                } catch (_: Exception) {
+                    null
+                }
             }
         }
     }

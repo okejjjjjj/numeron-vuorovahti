@@ -13,14 +13,14 @@ android {
         }
     }
     namespace = "fi.numeron.vuorovahti"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 36
-        versionCode = 112
-        versionName = "3.2.8"
+        versionCode = 113
+        versionName = "3.2.9"
     }
 
     buildTypes {

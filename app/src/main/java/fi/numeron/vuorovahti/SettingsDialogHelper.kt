@@ -170,6 +170,7 @@ object SettingsDialogHelper {
         headerBar.addView(headerTitleCol)
 
         var dialogRef: AlertDialog? = null
+        var testCredentialsJob: kotlinx.coroutines.Job? = null
 
         if (isDemoActive) {
             val langPill = LinearLayout(context).apply {
@@ -616,7 +617,8 @@ object SettingsDialogHelper {
                 tvTestStatus.setTextColor(Color.parseColor("#38BDF8"))
                 tvTestStatus.text = if (en) "Testing address $normalizedUrl..." else "Testataan osoitetta $normalizedUrl..."
 
-                testLoginWithHiddenWebView(context, normalizedUrl, user, pass) { success, message ->
+                testCredentialsJob?.cancel()
+                testCredentialsJob = testLoginWithHiddenWebView(context, normalizedUrl, user, pass) { success, message ->
                     isEnabled = true
                     tvTestStatus.setTextColor(
                         if (success) Color.parseColor("#10B981") else Color.parseColor("#EF4444")
@@ -928,10 +930,17 @@ object SettingsDialogHelper {
             val newShiftReminders = switchShiftReminders.isChecked
             val newTrackRequests = switchTrackRequests.isChecked
 
+            val prevUser = SecureCredentialManager.getUsername(context).orEmpty()
+            val prevUrl = UrlNormalizer.getSavedBaseUrl(context)
+
             val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
+                UrlNormalizer.isDemoInput(rawOrg) ||
                 DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
 
             SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
+            if (savedUser != prevUser || savedPass != existingPassword || normalizedUrl != prevUrl) {
+                BackgroundAuthHelper.clearSessionCache(context)
+            }
 
             prefs.edit()
                 .putString("org_raw_input", rawOrg)
@@ -1023,6 +1032,7 @@ object SettingsDialogHelper {
         rootContainer.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
 
         dialog.setOnDismissListener {
+            testCredentialsJob?.cancel()
             rootContainer.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
             billingHelper.destroy()
         }
@@ -1035,8 +1045,8 @@ object SettingsDialogHelper {
         username: String,
         password: String,
         callback: (Boolean, String) -> Unit
-    ) {
-        CoroutineScope(Dispatchers.IO).launch {
+    ): kotlinx.coroutines.Job {
+        return CoroutineScope(Dispatchers.IO).launch {
             val (success, msg) = BackgroundAuthHelper.testCredentials(baseUrl, username, password)
             withContext(Dispatchers.Main) {
                 callback(success, msg)

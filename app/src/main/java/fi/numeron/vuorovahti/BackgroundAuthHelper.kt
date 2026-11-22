@@ -24,7 +24,27 @@ object BackgroundAuthHelper {
     @Volatile
     private var lastAuthBaseUrl: String = ""
 
-    suspend fun ensureAuthenticatedSession(context: Context): Boolean = withContext(Dispatchers.IO) {
+    fun clearSessionCache(context: Context? = null) {
+        lastAuthSuccessMs = 0L
+        lastAuthBaseUrl = ""
+        if (context != null) {
+            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("last_valid_session_ms", 0L)
+                .apply()
+            try {
+                val cm = CookieManager.getInstance()
+                cm.removeAllCookies(null)
+                cm.flush()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    suspend fun ensureAuthenticatedSession(
+        context: Context,
+        forceRefresh: Boolean = false
+    ): Boolean = withContext(Dispatchers.IO) {
         if (DemoModeHelper.isDemoEnabled(context)) return@withContext false
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
@@ -42,7 +62,8 @@ object BackgroundAuthHelper {
             } catch (_: Exception) {
                 null
             }
-            if (!cachedCookies.isNullOrBlank() &&
+            if (!forceRefresh &&
+                !cachedCookies.isNullOrBlank() &&
                 baseUrl == lastAuthBaseUrl &&
                 (nowMs - lastAuthSuccessMs) < 90_000L
             ) {
@@ -107,7 +128,7 @@ object BackgroundAuthHelper {
             } else {
                 loginResp.finalUrl.contains("/Login", ignoreCase = true)
             }
-            if (stillOnLogin || cookieStore.isEmpty()) {
+            if (loginResp.statusCode !in 200..399 || stillOnLogin || cookieStore.isEmpty()) {
                 return@withContext false
             }
 
@@ -266,6 +287,9 @@ object BackgroundAuthHelper {
                 postBody = encodedBody
             ) ?: return false to "Yhteysvirhe kirjautumisen aikana."
 
+            if (loginResp.statusCode !in 200..399) {
+                return false to "Palvelinvirhe kirjautumisessa (HTTP ${loginResp.statusCode})."
+            }
             val respDoc = Jsoup.parse(loginResp.body)
             val stillOnLogin = respDoc.selectFirst("#LoginForm, input[type=password]") != null
             if (stillOnLogin || cookieStore.isEmpty()) {
@@ -310,6 +334,11 @@ object BackgroundAuthHelper {
                     cm.setCookie(baseUrl, "$k=$v; Path=/$secureAttr")
                 }
             }
+            original.keys.forEach { k ->
+                if (k !in updated) {
+                    cm.setCookie(baseUrl, "$k=; Max-Age=0; Path=/$secureAttr")
+                }
+            }
             cm.flush()
         }
 
@@ -340,7 +369,7 @@ object BackgroundAuthHelper {
         }
 
         if (anyNeedsLogin) {
-            if (!ensureAuthenticatedSession(context)) return@withContext null
+            if (!ensureAuthenticatedSession(context, forceRefresh = true)) return@withContext null
             cookies = readCookiesFromManager()
             responses = fetchAllParallel(cookies)
         }

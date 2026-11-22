@@ -208,7 +208,7 @@ class SupportBillingHelper(
     fun destroy() {
         isDestroyed = true
         try {
-            if (billingClient.isReady) {
+            if (billingClient.connectionState != BillingClient.ConnectionState.CLOSED) {
                 billingClient.endConnection()
             }
         } catch (_: Exception) {
