@@ -1,37 +1,11 @@
 #!/usr/bin/env python3
 """
-Numeron Vuorovahti – Akunkulutuksen optimointipatch.
+Numeron Vuorovahti – Leimausten muotoilun säilyttäminen "Näytä lisää" -painalluksen jälkeen.
 
 Peruttavissa Gitissä:
   git revert HEAD
   tai: git checkout -- .
   tai: python3 patch.py --revert
-
-Toteutetaan ilman uusia ulkoisia riippuvuuksia (ei kotlinx.coroutines-lisäyksiä
-tiedostoihin, joissa sitä ei entuudestaan ole), jotta kääntäminen on varmaa.
-
-Optimoinnit:
-1. MainActivity.kt:
-   - onPause() / onResume(): WebView.onPause() + pauseTimers() taustalle mentäessä
-     ja resumeTimers() + onResume() palattaessa (katkaisee JS-ajastimet ja
-     renderöinnin, kun ruutu ei ole näkyvissä).
-   - injectDarkTheme(): suojataan samalle URL:lle toistuvalta injektoinnilta
-     (onPageCommitVisible + onPageFinished ajoivat raskaan skriptin kahdesti
-     jokaisella sivulatauksella).
-   - setupCalendarCleanup(): lisätään 80 ms debounce MutationObserveriin, ettei
-     jokainen yksittäinen DOM-muutos aja koko kuukausitaulukon läpikäyntiä.
-   - handleAutoLogin(): 15 yrityksen yläraja (estää ikuisen 300 ms silmukan).
-   - navigateToTab(): varmistetaan vanhan korutiinin peruutus siirtymän sisällä.
-2. BackgroundAuthHelper.kt:
-   - ensureAuthenticatedSession(): lisätään lyhyt muistivälimuisti (90 s) ja
-     lukitus, jotta peräkkäiset tai rinnakkaiset kutsut eivät tee turhaa
-     GET + POST + CookieManager.flush() -verkkokierrosta.
-   - persistUpdatedCookies(): synkronoidaan cookieSyncLock-lukolla.
-3. CalendarChangeTracker.kt:
-   - btnRevert: ajetaan levytallennus ja kalenteri-I/O taustasäikeessä
-     (Executors.newSingleThreadExecutor) ja päivitetään UI pääsäikeessä.
-4. build.gradle(.kts):
-   - nostetaan versionCode-arvoa yhdellä (+1).
 """
 
 import argparse
@@ -42,7 +16,7 @@ import sys
 from pathlib import Path
 
 BACKUP_DIR = Path(".patch_backups")
-IGNORED_DIRS = {".git", ".gradle", "build", ".idea", ".patch_backups"}
+IGNORED_DIRS = {".git", ".gradle", "build", ".idea", ".patch_backups", ".patch_backups"}
 
 
 def find_file(filename: str) -> Path | None:
@@ -102,192 +76,44 @@ def patch_main_activity(path: Path) -> bool:
     orig = path.read_text(encoding="utf-8")
     text = orig
 
-    # 1. Lisätään apukenttä toistuvan teemainjektoinnin välttämiseksi samalla sivulatauksella
-    old_field = "    private var isAutoSubmittingLogin: Boolean = false"
-    new_field = """    private var isAutoSubmittingLogin: Boolean = false
-    private var lastThemedUrl: String? = null
-    private var lastThemedAtMs: Long = 0L"""
-    text = replace_exact(text, old_field, new_field, "MainActivity: lastThemedUrl-välimuistikentät", path)
+    old_expose = """                        applyStampingColors();
+                        var stampTblForColor = document.getElementById('table-latest-stamps');"""
+    new_expose = """                        window.vvApplyStampingColors = applyStampingColors;
+                        applyStampingColors();
+                        var stampTblForColor = document.getElementById('table-latest-stamps');"""
+    text = replace_exact(text, old_expose, new_expose, "MainActivity: altista vvApplyStampingColors", path)
 
-    # 2. Nollataan teemavälimuisti uuden sivun alkaessa
-    old_page_started = """            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                startSnapshotTransition()
-            }"""
-    new_page_started = """            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                super.onPageStarted(view, url, favicon)
-                lastThemedUrl = null
-                startSnapshotTransition()
-            }"""
-    text = replace_exact(text, old_page_started, new_page_started, "MainActivity: nollaa lastThemedUrl onPageStartedissa", path)
-
-    # 3. Estetään saman sivun turha tuplainjektointi (onPageCommitVisible + onPageFinished)
-    old_inject_sig = '    private fun injectDarkTheme(view: WebView?) {\n        val css = """'
-    new_inject_sig = (
-        '    private fun injectDarkTheme(view: WebView?) {\n'
-        '        val currentUrl = view?.url\n'
-        '        val nowMs = System.currentTimeMillis()\n'
-        '        if (!currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {\n'
-        '            return\n'
-        '        }\n'
-        '        lastThemedUrl = currentUrl\n'
-        '        lastThemedAtMs = nowMs\n'
-        '        val css = """'
-    )
-    text = replace_exact(text, old_inject_sig, new_inject_sig, "MainActivity: estä injectDarkTheme-tupla-ajo", path)
-
-    # 4. 80 ms debounce kalenterin MutationObserveriin
-    old_cal_obs = """                        var calObs = new MutationObserver(function() {
-                            runCalendarCleanup();
-                        });"""
-    new_cal_obs = """                        var calCleanupTimer = null;
-                        var calObs = new MutationObserver(function() {
-                            if (calCleanupTimer) clearTimeout(calCleanupTimer);
-                            calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
-                        });"""
-    text = replace_exact(text, old_cal_obs, new_cal_obs, "MainActivity: setupCalendarCleanup 80ms debounce", path)
-
-    # 5. handleAutoLogin max 15 yritystä
-    old_login_sig = "private fun handleAutoLogin() {"
-    new_login_sig = "private fun handleAutoLogin(attempt: Int = 0) {"
-    text = replace_exact(text, old_login_sig, new_login_sig, "MainActivity: handleAutoLogin yritysparametri", path)
-
-    old_login_retry = "webView.postDelayed({ handleAutoLogin() }, 300L)"
-    new_login_retry = "if (attempt < 15) { webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L) }"
-    text = replace_exact(text, old_login_retry, new_login_retry, "MainActivity: handleAutoLogin max 15 yritystä", path)
-
-    # 6. navigateToTab vanhan korutiinin varmistettu peruutus
-    old_nav = """            startSnapshotTransition {
-                if (token != navigationToken) return@startSnapshotTransition
-                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)"""
-    new_nav = """            startSnapshotTransition {
-                if (token != navigationToken) return@startSnapshotTransition
-                navigateJob?.cancel()
-                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)"""
-    text = replace_exact(text, old_nav, new_nav, "MainActivity: navigateToTab varmista vanhan jobin peruutus", path)
-
-    # 7. WebView'n pysäytys taustalle mentäessä (säästää CPU:ta ja akkua)
-    old_destroy = """    override fun onDestroy() {"""
-    new_lifecycle = """    override fun onPause() {
-        try {
-            webView.onPause()
-            webView.pauseTimers()
-        } catch (_: Exception) {}
-        super.onPause()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        try {
-            webView.resumeTimers()
-            webView.onResume()
-        } catch (_: Exception) {}
-    }
-
-    override fun onDestroy() {"""
-    text = replace_exact(text, old_destroy, new_lifecycle, "MainActivity: onPause/onResume WebView-virransäästö", path)
-
-    if text != orig:
-        backup_file(path)
-        path.write_text(text, encoding="utf-8")
-        return True
-    return False
-
-
-def patch_background_auth_helper(path: Path) -> bool:
-    orig = path.read_text(encoding="utf-8")
-    text = orig
-
-    # 1. Estetään turhat peräkkäiset kirjautumiskierrokset 90 sekunnin sisällä onnistuneesta
-    old_lock = "    private val cookieSyncLock = Any()"
-    new_lock = """    private val cookieSyncLock = Any()
-    @Volatile
-    private var lastAuthSuccessMs: Long = 0L
-    @Volatile
-    private var lastAuthBaseUrl: String = "" """.rstrip()
-    text = replace_exact(text, old_lock, new_lock, "BackgroundAuthHelper: sessiovälimuistin kentät", path)
-
-    old_ensure_start = """        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
-            return@withContext false
-        }"""
-    new_ensure_start = """        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
-            return@withContext false
-        }
-
-        val nowMs = System.currentTimeMillis()
-        val cachedCookies = try {
-            CookieManager.getInstance().getCookie(baseUrl)
-        } catch (_: Exception) {
-            null
-        }
-        if (!cachedCookies.isNullOrBlank() &&
-            baseUrl == lastAuthBaseUrl &&
-            (nowMs - lastAuthSuccessMs) < 90_000L
-        ) {
-            return@withContext true
-        }"""
-    text = replace_exact(text, old_ensure_start, new_ensure_start, "BackgroundAuthHelper: ohita turha uusintakirjautuminen (90s)", path)
-
-    old_ensure_end = """            cm.flush()
-
-            true"""
-    new_ensure_end = """            cm.flush()
-            lastAuthBaseUrl = baseUrl
-            lastAuthSuccessMs = System.currentTimeMillis()
-
-            true"""
-    text = replace_exact(text, old_ensure_end, new_ensure_end, "BackgroundAuthHelper: päivitä lastAuthSuccessMs", path)
-
-    # 2. Synkronoidaan rinnakkaisten pyyntöjen evästepäivitykset
-    old_cookie_fn = """        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) {
-            if (updated == original) return
-            val cm = CookieManager.getInstance()"""
-    new_cookie_fn = """        fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) = synchronized(cookieSyncLock) {
-            if (updated == original) return
-            val cm = CookieManager.getInstance()"""
-    text = replace_exact(text, old_cookie_fn, new_cookie_fn, "BackgroundAuthHelper: synkronoi persistUpdatedCookies", path)
-
-    if text != orig:
-        backup_file(path)
-        path.write_text(text, encoding="utf-8")
-        return True
-    return False
-
-
-def patch_calendar_change_tracker(path: Path) -> bool:
-    orig = path.read_text(encoding="utf-8")
-    text = orig
-
-    old_revert_block = """                btnRevert.setOnClickListener {
-                    if (revertSingleChangeAndSave(context, item)) {
-                        Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                        dialogRef?.dismiss()
-                        onChanged?.invoke()
-                        showManageChangesDialog(context, onChanged)
-                    } else {
-                        Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
-                    }
-                }"""
-
-    new_revert_block = """                btnRevert.setOnClickListener {
-                    btnRevert.isEnabled = false
-                    java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-                        val ok = revertSingleChangeAndSave(context, item)
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            if (ok) {
-                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                                dialogRef?.dismiss()
-                                onChanged?.invoke()
-                                showManageChangesDialog(context, onChanged)
-                            } else {
-                                btnRevert.isEnabled = true
-                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
-                            }
+    old_reveal = """                    function revealHiddenStampRows() {
+                        var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr.hide, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
+                        for (var i = 0; i < hiddenRows.length; i++) {
+                            hiddenRows[i].classList.remove('hidden', 'hide');
+                            hiddenRows[i].style.display = 'table-row';
                         }
-                    }
-                }"""
+                    }"""
+    new_reveal = """                    function revealHiddenStampRows() {
+                        var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr.hide, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
+                        for (var i = 0; i < hiddenRows.length; i++) {
+                            hiddenRows[i].classList.remove('hidden', 'hide');
+                            hiddenRows[i].style.display = 'table-row';
+                        }
+                        if (typeof window.vvApplyStampingColors === 'function') {
+                            window.vvApplyStampingColors();
+                        }
+                    }"""
+    text = replace_exact(text, old_reveal, new_reveal, "MainActivity: päivitä kapselit revealHiddenStampRowsissa", path)
 
-    text = replace_exact(text, old_revert_block, new_revert_block, "CalendarChangeTracker: revertSingleChangeAndSave taustasäikeeseen", path)
+    old_show_more = """                        if (isShowMoreTrigger(e.target)) {
+                            revealHiddenStampRows();
+                            setTimeout(revealHiddenStampRows, 150);
+                            setTimeout(revealHiddenStampRows, 500);
+                        }"""
+    new_show_more = """                        if (isShowMoreTrigger(e.target)) {
+                            revealHiddenStampRows();
+                            setTimeout(revealHiddenStampRows, 150);
+                            setTimeout(revealHiddenStampRows, 500);
+                            setTimeout(revealHiddenStampRows, 1100);
+                        }"""
+    text = replace_exact(text, old_show_more, new_show_more, "MainActivity: varmista jälkikäteen latautuvien rivien muotoilu", path)
 
     if text != orig:
         backup_file(path)
@@ -316,23 +142,16 @@ def bump_version_code() -> bool:
 
 
 def apply_all() -> int:
-    print("Käynnistetään Numeron Vuorovahti -akkuoptimointipatch...")
+    print("Käynnistetään Numeron Vuorovahti -leimausmuotoilun korjauspatch...")
     ensure_gitignore_entry(".patch_backups/")
 
-    targets = [
-        ("MainActivity.kt", patch_main_activity),
-        ("BackgroundAuthHelper.kt", patch_background_auth_helper),
-        ("CalendarChangeTracker.kt", patch_calendar_change_tracker),
-    ]
-
     changed_files = 0
-    for filename, fn in targets:
-        path = find_file(filename)
-        if path is None:
-            print(f"[EI LÖYTYNYT] {filename}")
-            continue
-        print(f"Käsitellään: {path}")
-        if fn(path):
+    main_path = find_file("MainActivity.kt")
+    if main_path is None:
+        print("[EI LÖYTYNYT] MainActivity.kt")
+    else:
+        print(f"Käsitellään: {main_path}")
+        if patch_main_activity(main_path):
             changed_files += 1
 
     if bump_version_code():
@@ -344,7 +163,7 @@ def apply_all() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Numeron Vuorovahti akkuoptimointipatch")
+    parser = argparse.ArgumentParser(description="Numeron Vuorovahti leimausmuotoilun korjauspatch")
     parser.add_argument("--revert", action="store_true", help="Palauta alkuperäiset tiedostot varmuuskopioista")
     args = parser.parse_args()
     if args.revert:
