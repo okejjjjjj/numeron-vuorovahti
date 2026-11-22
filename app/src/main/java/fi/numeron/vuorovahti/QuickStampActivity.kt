@@ -46,6 +46,7 @@ class QuickStampActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activeJob: Job? = null
     private var timeoutRunnable: Runnable? = null
+    private var closeRunnable: Runnable? = null
 
     private lateinit var progressBar: ProgressBar
     private lateinit var statusBadge: TextView
@@ -361,9 +362,10 @@ class QuickStampActivity : AppCompatActivity() {
         titleText.text = title
         statusText.text = subtitle
 
-        mainHandler.postDelayed({
-            finishCleanly()
-        }, closeDelayMs)
+        closeRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable { finishCleanly() }
+        closeRunnable = r
+        mainHandler.postDelayed(r, closeDelayMs)
     }
 
     private fun finishCleanly() {
@@ -395,6 +397,8 @@ class QuickStampActivity : AppCompatActivity() {
     private fun cancelTimeout() {
         timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
         timeoutRunnable = null
+        closeRunnable?.let { mainHandler.removeCallbacks(it) }
+        closeRunnable = null
     }
 
     private fun processIntent(incoming: Intent?) {

@@ -249,8 +249,9 @@ object NumeronParser {
         return shifts
     }
 
-    fun extractCircleDates(html: String): Set<LocalDate> {
-        val doc = Jsoup.parse(html)
+    fun extractCircleDates(html: String): Set<LocalDate> = extractCircleDatesFromDoc(Jsoup.parse(html))
+
+    fun extractCircleDatesFromDoc(doc: org.jsoup.nodes.Document): Set<LocalDate> {
         val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return emptySet()
         val parts = monthHeader.split(Regex("\\s+"))
         if (parts.size < 2) return emptySet()
