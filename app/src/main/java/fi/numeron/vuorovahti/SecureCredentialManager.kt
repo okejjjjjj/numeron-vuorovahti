@@ -60,8 +60,8 @@ object SecureCredentialManager {
 
     fun saveCredentials(context: Context, username: String, password: String) {
         getEncryptedPrefs(context)?.edit()?.apply {
-            putString(KEY_USERNAME, username)
-            putString(KEY_PASSWORD, password)
+            if (username.isEmpty()) remove(KEY_USERNAME) else putString(KEY_USERNAME, username)
+            if (password.isEmpty()) remove(KEY_PASSWORD) else putString(KEY_PASSWORD, password)
             apply()
         }
         context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)

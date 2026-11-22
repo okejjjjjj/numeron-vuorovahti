@@ -911,7 +911,7 @@ object SettingsDialogHelper {
             val normalizedUrl = UrlNormalizer.normalizeOrgUrl(rawOrg)
             val selectedCal = spinnerCalendar.selectedItem as? CalendarOption
             val userTag = editUserTag.text.toString().trim()
-            val reminderMins = editReminder.text.toString().toIntOrNull() ?: 30
+            val reminderMins = (editReminder.text.toString().toIntOrNull() ?: 30).coerceIn(1, 240)
 
             val morningRgb = (spinnerMorningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_MORNING_RGB
             val eveningRgb = (spinnerEveningColor.selectedItem as? ShiftColorChoice)?.rgb ?: DEFAULT_EVENING_RGB
@@ -945,9 +945,7 @@ object SettingsDialogHelper {
                 .putInt("color_morning_rgb", morningRgb)
                 .putInt("color_evening_rgb", eveningRgb)
                 .putInt("color_night_rgb", nightRgb)
-                .apply {
-                    if (selectedCal != null) putLong("calendar_id", selectedCal.id)
-                }
+                .also { if (selectedCal != null) it.putLong("calendar_id", selectedCal.id) }
                 .apply()
 
             val turnedOnSync = !initialSyncCalendar && newSyncCalendar
@@ -1017,13 +1015,17 @@ object SettingsDialogHelper {
 
         refreshSystemPermissionStates()
 
-        rootContainer.viewTreeObserver.addOnWindowFocusChangeListener { hasFocus ->
+        val focusListener = android.view.ViewTreeObserver.OnWindowFocusChangeListener { hasFocus ->
             if (hasFocus) {
                 refreshSystemPermissionStates()
             }
         }
+        rootContainer.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
 
-        dialog.setOnDismissListener { billingHelper.destroy() }
+        dialog.setOnDismissListener {
+            rootContainer.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
+            billingHelper.destroy()
+        }
         dialog.show()
     }
 

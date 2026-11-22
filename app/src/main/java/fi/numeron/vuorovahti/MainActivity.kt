@@ -2533,11 +2533,7 @@ class MainActivity : AppCompatActivity() {
                     return@evaluateJavascript
                 }
 
-                val buttonFlipped = nowBtn.isNotEmpty() && nowBtn != beforeBtn &&
-                    nowBtn.lowercase().indexOf(targetLower) == -1
-                val rowUpdated = nowRow.isNotEmpty() && nowRow != beforeRow
-
-                if (buttonFlipped || rowUpdated) {
+                if (StampingWebHelper.isStampConfirmed(targetLower, beforeBtn, beforeRow, nowBtn, nowRow)) {
                     inFlightStampAction = Action.NONE
                     CookieManager.getInstance().flush()
                     // Poistettu ylimääräinen Toast, luotetaan visuaaliseen tilaan
@@ -2660,6 +2656,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        navigateJob?.cancel()
+        webView.removeCallbacks(transitionFallbackRunnable)
         recycleSnapshotBitmap()
         try {
             CookieManager.getInstance().flush()

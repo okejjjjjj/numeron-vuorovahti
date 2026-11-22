@@ -135,6 +135,14 @@ object CalendarChangeTracker {
         for (item in newChanges) {
             if (item.eventId != null) {
                 existing.removeAll { it.eventId == item.eventId }
+            } else if (item.type == ChangeType.REMOVED) {
+                existing.removeAll {
+                    it.type == ChangeType.REMOVED &&
+                        it.calendarId == item.calendarId &&
+                        it.title == item.title &&
+                        it.startMs == item.startMs &&
+                        it.endMs == item.endMs
+                }
             }
             existing.add(item)
         }
@@ -612,22 +620,26 @@ object CalendarChangeTracker {
                 }
                 btnRevert.setOnClickListener {
                     btnRevert.isEnabled = false
+                    val appCtx = context.applicationContext
                     java.util.concurrent.Executors.newSingleThreadExecutor().execute {
-                        val ok = revertSingleChangeAndSave(context, item)
+                        val ok = revertSingleChangeAndSave(appCtx, item)
                         android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            val act = context as? android.app.Activity
+                            if (act != null && (act.isFinishing || act.isDestroyed)) return@post
                             if (ok) {
-                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                                dialogRef?.dismiss()
+                                Toast.makeText(appCtx, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                                if (dialogRef?.isShowing == true) {
+                                    dialogRef?.dismiss()
+                                }
                                 onChanged?.invoke()
                                 showManageChangesDialog(context, onChanged)
                             } else {
                                 btnRevert.isEnabled = true
-                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(appCtx, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
                             }
                         }
                     }
-                
-}
+                }
 
             }
         }

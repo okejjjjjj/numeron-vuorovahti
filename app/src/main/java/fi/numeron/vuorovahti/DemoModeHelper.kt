@@ -767,6 +767,7 @@ object DemoModeHelper {
                     item == null -> ""
                     item.isAbsence -> """
                         <div class="month-item absence">
+                            <span class="itemName">${item.label}</span>
                             <span class="itemTimes">${item.times}</span>
                         </div>
                     """.trimIndent()

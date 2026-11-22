@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import java.io.OutputStreamWriter
@@ -16,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 object BackgroundAuthHelper {
     private val cookieSyncLock = Any()
+    private val authMutex = Mutex()
     @Volatile
     private var lastAuthSuccessMs: Long = 0L
     @Volatile
@@ -32,18 +35,19 @@ object BackgroundAuthHelper {
             return@withContext false
         }
 
-        val nowMs = System.currentTimeMillis()
-        val cachedCookies = try {
-            CookieManager.getInstance().getCookie(baseUrl)
-        } catch (_: Exception) {
-            null
-        }
-        if (!cachedCookies.isNullOrBlank() &&
-            baseUrl == lastAuthBaseUrl &&
-            (nowMs - lastAuthSuccessMs) < 90_000L
-        ) {
-            return@withContext true
-        }
+        authMutex.withLock {
+            val nowMs = System.currentTimeMillis()
+            val cachedCookies = try {
+                CookieManager.getInstance().getCookie(baseUrl)
+            } catch (_: Exception) {
+                null
+            }
+            if (!cachedCookies.isNullOrBlank() &&
+                baseUrl == lastAuthBaseUrl &&
+                (nowMs - lastAuthSuccessMs) < 90_000L
+            ) {
+                return@withLock true
+            }
 
         val cookieStore = mutableMapOf<String, String>()
 
@@ -121,6 +125,7 @@ object BackgroundAuthHelper {
             true
         } catch (_: Exception) {
             false
+        }
         }
     }
 

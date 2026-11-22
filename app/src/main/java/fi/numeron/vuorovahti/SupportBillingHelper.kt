@@ -167,6 +167,8 @@ class SupportBillingHelper(
                 if (isDestroyed) return@consumeAsync
                 if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                     postStatus("Lämmin kiitos tuestasi! ☕", true)
+                } else {
+                    postStatus("Tuki rekisteröitiin, mutta kuittaus viivästyi (koodi ${billingResult.responseCode}).", false)
                 }
             }
         } else if (purchase.purchaseState == Purchase.PurchaseState.PENDING) {

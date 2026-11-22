@@ -76,6 +76,7 @@ class QuickStampActivity : AppCompatActivity() {
             isCompleted = false
             sessionRetried = false
             activeJob?.cancel()
+            mainHandler.removeCallbacksAndMessages(null)
             cancelTimeout()
             destroyHiddenWebView()
             resetToLoadingUi()
@@ -889,6 +890,9 @@ class QuickStampActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        isCompleted = true
+        activeJob?.cancel()
+        mainHandler.removeCallbacksAndMessages(null)
         cancelTimeout()
         try {
             CookieManager.getInstance().flush()

@@ -27,11 +27,15 @@ object UrlNormalizer {
 
         // Jos käyttäjä syötti oman custom-domainin protokollalla, säilytetään polun kirjainkoko
         if ((lower.startsWith("http://") || lower.startsWith("https://")) && !isNumeronHost) {
+            val hostPart = trimmed.substringAfter("://").substringBefore("/").substringBefore("?")
+            if (hostPart.isBlank() || !hostPart.contains(".")) return ""
             return trimmed.trimEnd('/')
         }
 
         // Jos käyttäjä syötti oman domainin ilman protokollaa (esim. wfm.yritys.fi)
         if (!isNumeronHost && !trimmed.contains(" ") && trimmed.substringBefore("/").contains(".")) {
+            val hostPart = trimmed.substringBefore("/").substringBefore("?")
+            if (hostPart.startsWith(".") || hostPart.endsWith(".")) return ""
             return "https://${trimmed.trimEnd('/')}"
         }
 

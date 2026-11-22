@@ -437,6 +437,6 @@ object NumeronParser {
             }
         }
         workShifts.add(currentLeave)
-        return workShifts
+        return workShifts.sortedBy { it.start }
     }
 }
