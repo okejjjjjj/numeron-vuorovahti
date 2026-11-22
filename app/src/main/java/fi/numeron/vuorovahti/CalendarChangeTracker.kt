@@ -614,22 +614,23 @@ object CalendarChangeTracker {
                         showManageChangesDialog(context, onChanged)
                     }
                 }
-btnRevert.setOnClickListener {
-    btnRevert.isEnabled = false
-    CoroutineScope(Dispatchers.IO).launch {
-        val ok = revertSingleChangeAndSave(context, item)
-        withContext(Dispatchers.Main) {
-            if (ok) {
-                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
-                dialogRef?.dismiss()
-                onChanged?.invoke()
-                showManageChangesDialog(context, onChanged)
-            } else {
-                btnRevert.isEnabled = true
-                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
+                btnRevert.setOnClickListener {
+                    btnRevert.isEnabled = false
+                    java.util.concurrent.Executors.newSingleThreadExecutor().execute {
+                        val ok = revertSingleChangeAndSave(context, item)
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            if (ok) {
+                                Toast.makeText(context, "Muutos peruttu: ${item.title}", Toast.LENGTH_SHORT).show()
+                                dialogRef?.dismiss()
+                                onChanged?.invoke()
+                                showManageChangesDialog(context, onChanged)
+                            } else {
+                                btnRevert.isEnabled = true
+                                Toast.makeText(context, "Muutoksen peruminen epäonnistui", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                
 }
 
             }
