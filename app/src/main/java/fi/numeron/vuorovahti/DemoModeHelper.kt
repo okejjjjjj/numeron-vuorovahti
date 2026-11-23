@@ -778,11 +778,33 @@ object DemoModeHelper {
                             <span class="itemTimes">${item.times}</span>
                         </div>
                     """.trimIndent()
-                    else -> """
-                        <div class="month-item work">
-                            <span class="itemTimes">${item.times}</span>
+                    else -> {
+                        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+                        val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
+                        val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
+                        val tm = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})").find(item.times)
+                        val chosenRgb = if (tm != null) {
+                            val sMin = tm.groupValues[1].toInt() * 60 + tm.groupValues[2].toInt()
+                            val eMin = tm.groupValues[3].toInt() * 60 + tm.groupValues[4].toInt()
+                            when {
+                                eMin < sMin || sMin >= 20 * 60 || sMin < 4 * 60 -> nRgb
+                                sMin >= 11 * 60 + 30 -> eRgb
+                                else -> mRgb
+                            }
+                        } else {
+                            mRgb
+                        }
+                        val bgHex = String.format("#%06X", 0xFFFFFF and chosenRgb)
+                        val lum = 0.299 * android.graphics.Color.red(chosenRgb) +
+                            0.587 * android.graphics.Color.green(chosenRgb) +
+                            0.114 * android.graphics.Color.blue(chosenRgb)
+                        val fgHex = if (lum > 150.0) "#0F1722" else "#FFFFFF"
+                        """
+                        <div class="month-item work" style="background-color:$bgHex;color:$fgHex;">
+                            <span class="itemTimes" style="color:$fgHex;">${item.times}</span>
                         </div>
                     """.trimIndent()
+                    }
                 }
 
                 weeksHtml.append(

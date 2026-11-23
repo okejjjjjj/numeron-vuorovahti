@@ -175,14 +175,29 @@ object NumeronParser {
             }
         }
 
-        for (cell in dayCells) {
-            if (cell.hasClass("day-different-month")) continue
+        val yesterday = today.minusDays(1)
+        val allowPrevMonthOverflow = today.dayOfMonth == 1 &&
+            currentYear == today.year &&
+            currentMonth == today.monthValue
+        val prevMonthYm = java.time.YearMonth.of(currentYear, currentMonth).minusMonths(1)
 
+        for (cell in dayCells) {
             val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
-            val date = LocalDate.of(currentYear, currentMonth, dayNum)
+            val date = if (cell.hasClass("day-different-month")) {
+                if (!allowPrevMonthOverflow || dayNum < 20 || dayNum > prevMonthYm.lengthOfMonth()) continue
+                val overflowDate = prevMonthYm.atDay(dayNum)
+                if (overflowDate != yesterday) continue
+                overflowDate
+            } else {
+                try {
+                    LocalDate.of(currentYear, currentMonth, dayNum)
+                } catch (_: Exception) {
+                    continue
+                }
+            }
 
             // Sallitaan eilinen yövuorojen varalta, jotka päättyvät tänään nykyhetken jälkeen
-            if (date.isBefore(today.minusDays(1))) continue
+            if (date.isBefore(yesterday)) continue
 
             val trainingTitle = trainingTitleByDate[date]
 

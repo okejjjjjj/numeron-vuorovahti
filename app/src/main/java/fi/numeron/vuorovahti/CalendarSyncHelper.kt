@@ -45,6 +45,15 @@ object CalendarSyncHelper {
         val isOwnedByApp: Boolean
     )
 
+    private data class PreparedShift(
+        val shift: WorkShift,
+        val newStartMs: Long,
+        val newEndMs: Long,
+        val desiredTitle: String,
+        val fullDescription: String,
+        val desiredColorKey: String?
+    )
+
     private data class ShiftColorKeys(
         val greenKey: String?,
         val orangeKey: String?,
@@ -271,7 +280,7 @@ object CalendarSyncHelper {
         val unmatchedExternal = unownedCandidateEvents.toMutableList()
         val detectedChanges = mutableListOf<CalendarChangeItem>()
 
-        for (shift in upcomingShifts) {
+        val preparedShifts = upcomingShifts.map { shift ->
             val newStartMs = if (shift.isAllDayLeave) {
                 shift.start.toInstant(ZoneOffset.UTC).toEpochMilli()
             } else {
@@ -282,20 +291,29 @@ object CalendarSyncHelper {
             } else {
                 shift.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             }
-            val desiredTitle = formatShiftTitle(shift.title, userTag)
-            val fullDescription = buildFullDescription(shift.description, userTag)
-            val desiredColorKey = pickColorKeyForShift(shift, colorKeys)
+            PreparedShift(
+                shift = shift,
+                newStartMs = newStartMs,
+                newEndMs = newEndMs,
+                desiredTitle = formatShiftTitle(shift.title, userTag),
+                fullDescription = buildFullDescription(shift.description, userTag),
+                desiredColorKey = pickColorKeyForShift(shift, colorKeys)
+            )
+        }
 
+        // Vaihe 1: Tarkat osumat ja kattavat koko päivän lomat pois ennen saman päivän täsmäytystä
+        val pendingShifts = mutableListOf<PreparedShift>()
+        for (prep in preparedShifts) {
+            val shift = prep.shift
             val exactMatch = unmatchedOwned.firstOrNull {
-                it.title == desiredTitle &&
+                it.title == prep.desiredTitle &&
                 it.location == shift.location &&
-                it.description == fullDescription &&
-                it.colorKey == desiredColorKey &&
-                it.startMs == newStartMs &&
-                it.endMs == newEndMs &&
+                it.description == prep.fullDescription &&
+                it.colorKey == prep.desiredColorKey &&
+                it.startMs == prep.newStartMs &&
+                it.endMs == prep.newEndMs &&
                 it.isAllDay == shift.isAllDayLeave
             }
-
             if (exactMatch != null) {
                 unmatchedOwned.remove(exactMatch)
                 continue
@@ -304,9 +322,9 @@ object CalendarSyncHelper {
             if (shift.isAllDayLeave) {
                 val coveringOwned = unmatchedOwned.firstOrNull { ex ->
                     ex.isAllDay &&
-                    ex.title.equals(desiredTitle, ignoreCase = true) &&
-                    ex.startMs < newStartMs &&
-                    ex.endMs == newEndMs
+                    ex.title.equals(prep.desiredTitle, ignoreCase = true) &&
+                    ex.startMs < prep.newStartMs &&
+                    ex.endMs == prep.newEndMs
                 }
                 if (coveringOwned != null) {
                     unmatchedOwned.remove(coveringOwned)
@@ -314,9 +332,9 @@ object CalendarSyncHelper {
                 }
                 val coveringExternal = unmatchedExternal.firstOrNull { ex ->
                     ex.isAllDay &&
-                    ex.title.equals(desiredTitle, ignoreCase = true) &&
-                    ex.startMs < newStartMs &&
-                    ex.endMs == newEndMs
+                    ex.title.equals(prep.desiredTitle, ignoreCase = true) &&
+                    ex.startMs < prep.newStartMs &&
+                    ex.endMs == prep.newEndMs
                 }
                 if (coveringExternal != null) {
                     unmatchedExternal.remove(coveringExternal)
@@ -324,26 +342,46 @@ object CalendarSyncHelper {
                 }
             }
 
-            val sameDayOwned = unmatchedOwned.firstOrNull { ex ->
-                ex.isAllDay == shift.isAllDayLeave &&
-                isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
-            } ?: unmatchedOwned.firstOrNull { ex ->
-                shift.isAllDayLeave &&
-                ex.isAllDay &&
-                ex.title.equals(desiredTitle, ignoreCase = true) &&
-                ex.startMs < newStartMs &&
-                ex.endMs > newStartMs
-            } ?: unmatchedOwned.firstOrNull { ex ->
-                ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
-            }
+            pendingShifts.add(prep)
+        }
 
-            val sameDayExternal = if (sameDayOwned == null) {
-                unmatchedExternal.firstOrNull { ex ->
+        // Vaihe 2: Saman päivän täsmäytys (lähimmän aloitusajan mukaan) sekä uusien lisäys
+        for (prep in pendingShifts) {
+            val shift = prep.shift
+            val newStartMs = prep.newStartMs
+            val newEndMs = prep.newEndMs
+            val desiredTitle = prep.desiredTitle
+            val fullDescription = prep.fullDescription
+            val desiredColorKey = prep.desiredColorKey
+
+            val sameDayOwned = unmatchedOwned
+                .filter { ex ->
                     ex.isAllDay == shift.isAllDayLeave &&
                     isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                    looksLikeShiftOrLeave(ex.title, desiredTitle, userTag)
+                    (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
                 }
+                .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
+                ?: unmatchedOwned.firstOrNull { ex ->
+                    shift.isAllDayLeave &&
+                    ex.isAllDay &&
+                    ex.title.equals(desiredTitle, ignoreCase = true) &&
+                    ex.startMs < newStartMs &&
+                    ex.endMs > newStartMs
+                }
+                ?: unmatchedOwned
+                    .filter { ex ->
+                        ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
+                    }
+                    .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
+
+            val sameDayExternal = if (sameDayOwned == null) {
+                unmatchedExternal
+                    .filter { ex ->
+                        ex.isAllDay == shift.isAllDayLeave &&
+                        isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
+                        looksLikeShiftOrLeave(ex.title, desiredTitle, userTag)
+                    }
+                    .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
             } else {
                 null
             }
@@ -615,6 +653,7 @@ object CalendarSyncHelper {
         }
         if (toDeleteIds.isNotEmpty()) {
             CalendarChangeTracker.saveChanges(context, emptyList())
+            scheduleShiftReminders(context, calendarId)
         }
         return toDeleteIds.size
     }

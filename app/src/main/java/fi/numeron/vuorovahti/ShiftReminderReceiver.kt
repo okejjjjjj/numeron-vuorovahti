@@ -400,8 +400,9 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra("OPEN_REQUESTS", true)
             }
+            val notifId = 100_000 + (id and 0x7FFF)
             val pi = PendingIntent.getActivity(
-                context, 3000 + id, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                context, notifId, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notif = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -411,7 +412,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 .setAutoCancel(true)
                 .setContentIntent(pi)
                 .build()
-            nm.notify(3000 + id, notif)
+            nm.notify(notifId, notif)
         }
     }
 }

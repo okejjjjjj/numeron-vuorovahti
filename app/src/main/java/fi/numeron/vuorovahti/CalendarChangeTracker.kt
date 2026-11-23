@@ -146,7 +146,13 @@ object CalendarChangeTracker {
             }
             existing.add(item)
         }
-        saveChanges(context, existing)
+        val nowMs = System.currentTimeMillis()
+        val maxAgeCutoffMs = nowMs - 30L * 24 * 60 * 60 * 1000L
+        val endedCutoffMs = nowMs - 7L * 24 * 60 * 60 * 1000L
+        val pruned = existing
+            .filter { it.timestampMs >= maxAgeCutoffMs && it.endMs >= endedCutoffMs }
+            .takeLast(50)
+        saveChanges(context, pruned)
     }
 
     fun clearChanges(context: Context) {

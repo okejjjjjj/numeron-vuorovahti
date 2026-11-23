@@ -94,7 +94,9 @@ class QuickStampActivity : AppCompatActivity() {
             )
             setBackgroundColor(Color.TRANSPARENT)
             setOnClickListener {
-                finishCleanly()
+                if (isCompleted) {
+                    finishCleanly()
+                }
             }
         }
 

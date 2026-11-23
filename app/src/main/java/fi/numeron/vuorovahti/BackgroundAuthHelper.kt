@@ -120,7 +120,7 @@ object BackgroundAuthHelper {
                 method = "POST",
                 cookieStore = cookieStore,
                 postBody = encodedBody,
-                stopAfterRedirect = false
+                stopAfterRedirect = true
             ) ?: return@withContext false
 
             val stillOnLogin = if (loginResp.body.isNotEmpty()) {

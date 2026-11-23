@@ -761,7 +761,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageCommitVisible(view: WebView?, url: String?) {
                 super.onPageCommitVisible(view, url)
                 if (url != null && !url.startsWith("https://demo.local/")) {
-                    injectDarkTheme(view)
+                    injectDarkTheme(view, forceDomInit = false)
                 }
             }
 
@@ -811,7 +811,7 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
-                injectDarkTheme(view)
+                injectDarkTheme(view, forceDomInit = true)
                 CookieManager.getInstance().flush()
                 if (!url.contains("/Login/", ignoreCase = true) && !url.contains("/InfraDashboard", ignoreCase = true)) {
                     dashboardRedirectCount = 0
@@ -895,14 +895,30 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-        private fun injectDarkTheme(view: WebView?) {
+    private fun injectDarkTheme(view: WebView?, forceDomInit: Boolean = false) {
         val currentUrl = view?.url
         val nowMs = System.currentTimeMillis()
-        if (!currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {
+        if (!forceDomInit && !currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {
             return
         }
         lastThemedUrl = currentUrl
         lastThemedAtMs = nowMs
+
+        val themePrefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val morningRgb = themePrefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+        val eveningRgb = themePrefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
+        val nightRgb = themePrefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
+        fun rgbToHex(rgb: Int): String = String.format("#%06X", 0xFFFFFF and rgb)
+        fun contrastFg(rgb: Int): String {
+            val lum = 0.299 * Color.red(rgb) + 0.587 * Color.green(rgb) + 0.114 * Color.blue(rgb)
+            return if (lum > 150.0) "#0F1722" else "#FFFFFF"
+        }
+        val morningBg = rgbToHex(morningRgb)
+        val morningFg = contrastFg(morningRgb)
+        val eveningBg = rgbToHex(eveningRgb)
+        val eveningFg = contrastFg(eveningRgb)
+        val nightBg = rgbToHex(nightRgb)
+        val nightFg = contrastFg(nightRgb)
         val css = """
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
@@ -1981,14 +1997,13 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     applyShiftFormat();
-                    if (!window._todayShiftObserverInstalled) {
-                        window._todayShiftObserverInstalled = true;
-                        var target = document.querySelector('.punching-shift-container') || document.body;
-                        if (target && typeof MutationObserver !== 'undefined') {
-                            var obs = new MutationObserver(function() {
+                    if (typeof MutationObserver !== 'undefined') {
+                        var shiftTarget = document.querySelector('.punching-shift-container');
+                        if (shiftTarget && !shiftTarget._vvShiftObs) {
+                            shiftTarget._vvShiftObs = true;
+                            new MutationObserver(function() {
                                 applyShiftFormat();
-                            });
-                            obs.observe(target, { childList: true, subtree: true, characterData: true });
+                            }).observe(shiftTarget, { childList: true, subtree: true, characterData: true });
                         }
                     }
                 })();
@@ -2107,11 +2122,12 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
+                    window._vvCheckSessionModal = checkSessionModal;
                     checkSessionModal();
-                    if (document.body && typeof MutationObserver !== 'undefined') {
-                        var sessionObs = new MutationObserver(checkSessionModal);
-                        sessionObs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
-                    }
+                }
+                if (window._vvCheckSessionModal && document.body && !document.body._vvSessionObs && typeof MutationObserver !== 'undefined') {
+                    document.body._vvSessionObs = true;
+                    new MutationObserver(window._vvCheckSessionModal).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
                 }
                 if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
@@ -2226,7 +2242,11 @@ class MainActivity : AppCompatActivity() {
                             }).observe(forgotPanel, { attributes: true, attributeFilter: ['class'] });
                         }
                     }
+                    window._vvWatchStampPageDom = watchStampPageDom;
                     watchStampPageDom();
+                }
+                if (typeof window._vvWatchStampPageDom === 'function') {
+                    window._vvWatchStampPageDom();
                 }
 
                 // === AJAX- JA FETCH-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
@@ -2443,9 +2463,52 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    function pickShiftColor(timesText) {
+                        var m = (timesText || '').match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
+                        if (!m) return null;
+                        var sMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+                        var eMin = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+                        var crossesMidnight = eMin < sMin;
+                        if (crossesMidnight || sMin >= 20 * 60 || sMin < 4 * 60) {
+                            return { bg: '$nightBg', fg: '$nightFg' };
+                        }
+                        if (sMin >= 11 * 60 + 30) {
+                            return { bg: '$eveningBg', fg: '$eveningFg' };
+                        }
+                        return { bg: '$morningBg', fg: '$morningFg' };
+                    }
+
+                    function colorWorkShifts() {
+                        var monthItems = document.querySelectorAll('.month-item.work');
+                        for (var i = 0; i < monthItems.length; i++) {
+                            var item = monthItems[i];
+                            var timesEl = item.querySelector('.itemTimes');
+                            var rawTimes = timesEl ? (timesEl.textContent || '') : (item.textContent || '');
+                            var col = pickShiftColor(rawTimes);
+                            if (col) {
+                                item.style.setProperty('background-color', col.bg, 'important');
+                                item.style.setProperty('color', col.fg, 'important');
+                                if (timesEl) {
+                                    timesEl.style.setProperty('color', col.fg, 'important');
+                                }
+                            }
+                        }
+
+                        var listItems = document.querySelectorAll('.schedule-item-container.schedule-item-work');
+                        for (var j = 0; j < listItems.length; j++) {
+                            var box = listItems[j];
+                            var ltEl = box.querySelector('.schedule-item-times');
+                            var lCol = pickShiftColor(ltEl ? (ltEl.textContent || '') : '');
+                            if (lCol) {
+                                box.style.setProperty('border-left-color', lCol.bg, 'important');
+                            }
+                        }
+                    }
+
                     function runCalendarCleanup() {
                         cleanMonthTable();
                         cleanListView();
+                        colorWorkShifts();
                     }
 
                     runCalendarCleanup();
