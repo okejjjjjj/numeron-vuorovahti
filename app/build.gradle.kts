@@ -19,8 +19,8 @@ android {
         applicationId = "com.numeron_vuorovahti"
         minSdk = 26
         targetSdk = 36
-        versionCode = 116
-        versionName = "3.2.12"
+        versionCode = 117
+        versionName = "3.2.13"
     }
 
     buildTypes {
@@ -52,4 +52,5 @@ dependencies {
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("com.android.billingclient:billing:8.0.0")
+    implementation("com.google.android.play:app-update:2.1.0")
 }

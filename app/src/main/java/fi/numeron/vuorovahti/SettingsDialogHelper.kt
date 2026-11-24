@@ -56,6 +56,8 @@ data class ShiftColorChoice(
 
 object SettingsDialogHelper {
 
+    const val PRIVACY_POLICY_URL = "https://github.com/okejjjjjj/numeron-vuorovahti/blob/main/privacy.md"
+
     val SHIFT_COLOR_CHOICES = listOf(
         ShiftColorChoice("Basilika (Vihreä)", Color.rgb(11, 128, 67), "Basil (Green)"),
         ShiftColorChoice("Salvia (Vaaleanvihreä)", Color.rgb(51, 182, 121), "Sage (Light green)"),
@@ -390,6 +392,88 @@ object SettingsDialogHelper {
             }
         }
 
+        fun openPlayStorePage() {
+            val pkg = context.packageName
+            val marketIntent = android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("market://details?id=$pkg")
+            )
+            if (!launchSystemSettingsIntent(marketIntent)) {
+                launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
+                    )
+                )
+            }
+        }
+
+        fun openPrivacyPolicy() {
+            val url = PRIVACY_POLICY_URL.trim()
+            val isConfigured = url.startsWith("https://") || url.startsWith("http://")
+            if (isConfigured) {
+                val opened = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(url)
+                    )
+                )
+                if (!opened) {
+                    android.widget.Toast.makeText(
+                        context,
+                        if (en) "Could not open browser" else "Selainta ei voitu avata",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                android.widget.Toast.makeText(
+                    context,
+                    if (en) "Privacy policy URL is not configured yet" else "Tietoturvaselosteen osoitetta ei ole vielä määritetty",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        // Korostettu päivityskehotus ylimmäksi, näytetään vain jos Play-kaupassa on uudempi versio
+        val updateBanner = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeCardBg("#3B2810", "#F59E0B", 12)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(14)
+            }
+        }
+        updateBanner.addView(TextView(context).apply {
+            text = if (en) "UPDATE AVAILABLE" else "PÄIVITYS SAATAVILLA"
+            textSize = 11f
+            letterSpacing = 0.06f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#FBBF24"))
+        })
+        val updateBannerSubTv = TextView(context).apply {
+            text = if (en) {
+                "Your app version is outdated. Update to the latest version from Google Play."
+            } else {
+                "Käytössäsi ei ole uusin versio. Suosittelemme päivittämään sovelluksen Google Playsta."
+            }
+            textSize = 13f
+            setTextColor(Color.parseColor("#FEF3C7"))
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        updateBanner.addView(updateBannerSubTv)
+        val btnBannerUpdate = Button(context).apply {
+            text = if (en) "Update on Google Play" else "Päivitä Google Playsta"
+            styleButton(this, "#D97706", "#FBBF24", "#FFFFFF")
+            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(2)
+            setOnClickListener { openPlayStorePage() }
+        }
+        updateBanner.addView(btnBannerUpdate)
+        layout.addView(updateBanner, 0)
+
         
         fun openBatteryOptimizationSettings() {
             val pkgUri = android.net.Uri.parse("package:${context.packageName}")
@@ -660,7 +744,16 @@ object SettingsDialogHelper {
             }
             textSize = 11f
             setTextColor(Color.parseColor("#64748B"))
-            setPadding(0, dp(8), 0, dp(2))
+            setPadding(0, dp(8), 0, dp(4))
+        })
+        authCard.addView(TextView(context).apply {
+            text = if (en) "Read privacy policy →" else "Lue tietoturvaseloste →"
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+            paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+            setPadding(0, dp(4), 0, dp(4))
+            setOnClickListener { openPrivacyPolicy() }
         })
         
         // === KORTTI 3: KALENTERISYNRONOINTI JA VÄRIKOODIT ===
@@ -850,6 +943,114 @@ object SettingsDialogHelper {
             }
         )
         billingHelper.startConnection()
+
+        // === KORTTI 6: TIETOJA JA TIETOTURVA ===
+        val aboutCard = createSectionCard(if (en) "About and privacy" else "Tietoja ja tietoturva")
+
+        val (installedVersionName, installedVersionCode) = try {
+            val pInfo = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val vCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pInfo)
+            (pInfo.versionName ?: "?") to vCode
+        } catch (_: Exception) {
+            "?" to 0L
+        }
+
+        val (_, versionSubTv) = addStatusRow(
+            aboutCard,
+            if (en) "App version" else "Sovelluksen versio",
+            "v$installedVersionName ($installedVersionCode)",
+            if (en) "Checking for updates..." else "Tarkistetaan päivityksiä..."
+        )
+        aboutCard.getChildAt(aboutCard.childCount - 1).setOnClickListener {
+            openPlayStorePage()
+        }
+
+        val btnUpdateApp = Button(context).apply {
+            text = if (en) "Update to latest version (Google Play)" else "Päivitä uusimpaan versioon (Google Play)"
+            styleButton(this, "#D97706", "#FBBF24", "#FFFFFF")
+            visibility = View.GONE
+            setOnClickListener { openPlayStorePage() }
+        }
+        aboutCard.addView(btnUpdateApp)
+
+        val btnPrivacyPolicy = Button(context).apply {
+            text = if (en) "Privacy policy" else "Tietoturvaseloste"
+            styleButton(this, "#233040", "#37475A", "#38BDF8")
+            setOnClickListener { openPrivacyPolicy() }
+        }
+        aboutCard.addView(btnPrivacyPolicy)
+
+        var isDialogDismissed = false
+
+        fun checkForAppUpdate() {
+            try {
+                val appUpdateManager = com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(
+                    context.applicationContext
+                )
+                appUpdateManager.appUpdateInfo
+                    .addOnSuccessListener { info ->
+                        val act = context as? android.app.Activity
+                        if (isDialogDismissed || (act != null && (act.isFinishing || act.isDestroyed))) {
+                            return@addOnSuccessListener
+                        }
+                        val availability = info.updateAvailability()
+                        val updateAvailable =
+                            availability == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE ||
+                            availability == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
+
+                        if (updateAvailable) {
+                            val availCode = info.availableVersionCode()
+                            updateBanner.visibility = View.VISIBLE
+                            updateBannerSubTv.text = if (en) {
+                                "A newer version (build $availCode) is available on Google Play. Please update for the latest fixes."
+                            } else {
+                                "Uudempi versio (koontiversio $availCode) on saatavilla Google Playssa. Päivitä sovellus saadaksesi uusimmat korjaukset."
+                            }
+                            versionSubTv.text = if (en) {
+                                "Outdated – update available (build $availCode)"
+                            } else {
+                                "Vanhentunut – uusi versio saatavilla (koontiversio $availCode)"
+                            }
+                            versionSubTv.setTextColor(Color.parseColor("#FBBF24"))
+                            versionSubTv.visibility = View.VISIBLE
+                            btnUpdateApp.visibility = View.VISIBLE
+                        } else {
+                            versionSubTv.text = if (en) "Up to date" else "Sovellus on ajan tasalla"
+                            versionSubTv.setTextColor(Color.parseColor("#34D399"))
+                            versionSubTv.visibility = View.VISIBLE
+                        }
+                    }
+                    .addOnFailureListener {
+                        val act = context as? android.app.Activity
+                        if (isDialogDismissed || (act != null && (act.isFinishing || act.isDestroyed))) {
+                            return@addOnFailureListener
+                        }
+                        versionSubTv.text = if (en) {
+                            "Tap to check Google Play for updates"
+                        } else {
+                            "Napauta tarkistaaksesi päivitykset Google Playsta"
+                        }
+                        versionSubTv.setTextColor(Color.parseColor("#94A3B8"))
+                        versionSubTv.visibility = View.VISIBLE
+                    }
+            } catch (_: Exception) {
+                versionSubTv.text = if (en) {
+                    "Tap to check Google Play for updates"
+                } else {
+                    "Napauta tarkistaaksesi päivitykset Google Playsta"
+                }
+                versionSubTv.setTextColor(Color.parseColor("#94A3B8"))
+                versionSubTv.visibility = View.VISIBLE
+            }
+        }
 
         // Alapalkki: Peruuta ja Tallenna
         val bottomDivider = View(context).apply {
@@ -1085,11 +1286,13 @@ object SettingsDialogHelper {
         rootContainer.viewTreeObserver.addOnWindowFocusChangeListener(focusListener)
 
         dialog.setOnDismissListener {
+            isDialogDismissed = true
             testCredentialsJob?.cancel()
             rootContainer.viewTreeObserver.removeOnWindowFocusChangeListener(focusListener)
             billingHelper.destroy()
         }
         dialog.show()
+        checkForAppUpdate()
     }
 
     private fun testLoginWithHiddenWebView(
