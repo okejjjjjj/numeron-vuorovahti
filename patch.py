@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Numeron Vuorovahti – kalenterin kuukausiotsikon keskitys, isommat selausnapit,
-kuukausi/vuosi-hyppyvalitsin sekä MainActivity- ja DemoModeHelper-optimoinnit.
+kuukausi/vuosi-hyppyvalitsin, väärän salasanan lukituksen esto sekä optimoinnit.
 
 Käyttö:
     python3 patch.py --dry-run
@@ -15,7 +15,7 @@ import re
 import sys
 from pathlib import Path
 
-IGNORED_DIRS = {".git", ".patch_backups", ".gradle", ".idea", "build", "node_modules", "__pycache__"}
+IGNORED_DIRS = {".git", ".gradle", ".idea", "build", "node_modules", "__pycache__"}
 
 
 def find_file(root: Path, filename: str, must_contain: str | None = None) -> Path:
@@ -61,16 +61,240 @@ def bump_version(text: str) -> str:
     return text
 
 
+def patch_background_auth_helper(text: str) -> str:
+    text = replace_once(
+        text,
+        r"""    private val cookieSyncLock = Any()
+    private val authMutex = Mutex()
+    @Volatile
+    private var lastAuthSuccessMs: Long = 0L
+    @Volatile
+    private var lastAuthBaseUrl: String = ""
+
+    fun clearSessionCache(context: Context? = null) {
+        lastAuthSuccessMs = 0L
+        lastAuthBaseUrl = ""
+        if (context != null) {
+            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("last_valid_session_ms", 0L)
+                .apply()
+            try {
+                val cm = CookieManager.getInstance()
+                cm.removeAllCookies(null)
+                cm.flush()
+            } catch (_: Exception) {
+            }
+        }
+    }""",
+        r"""    private val cookieSyncLock = Any()
+    private val authMutex = Mutex()
+    @Volatile
+    private var lastAuthSuccessMs: Long = 0L
+    @Volatile
+    private var lastAuthBaseUrl: String = ""
+    @Volatile
+    private var blockedCredentialFingerprint: String = ""
+
+    fun computeCredentialFingerprint(baseUrl: String, username: String, password: String): String {
+        val raw = "${baseUrl.trim()}\u0000${username.trim()}\u0000$password"
+        return try {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            raw.hashCode().toString()
+        }
+    }
+
+    fun isCredentialBlocked(context: Context): Boolean {
+        val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
+        val username = SecureCredentialManager.getUsername(context).orEmpty()
+        val password = SecureCredentialManager.getPassword(context).orEmpty()
+        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) return false
+        val fp = computeCredentialFingerprint(baseUrl, username, password)
+        if (blockedCredentialFingerprint == fp) return true
+        val storedFp = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("failed_auth_fingerprint", "")
+            .orEmpty()
+        if (storedFp == fp) {
+            blockedCredentialFingerprint = fp
+            return true
+        }
+        return false
+    }
+
+    fun getBlockedReason(context: Context): String {
+        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("failed_auth_message", "")
+            .orEmpty()
+    }
+
+    fun markCredentialFailed(
+        context: Context,
+        baseUrl: String,
+        username: String,
+        password: String,
+        reason: String = ""
+    ) {
+        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) return
+        val fp = computeCredentialFingerprint(baseUrl, username, password)
+        blockedCredentialFingerprint = fp
+        lastAuthSuccessMs = 0L
+        lastAuthBaseUrl = ""
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("failed_auth_fingerprint", fp)
+            .putString("failed_auth_message", reason)
+            .putLong("last_valid_session_ms", 0L)
+            .apply()
+    }
+
+    fun clearSessionCache(context: Context? = null) {
+        lastAuthSuccessMs = 0L
+        lastAuthBaseUrl = ""
+        blockedCredentialFingerprint = ""
+        if (context != null) {
+            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putLong("last_valid_session_ms", 0L)
+                .remove("failed_auth_fingerprint")
+                .remove("failed_auth_message")
+                .apply()
+            try {
+                val cm = CookieManager.getInstance()
+                cm.removeAllCookies(null)
+                cm.flush()
+            } catch (_: Exception) {
+            }
+        }
+    }""",
+        "BackgroundAuthHelper:credential_lockout_guard",
+    )
+
+    text = replace_once(
+        text,
+        r"""        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
+            return@withContext false
+        }
+
+        authMutex.withLock {""",
+        r"""        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
+            return@withContext false
+        }
+        if (isCredentialBlocked(context)) {
+            return@withContext false
+        }
+
+        authMutex.withLock {
+            if (isCredentialBlocked(context)) {
+                return@withLock false
+            }""",
+        "BackgroundAuthHelper:skip_if_blocked",
+    )
+
+    text = replace_once(
+        text,
+        r"""            if (loginResp.statusCode !in 200..399 || stillOnLogin || cookieStore.isEmpty()) {
+                return@withContext false
+            }""",
+        r"""            if (loginResp.statusCode !in 200..399 || stillOnLogin || cookieStore.isEmpty()) {
+                if (loginResp.statusCode in 200..399 && stillOnLogin) {
+                    val errReason = if (loginResp.body.isNotEmpty()) {
+                        Jsoup.parse(loginResp.body)
+                            .selectFirst(".validation-summary-errors, .alert-danger")
+                            ?.text()
+                            ?.trim()
+                            .orEmpty()
+                    } else {
+                        ""
+                    }
+                    markCredentialFailed(
+                        context = context,
+                        baseUrl = baseUrl,
+                        username = username,
+                        password = password,
+                        reason = errReason.ifEmpty { "Virheellinen käyttäjätunnus tai salasana." }
+                    )
+                }
+                return@withContext false
+            }""",
+        "BackgroundAuthHelper:mark_failed_on_rejected_login",
+    )
+    return text
+
+
+def patch_settings_dialog_helper(text: str) -> str:
+    text = replace_once(
+        text,
+        r"""        val tvTestStatus = TextView(context).apply {
+            text = ""
+            textSize = 13f
+            setPadding(0, dp(8), 0, dp(2))
+        }""",
+        r"""        val wasAuthBlocked = !isDemoActive && BackgroundAuthHelper.isCredentialBlocked(context)
+        val tvTestStatus = TextView(context).apply {
+            text = if (wasAuthBlocked) {
+                if (en) {
+                    "Automatic login paused after a rejected password. Please verify your credentials and save."
+                } else {
+                    "Automaattinen kirjautuminen pysäytettiin virheellisen tunnuksen tai salasanan vuoksi. Tarkista tiedot ja tallenna."
+                }
+            } else {
+                ""
+            }
+            setTextColor(Color.parseColor(if (wasAuthBlocked) "#EF4444" else "#94A3B8"))
+            textSize = 13f
+            setPadding(0, dp(8), 0, dp(2))
+        }""",
+        "SettingsDialogHelper:show_blocked_login_warning",
+    )
+
+    text = replace_once(
+        text,
+        r"""            val prevUser = SecureCredentialManager.getUsername(context).orEmpty()
+            val prevUrl = UrlNormalizer.getSavedBaseUrl(context)
+
+            val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
+                UrlNormalizer.isDemoInput(rawOrg) ||
+                DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
+
+            SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
+            if (savedUser != prevUser || savedPass != existingPassword || normalizedUrl != prevUrl) {
+                BackgroundAuthHelper.clearSessionCache(context)
+            }""",
+        r"""            val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
+                UrlNormalizer.isDemoInput(rawOrg) ||
+                DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
+
+            SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
+            BackgroundAuthHelper.clearSessionCache(context)""",
+        "SettingsDialogHelper:always_clear_session_and_block_on_save",
+    )
+    return text
+
+
 def patch_main_activity(text: str) -> str:
+    # 0. Lisätään webLoginAttemptFingerprint estämään WebView-kirjautumissilmukka
+    text = replace_once(
+        text,
+        r"""    private var isAutoSubmittingLogin: Boolean = false
+    private var lastThemedUrl: String? = null""",
+        r"""    private var isAutoSubmittingLogin: Boolean = false
+    private var webLoginAttemptFingerprint: String = ""
+    private var lastThemedUrl: String? = null""",
+        "MainActivity:webLoginAttemptFingerprint_field",
+    )
+
     # 1. Siirretään scheduleShiftReminders taustasäikeeseen onCreate-käynnistyksen nopeuttamiseksi
     #    ja tyhjennetään OPEN_REQUESTS-extra käsittelyn jälkeen.
     text = replace_once(
         text,
-        """        requestNeededPermissions()
+        r"""        requestNeededPermissions()
         ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
 
         CalendarSyncHelper.scheduleShiftReminders(this)""",
-        """        requestNeededPermissions()
+        r"""        requestNeededPermissions()
         ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
 
         scope.launch(Dispatchers.IO) {
@@ -81,12 +305,12 @@ def patch_main_activity(text: str) -> str:
 
     text = replace_once(
         text,
-        """        if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
+        r"""        if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
             navigateToTab(Tab.REQUESTS)
         } else {
             navigateToTab(Tab.STAMP)
         }""",
-        """        if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
+        r"""        if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
             intent.removeExtra("OPEN_REQUESTS")
             navigateToTab(Tab.REQUESTS)
         } else {
@@ -96,12 +320,13 @@ def patch_main_activity(text: str) -> str:
     )
 
     # 2. Nollataan demokalenterin selattu kuukausi nykyhetkeen, kun käyttäjä avaa Vuorot-välilehden
+    #    ja estetään kirjautumisyritykset jos tunnukset on jo todettu virheellisiksi.
     text = replace_once(
         text,
-        """        if (DemoModeHelper.isDemoEnabled(this)) {
+        r"""        if (DemoModeHelper.isDemoEnabled(this)) {
             startSnapshotTransition {
                 if (token != navigationToken) return@startSnapshotTransition""",
-        """        if (DemoModeHelper.isDemoEnabled(this)) {
+        r"""        if (DemoModeHelper.isDemoEnabled(this)) {
             if (tab == Tab.SHIFTS) {
                 DemoModeHelper.resetDemoCalendarMonth(this)
             }
@@ -110,15 +335,137 @@ def patch_main_activity(text: str) -> str:
         "MainActivity:reset_demo_calendar_on_tab",
     )
 
+    text = replace_once(
+        text,
+        r"""            val baseUrl = getBaseUrl()
+            if (baseUrl.isEmpty() || (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))) {
+                endSnapshotTransition()
+                Toast.makeText(
+                    this,
+                    if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                    Toast.LENGTH_LONG
+                ).show()
+                btnNavSettings.performClick()
+                return
+            }""",
+        r"""            val baseUrl = getBaseUrl()
+            if (baseUrl.isEmpty() || (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))) {
+                endSnapshotTransition()
+                Toast.makeText(
+                    this,
+                    if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                    Toast.LENGTH_LONG
+                ).show()
+                btnNavSettings.performClick()
+                return
+            }
+            if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+                endSnapshotTransition()
+                Toast.makeText(
+                    this,
+                    if (DemoModeHelper.isEnglish(this)) {
+                        "Login failed – please check username and password in Settings"
+                    } else {
+                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                    },
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }""",
+        "MainActivity:block_navigation_on_invalid_credentials",
+    )
+
+    text = replace_once(
+        text,
+        r"""                if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
+                    navigateJob = scope.launch {
+                        try {
+                            val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                            if (ok) {
+                                prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+                            }
+                        } catch (_: Exception) {
+                        }
+                        if (token == navigationToken && !isFinishing && !isDestroyed) {
+                            webView.stopLoading()
+                            webView.loadUrl(url)
+                        }
+                    }
+                }""",
+        r"""                if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
+                    navigateJob = scope.launch {
+                        try {
+                            val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                            if (ok) {
+                                prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+                            }
+                        } catch (_: Exception) {
+                        }
+                        if (token == navigationToken && !isFinishing && !isDestroyed) {
+                            if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
+                                endSnapshotTransition()
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (DemoModeHelper.isEnglish(this@MainActivity)) {
+                                        "Login failed – please check username and password in Settings"
+                                    } else {
+                                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                                    },
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                webView.stopLoading()
+                                webView.loadUrl(url)
+                            }
+                        }
+                    }
+                }""",
+        "MainActivity:stop_webview_load_after_rejected_bg_auth",
+    )
+
+    text = replace_once(
+        text,
+        r"""        val baseUrl = getBaseUrl()
+        if (baseUrl.isBlank()) {
+            val en = DemoModeHelper.isEnglish(this)
+            Toast.makeText(
+                this,
+                if (en) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }""",
+        r"""        val baseUrl = getBaseUrl()
+        if (baseUrl.isBlank()) {
+            val en = DemoModeHelper.isEnglish(this)
+            Toast.makeText(
+                this,
+                if (en) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            val en = DemoModeHelper.isEnglish(this)
+            Toast.makeText(
+                this,
+                if (en) "Login failed – please check username and password in Settings" else "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }""",
+        "MainActivity:block_manual_sync_on_invalid_credentials",
+    )
+
     # 3. Estetään ulkoisen selaimen avaus alakehysten (iframe) pyynnöistä
     text = replace_once(
         text,
-        """                    try {
+        r"""                    try {
                         startActivity(Intent(Intent.ACTION_VIEW, uri))
                     } catch (_: Exception) {
                     }
                     return true""",
-        """                    if (request?.isForMainFrame == true) {
+        r"""                    if (request?.isForMainFrame == true) {
                         try {
                             startActivity(Intent(Intent.ACTION_VIEW, uri))
                         } catch (_: Exception) {
@@ -127,6 +474,24 @@ def patch_main_activity(text: str) -> str:
                     }
                     return false""",
         "MainActivity:only_external_main_frame",
+    )
+
+    text = replace_once(
+        text,
+        r"""                if (!url.contains("/Login/", ignoreCase = true)) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                }""",
+        r"""                if (!url.contains("/Login/", ignoreCase = true)) {
+                    webLoginAttemptFingerprint = ""
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                }""",
+        "MainActivity:reset_webLoginAttemptFingerprint_on_success",
     )
 
     # 4. Varmistetaan ettei CSS-välimuisti estä DOM-päivitystä, mutta vältetään turha 20 KB CSS-ylikirjoitus
@@ -151,7 +516,7 @@ def patch_main_activity(text: str) -> str:
     # 5. Keskitetään kuukausi ja vuosi, suurennetaan selausnapit ja muotoillaan #monthText + hyppyvalitsin
     text = replace_once(
         text,
-        """            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
+        r"""            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
             .calendar-heading {
                 box-shadow: none !important;
                 display: flex !important;
@@ -187,7 +552,7 @@ def patch_main_activity(text: str) -> str:
                 font-size: 16px !important;
                 text-decoration: none !important;
             }""",
-        """            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
+        r"""            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
             .calendar-heading {
                 box-shadow: none !important;
                 display: flex !important;
@@ -296,10 +661,10 @@ def patch_main_activity(text: str) -> str:
     # 6. CSS-päivityksen optimointi: vältetään turha style.textContent-ylikirjoitus jos väriavain ei muuttunut
     text = replace_once(
         text,
-        """                if (style.textContent !== '$safeCss') {
+        r"""                if (style.textContent !== '$safeCss') {
                     style.textContent = '$safeCss';
                 }""",
-        """                if (style.getAttribute('data-vv-colors') !== '$colorCacheKey' || !style.textContent) {
+        r"""                if (style.getAttribute('data-vv-colors') !== '$colorCacheKey' || !style.textContent) {
                     style.setAttribute('data-vv-colors', '$colorCacheKey');
                     style.textContent = '$safeCss';
                 }""",
@@ -309,7 +674,7 @@ def patch_main_activity(text: str) -> str:
     # 7. Rajataan kalenterisiivouksen MutationObserver vain /calendar-sivuille (ei ajeta leimaus-/toivesivuilla)
     text = replace_once(
         text,
-        """                    runCalendarCleanup();
+        r"""                    runCalendarCleanup();
                     if (!window._calendarCleanupObserver && document.body && typeof MutationObserver !== 'undefined') {
                         window._calendarCleanupObserver = true;
                         var calCleanupTimer = null;
@@ -319,7 +684,7 @@ def patch_main_activity(text: str) -> str:
                         });
                         calObs.observe(document.body, { childList: true, subtree: true });
                     }""",
-        """                    if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1) {
+        r"""                    if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1) {
                         runCalendarCleanup();
                         if (!window._calendarCleanupObserver && typeof MutationObserver !== 'undefined') {
                             var calObsRoot = document.getElementById('calendar-content') || document.body;
@@ -340,10 +705,10 @@ def patch_main_activity(text: str) -> str:
     # 8. Lisätään kuukausi/vuosi-hyppyvalitsin #monthText-otsikon painallukseen
     text = replace_once(
         text,
-        """                // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
+        r"""                // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
                 if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1 && !window._quickRequestInstalled) {
                     window._quickRequestInstalled = true;""",
-        """                // === KUUKAUSI- JA VUOSIHYPPYVALITSIN (/Calendar/Month) ===
+        r"""                // === KUUKAUSI- JA VUOSIHYPPYVALITSIN (/Calendar/Month) ===
                 if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1) {
                     var monthLabelEl = document.getElementById('monthText');
                     if (monthLabelEl && !monthLabelEl._vvJumpInstalled) {
@@ -493,16 +858,114 @@ def patch_main_activity(text: str) -> str:
         "MainActivity:month_year_jump_picker",
     )
 
-    # 9. Palautetaan latausverho, jos automaattikirjautuminen saavuttaa 15 yrityksen rajan
+    # 9. Estetään WebView-automaattikirjautumisen uusintayritykset väärillä tunnuksilla (max 1 yritys)
     text = replace_once(
         text,
-        """        webView.evaluateJavascript(js) { res ->
+        r'''            private fun handleAutoLogin(attempt: Int = 0) {
+        val rawUser = SecureCredentialManager.getUsername(this) ?: ""
+        val rawPass = SecureCredentialManager.getPassword(this) ?: ""
+        if (rawUser.isEmpty() || rawPass.isEmpty()) {
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            return
+        }
+        val userJson = org.json.JSONObject.quote(rawUser)
+        val passJson = org.json.JSONObject.quote(rawPass)
+
+        val js = """
+            (function() {
+                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(function(el) {
+                    return el.innerText.includes('Hyväksy');
+                });
+                if (cookieBtn) { cookieBtn.click(); }
+
+                var u = document.getElementById('Username');
+                var p = document.getElementById('Password');
+                var f = document.getElementById('LoginForm');
+                if (u && p && f) {
+                    u.value = $userJson;
+                    p.value = $passJson;
+                    u.dispatchEvent(new Event('input', { bubbles: true }));
+                    p.dispatchEvent(new Event('input', { bubbles: true }));
+                    f.submit();
+                    return 'SUBMITTED';
+                }
+                return 'WAITING';
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { res ->
             if (res?.contains("WAITING") == true) {
                 if (attempt < 15) { webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L) }
             }
-        }""",
-        """        webView.evaluateJavascript(js) { res ->
-            if (res?.contains("WAITING") == true) {
+        }
+    }''',
+        r'''    private fun handleAutoLogin(attempt: Int = 0) {
+        val baseUrl = getBaseUrl()
+        val rawUser = SecureCredentialManager.getUsername(this) ?: ""
+        val rawPass = SecureCredentialManager.getPassword(this) ?: ""
+        if (rawUser.isEmpty() || rawPass.isEmpty()) {
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            return
+        }
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            return
+        }
+        val fp = BackgroundAuthHelper.computeCredentialFingerprint(baseUrl, rawUser, rawPass)
+        if (attempt == 0 && webLoginAttemptFingerprint == fp) {
+            BackgroundAuthHelper.markCredentialFailed(
+                context = this,
+                baseUrl = baseUrl,
+                username = rawUser,
+                password = rawPass,
+                reason = "Virheellinen käyttäjätunnus tai salasana."
+            )
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            Toast.makeText(
+                this,
+                if (DemoModeHelper.isEnglish(this)) {
+                    "Login failed – please check username and password in Settings"
+                } else {
+                    "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                },
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val userJson = org.json.JSONObject.quote(rawUser)
+        val passJson = org.json.JSONObject.quote(rawPass)
+
+        val js = """
+            (function() {
+                var cookieBtn = Array.from(document.querySelectorAll('button, a')).find(function(el) {
+                    return el.innerText.includes('Hyväksy');
+                });
+                if (cookieBtn) { cookieBtn.click(); }
+
+                var u = document.getElementById('Username');
+                var p = document.getElementById('Password');
+                var f = document.getElementById('LoginForm');
+                if (u && p && f) {
+                    u.value = $userJson;
+                    p.value = $passJson;
+                    u.dispatchEvent(new Event('input', { bubbles: true }));
+                    p.dispatchEvent(new Event('input', { bubbles: true }));
+                    f.submit();
+                    return 'SUBMITTED';
+                }
+                return 'WAITING';
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(js) { res ->
+            if (res?.contains("SUBMITTED") == true) {
+                webLoginAttemptFingerprint = fp
+            } else if (res?.contains("WAITING") == true) {
                 if (attempt < 15) {
                     webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L)
                 } else {
@@ -510,16 +973,79 @@ def patch_main_activity(text: str) -> str:
                     endSnapshotTransition()
                 }
             }
+        }
+    }''',
+        "MainActivity:single_attempt_web_login",
+    )
+
+    text = replace_once(
+        text,
+        r"""        val baseUrl = getBaseUrl()
+        if (baseUrl.isEmpty()) return
+
+        startSnapshotTransition {
+            scope.launch {
+                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(
+                    this@MainActivity,
+                    forceRefresh = true
+                )
+                if (ok) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                    val targetUrl = resolveResumeUrl(baseUrl)
+                    webView.loadUrl(targetUrl)
+                } else {
+                    webView.loadUrl("$baseUrl/Login/Login")
+                }
+            }
         }""",
-        "MainActivity:autoLogin_timeout_cleanup",
+        r"""        val baseUrl = getBaseUrl()
+        if (baseUrl.isEmpty()) return
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            endSnapshotTransition()
+            return
+        }
+
+        startSnapshotTransition {
+            scope.launch {
+                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(
+                    this@MainActivity,
+                    forceRefresh = true
+                )
+                if (ok) {
+                    getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                        .edit()
+                        .putLong("last_valid_session_ms", System.currentTimeMillis())
+                        .apply()
+                    val targetUrl = resolveResumeUrl(baseUrl)
+                    webView.loadUrl(targetUrl)
+                } else if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
+                    endSnapshotTransition()
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (DemoModeHelper.isEnglish(this@MainActivity)) {
+                            "Login failed – please check username and password in Settings"
+                        } else {
+                            "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                        },
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    webView.loadUrl("$baseUrl/Login/Login")
+                }
+            }
+        }""",
+        "MainActivity:session_expired_stop_on_bad_credentials",
     )
 
     # 10. Tyhjennetään pendingAction, jos handleCalendarPage saa null-tuloksen
     text = replace_once(
         text,
-        """        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
+        r"""        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
             if (rawHtml == null || rawHtml == "null") return@evaluateJavascript""",
-        """        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
+        r"""        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
             if (rawHtml == null || rawHtml == "null") {
                 pendingAction = Action.NONE
                 collectedCalendarHtml.clear()
@@ -535,14 +1061,14 @@ def patch_demo_mode_helper(text: str) -> str:
     # 1. Lisätään apumetodi demokalenterin kuukauden nollaamiseen
     text = replace_once(
         text,
-        """    fun setDemoLanguage(context: Context, lang: String) {
+        r"""    fun setDemoLanguage(context: Context, lang: String) {
         val normalized = if (lang.equals("en", ignoreCase = true)) "en" else "fi"
         context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             .edit()
             .putString("demo_language", normalized)
             .apply()
     }""",
-        """    fun setDemoLanguage(context: Context, lang: String) {
+        r"""    fun setDemoLanguage(context: Context, lang: String) {
         val normalized = if (lang.equals("en", ignoreCase = true)) "en" else "fi"
         context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             .edit()
@@ -563,31 +1089,31 @@ def patch_demo_mode_helper(text: str) -> str:
     # 2. HTML-suojaus demoleimausten historiaan
     text = replace_once(
         text,
-        """                \"\"\"<tr>
+        r'''                """<tr>
                     <td>${p[0]}</td>
                     <td><strong>${p[1]}</strong></td>
                     <td style="color:$typeColor;font-weight:700;">$dirLabel</td>
-                </tr>\"\"\"""",
-        """                val safeDate = android.text.TextUtils.htmlEncode(p[0])
+                </tr>"""''',
+        r'''                val safeDate = android.text.TextUtils.htmlEncode(p[0])
                 val safeTime = android.text.TextUtils.htmlEncode(p[1])
-                \"\"\"<tr>
+                """<tr>
                     <td>$safeDate</td>
                     <td><strong>$safeTime</strong></td>
                     <td style="color:$typeColor;font-weight:700;">$dirLabel</td>
-                </tr>\"\"\"""",
+                </tr>"""''',
         "DemoModeHelper:html_encode_stamps",
     )
 
     # 3. Demokalenteriin kuukauden selaus (◀ / ▶), keskitys, vuorovärien luku kerran silmukan ulkopuolella ja hyppyvalitsin
     text = replace_once(
         text,
-        """    fun getDemoShiftsHtml(context: Context): String {
+        r"""    fun getDemoShiftsHtml(context: Context): String {
         val en = isEnglish(context)
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val variant = prefs.getInt("demo_shift_variant", 0)
         val today = LocalDate.now()
         val ym = YearMonth.from(today)""",
-        """    fun getDemoShiftsHtml(context: Context): String {
+        r"""    fun getDemoShiftsHtml(context: Context): String {
         val en = isEnglish(context)
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val variant = prefs.getInt("demo_shift_variant", 0)
@@ -607,9 +1133,9 @@ def patch_demo_mode_helper(text: str) -> str:
 
     text = replace_once(
         text,
-        """        val weeksHtml = StringBuilder()
+        r"""        val weeksHtml = StringBuilder()
         var cursor = gridStart""",
-        """        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+        r"""        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
         val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
         val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
         val timePairRegex = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})")
@@ -621,13 +1147,13 @@ def patch_demo_mode_helper(text: str) -> str:
 
     text = replace_once(
         text,
-        """                    else -> {
+        r"""                    else -> {
                         val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
                         val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
                         val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
                         val tm = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})").find(item.times)
                         val chosenRgb = if (tm != null) {""",
-        """                    else -> {
+        r"""                    else -> {
                         val tm = timePairRegex.find(item.times)
                         val chosenRgb = if (tm != null) {""",
         "DemoModeHelper:use_hoisted_shift_colors",
@@ -635,7 +1161,7 @@ def patch_demo_mode_helper(text: str) -> str:
 
     text = replace_once(
         text,
-        """        val extraCss = \"\"\"
+        r'''        val extraCss = """
             .calendar-heading {
                 display: flex;
                 justify-content: space-between;
@@ -661,8 +1187,8 @@ def patch_demo_mode_helper(text: str) -> str:
                 color: #38BDF8;
                 font-size: 15px;
                 user-select: none;
-            }""",
-        """        val extraCss = \"\"\"
+            }''',
+        r'''        val extraCss = """
             .calendar-heading {
                 display: flex;
                 flex-direction: column;
@@ -725,13 +1251,13 @@ def patch_demo_mode_helper(text: str) -> str:
             .nav-arrow:active {
                 background-color: #2A394A;
                 border-color: #38BDF8;
-            }""",
+            }''',
         "DemoModeHelper:centered_demo_month_heading",
     )
 
     text = replace_once(
         text,
-        """                <div class="calendar-heading">
+        r'''                <div class="calendar-heading">
                     <div class="monthSelector">
                         <span class="nav-arrow">◀</span>
                         <span id="monthText">$monthTitle</span>
@@ -741,10 +1267,10 @@ def patch_demo_mode_helper(text: str) -> str:
                         ${langSwitchHtml(en)}
                         <span class="badge badge-ok">DEMO</span>
                     </div>
-                </div>""",
-        """                <div class="calendar-heading">
+                </div>''',
+        r'''                <div class="calendar-heading">
                     <div class="demo-top-meta">
-                        ${if (!isCurrentMonth) \"\"\"<button type="button" class="btn" style="padding:4px 10px;font-size:11px;" onclick="DemoBridge.selectMonth(${today.year}, ${today.monthValue})">${if (en) "Today" else "Tänään"}</button>\"\"\" else ""}
+                        ${if (!isCurrentMonth) """<button type="button" class="btn" style="padding:4px 10px;font-size:11px;" onclick="DemoBridge.selectMonth(${today.year}, ${today.monthValue})">${if (en) "Today" else "Tänään"}</button>""" else ""}
                         ${langSwitchHtml(en)}
                         <span class="badge badge-ok">DEMO</span>
                     </div>
@@ -753,18 +1279,18 @@ def patch_demo_mode_helper(text: str) -> str:
                         <span id="monthText" onclick="openDemoMonthJump()">$monthTitle</span>
                         <button type="button" class="nav-arrow" onclick="DemoBridge.selectMonth(${nextYm.year}, ${nextYm.monthValue})">▶</button>
                     </div>
-                </div>""",
+                </div>''',
         "DemoModeHelper:interactive_month_controls",
     )
 
     text = replace_once(
         text,
-        """                    </div>
+        r"""                    </div>
                 </div>
             </div>
         </body>
         </html>""",
-        """                    </div>
+        r"""                    </div>
                 </div>
             </div>
             <script>
@@ -875,12 +1401,12 @@ def patch_demo_mode_helper(text: str) -> str:
 
     text = replace_once(
         text,
-        """        @JavascriptInterface
+        r"""        @JavascriptInterface
         fun setLanguage(lang: String) {
             setDemoLanguage(context, lang)
             onReloadNeeded()
         }""",
-        """        @JavascriptInterface
+        r"""        @JavascriptInterface
         fun setLanguage(lang: String) {
             setDemoLanguage(context, lang)
             onReloadNeeded()
@@ -904,7 +1430,7 @@ def patch_demo_mode_helper(text: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Kalenterin kuukausiotsikon keskitys, isommat selausnapit, kuukausi/vuosi-hyppyvalitsin ja optimoinnit"
+        description="Kalenterin kuukausiotsikon keskitys, isommat selausnapit, kuukausi/vuosi-hyppyvalitsin, väärän salasanan lukituksen esto ja optimoinnit"
     )
     parser.add_argument("--root", default=".", help="Projektin juurikansio")
     parser.add_argument("--dry-run", action="store_true", help="Tarkista muutokset kirjoittamatta tiedostoja")
@@ -913,6 +1439,8 @@ def main() -> int:
     root = Path(args.root).resolve()
     patch_plan = [
         ("build.gradle.kts", 'applicationId = "com.numeron_vuorovahti"', bump_version),
+        ("BackgroundAuthHelper.kt", "object BackgroundAuthHelper", patch_background_auth_helper),
+        ("SettingsDialogHelper.kt", "object SettingsDialogHelper", patch_settings_dialog_helper),
         ("MainActivity.kt", "class MainActivity", patch_main_activity),
         ("DemoModeHelper.kt", "object DemoModeHelper", patch_demo_mode_helper),
     ]
