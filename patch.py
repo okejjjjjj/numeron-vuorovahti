@@ -1,17 +1,7 @@
 #!/usr/bin/env python3
 """
-Numeron Vuorovahti – patch 4:
-- MainActivity: erottaa CSS- ja DOM-alustuksen (onPageCommitVisible vs. onPageFinished),
-  varmistaa observerien kiinnittymisen sekä lisää vuorojen värikoodauksen kuukausi- ja luettelonäkymään
-- DemoModeHelper: samat vuorovärit demotilan kuukausinäkymään
-- CalendarSyncHelper: kaksivaiheinen täsmäytys saman päivän useille vuoroille +
-  muistutusten päivitys tulevien tapahtumien poiston yhteydessä
-- NumeronParser: kuun vaihteen yli ulottuva yövuoro 1. päivän aamuyönä
-- BackgroundAuthHelper: stopAfterRedirect = true taustakirjautumisessa
-- ShiftReminderReceiver: toiveilmoitusten turvallinen ID-avaruus
-- CalendarChangeTracker: vanhojen muutoslokimerkintöjen automaattinen karsinta
-- QuickStampActivity: taustan vahinkosulkemisen esto aktiivisen leimauksen aikana
-- build.gradle.kts: versionCode 116 / versionName 3.2.12
+Numeron Vuorovahti – asetussivun versiotieto, Play-päivityskehotus ja tietoturvaselosteen linkki.
+Toimii sekä puhtaalle pohjalle että päivittämään aiemmin asetetun PRIVACY_POLICY_URL-osoitteen.
 
 Käyttö:
     python3 patch.py --dry-run
@@ -21,10 +11,12 @@ Käyttö:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
-IGNORED_DIRS = {".git", ".gradle", ".idea", ".patch_backups", "build", "node_modules", "__pycache__"}
+IGNORED_DIRS = {".git", ".gradle", ".idea", "build", "node_modules", ".patch_backups", "__pycache__"}
+DEFAULT_PRIVACY_URL = "https://github.com/okejjjjjj/numeron-vuorovahti/blob/main/privacy.md"
 
 
 def find_file(root: Path, filename: str, must_contain: str | None = None) -> Path:
@@ -50,839 +42,380 @@ def replace_once(content: str, old: str, new: str, label: str) -> str:
     return content.replace(old, new, 1)
 
 
+def bump_version(text: str) -> str:
+    m_code = re.search(r"versionCode\s*=\s*(\d+)", text)
+    if not m_code:
+        raise RuntimeError("[build.gradle:versionCode] versionCode-määritystä ei löytynyt.")
+    old_code = int(m_code.group(1))
+    text = text[: m_code.start()] + f"versionCode = {old_code + 1}" + text[m_code.end() :]
+
+    m_name = re.search(r'versionName\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text)
+    if not m_name:
+        raise RuntimeError("[build.gradle:versionName] versionName-määritystä ei löytynyt.")
+    major, minor, patch = int(m_name.group(1)), int(m_name.group(2)), int(m_name.group(3))
+    new_name = f"{major}.{minor}.{patch + 1}"
+    text = text[: m_name.start()] + f'versionName = "{new_name}"' + text[m_name.end() :]
+    print(
+        f"  Versio päivitetty: {old_code} -> {old_code + 1}, "
+        f"{m_name.group(1)}.{m_name.group(2)}.{m_name.group(3)} -> {new_name}"
+    )
+    return text
+
+
 def patch_build_gradle(text: str) -> str:
-    text = replace_once(text, "versionCode = 115", "versionCode = 116", "build.gradle:versionCode")
-    text = replace_once(text, 'versionName = "3.2.11"', 'versionName = "3.2.12"', "build.gradle:versionName")
+    text = bump_version(text)
+    if "com.google.android.play:app-update" not in text:
+        updated, count = re.subn(
+            r'^([ \t]*)(implementation\("com\.android\.billingclient:billing:[^"]+"\))',
+            r'\1\2\n\1implementation("com.google.android.play:app-update:2.1.0")',
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if count != 1:
+            raise RuntimeError("[build.gradle:add_app_update_dep] billing-riippuvuusriviä ei löytynyt.")
+        text = updated
     return text
 
 
-def patch_background_auth_helper(text: str) -> str:
-    return replace_once(
-        text,
-        r'''            // 2. Lähetä kirjautumislomake (pysäytetään 302-ohjaukseen ilman raskaan kohdesivun latausta)
-            val loginResp = executeRequest(
-                urlString = postUrl,
-                method = "POST",
-                cookieStore = cookieStore,
-                postBody = encodedBody,
-                stopAfterRedirect = false
-            ) ?: return@withContext false''',
-        r'''            // 2. Lähetä kirjautumislomake (pysäytetään 302-ohjaukseen ilman raskaan kohdesivun latausta)
-            val loginResp = executeRequest(
-                urlString = postUrl,
-                method = "POST",
-                cookieStore = cookieStore,
-                postBody = encodedBody,
-                stopAfterRedirect = true
-            ) ?: return@withContext false''',
-        "BackgroundAuthHelper:stopAfterRedirect_true",
-    )
+def make_settings_patcher(privacy_url: str):
+    escaped_url = privacy_url.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
 
+    def patch_settings_dialog_helper(text: str) -> str:
+        # Jos aiempi patch on jo ajettu, päivitetään pelkkä tietoturvaselosteen osoite
+        if "const val PRIVACY_POLICY_URL =" in text:
+            updated, count = re.subn(
+                r'const val PRIVACY_POLICY_URL\s*=\s*"[^"]*"',
+                'const val PRIVACY_POLICY_URL = "' + escaped_url + '"',
+                text,
+                count=1,
+            )
+            if count != 1:
+                raise RuntimeError(
+                    "[SettingsDialogHelper:update_privacy_url] PRIVACY_POLICY_URL-riviä ei voitu päivittää."
+                )
+            return updated
 
-def patch_main_activity(text: str) -> str:
-    text = replace_once(
-        text,
-        r'''            override fun onPageCommitVisible(view: WebView?, url: String?) {
-                super.onPageCommitVisible(view, url)
-                if (url != null && !url.startsWith("https://demo.local/")) {
-                    injectDarkTheme(view)
+        old_header = (
+            "object SettingsDialogHelper {\n\n"
+            "    val SHIFT_COLOR_CHOICES = listOf("
+        )
+        new_header = (
+            "object SettingsDialogHelper {\n\n"
+            '    const val PRIVACY_POLICY_URL = "' + escaped_url + '"\n\n'
+            "    val SHIFT_COLOR_CHOICES = listOf("
+        )
+        text = replace_once(
+            text,
+            old_header,
+            new_header,
+            "SettingsDialogHelper:privacy_url_const",
+        )
+
+        text = replace_once(
+            text,
+            '''        fun launchSystemSettingsIntent(intent: android.content.Intent): Boolean {
+            return try {
+                if (context !is android.app.Activity) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-            }''',
-        r'''            override fun onPageCommitVisible(view: WebView?, url: String?) {
-                super.onPageCommitVisible(view, url)
-                if (url != null && !url.startsWith("https://demo.local/")) {
-                    injectDarkTheme(view, forceDomInit = false)
+                context.startActivity(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }''',
+            '''        fun launchSystemSettingsIntent(intent: android.content.Intent): Boolean {
+            return try {
+                if (context !is android.app.Activity) {
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-            }''',
-        "MainActivity:onPageCommitVisible_forceDomInit",
-    )
-
-    text = replace_once(
-        text,
-        r'''                injectDarkTheme(view)
-                CookieManager.getInstance().flush()''',
-        r'''                injectDarkTheme(view, forceDomInit = true)
-                CookieManager.getInstance().flush()''',
-        "MainActivity:onPageFinished_forceDomInit",
-    )
-
-    text = replace_once(
-        text,
-        r'''        private fun injectDarkTheme(view: WebView?) {
-        val currentUrl = view?.url
-        val nowMs = System.currentTimeMillis()
-        if (!currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {
-            return
+                context.startActivity(intent)
+                true
+            } catch (_: Exception) {
+                false
+            }
         }
-        lastThemedUrl = currentUrl
-        lastThemedAtMs = nowMs''',
-        r'''    private fun injectDarkTheme(view: WebView?, forceDomInit: Boolean = false) {
-        val currentUrl = view?.url
-        val nowMs = System.currentTimeMillis()
-        if (!forceDomInit && !currentUrl.isNullOrEmpty() && currentUrl == lastThemedUrl && (nowMs - lastThemedAtMs) < 1500L) {
-            return
+
+        fun openPlayStorePage() {
+            val pkg = context.packageName
+            val marketIntent = android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                android.net.Uri.parse("market://details?id=$pkg")
+            )
+            if (!launchSystemSettingsIntent(marketIntent)) {
+                launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
+                    )
+                )
+            }
         }
-        lastThemedUrl = currentUrl
-        lastThemedAtMs = nowMs
 
-        val themePrefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        val morningRgb = themePrefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
-        val eveningRgb = themePrefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
-        val nightRgb = themePrefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
-        fun rgbToHex(rgb: Int): String = String.format("#%06X", 0xFFFFFF and rgb)
-        fun contrastFg(rgb: Int): String {
-            val lum = 0.299 * Color.red(rgb) + 0.587 * Color.green(rgb) + 0.114 * Color.blue(rgb)
-            return if (lum > 150.0) "#0F1722" else "#FFFFFF"
+        fun openPrivacyPolicy() {
+            val url = PRIVACY_POLICY_URL.trim()
+            val isConfigured = url.startsWith("https://") || url.startsWith("http://")
+            if (isConfigured) {
+                val opened = launchSystemSettingsIntent(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(url)
+                    )
+                )
+                if (!opened) {
+                    android.widget.Toast.makeText(
+                        context,
+                        if (en) "Could not open browser" else "Selainta ei voitu avata",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            } else {
+                android.widget.Toast.makeText(
+                    context,
+                    if (en) "Privacy policy URL is not configured yet" else "Tietoturvaselosteen osoitetta ei ole vielä määritetty",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
         }
-        val morningBg = rgbToHex(morningRgb)
-        val morningFg = contrastFg(morningRgb)
-        val eveningBg = rgbToHex(eveningRgb)
-        val eveningFg = contrastFg(eveningRgb)
-        val nightBg = rgbToHex(nightRgb)
-        val nightFg = contrastFg(nightRgb)''',
-        "MainActivity:injectDarkTheme_header_and_colors",
-    )
 
-    text = replace_once(
-        text,
-        r'''                    applyShiftFormat();
-                    if (!window._todayShiftObserverInstalled) {
-                        window._todayShiftObserverInstalled = true;
-                        var target = document.querySelector('.punching-shift-container') || document.body;
-                        if (target && typeof MutationObserver !== 'undefined') {
-                            var obs = new MutationObserver(function() {
-                                applyShiftFormat();
-                            });
-                            obs.observe(target, { childList: true, subtree: true, characterData: true });
+        // Korostettu päivityskehotus ylimmäksi, näytetään vain jos Play-kaupassa on uudempi versio
+        val updateBanner = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeCardBg("#3B2810", "#F59E0B", 12)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(14)
+            }
+        }
+        updateBanner.addView(TextView(context).apply {
+            text = if (en) "UPDATE AVAILABLE" else "PÄIVITYS SAATAVILLA"
+            textSize = 11f
+            letterSpacing = 0.06f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#FBBF24"))
+        })
+        val updateBannerSubTv = TextView(context).apply {
+            text = if (en) {
+                "Your app version is outdated. Update to the latest version from Google Play."
+            } else {
+                "Käytössäsi ei ole uusin versio. Suosittelemme päivittämään sovelluksen Google Playsta."
+            }
+            textSize = 13f
+            setTextColor(Color.parseColor("#FEF3C7"))
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        updateBanner.addView(updateBannerSubTv)
+        val btnBannerUpdate = Button(context).apply {
+            text = if (en) "Update on Google Play" else "Päivitä Google Playsta"
+            styleButton(this, "#D97706", "#FBBF24", "#FFFFFF")
+            (layoutParams as? LinearLayout.LayoutParams)?.topMargin = dp(2)
+            setOnClickListener { openPlayStorePage() }
+        }
+        updateBanner.addView(btnBannerUpdate)
+        layout.addView(updateBanner, 0)''',
+            "SettingsDialogHelper:update_banner_and_links",
+        )
+
+        text = replace_once(
+            text,
+            '''        authCard.addView(TextView(context).apply {
+            text = if (en) {
+                "Credentials are stored only on your device and sent solely to the Numeron address you enter. They are never shared with third parties or external servers."
+            } else {
+                "Tunnukset tallennetaan vain laitteellesi ja välitetään ainoastaan antamaasi Numeron-osoitteeseen. Niitä ei tallenneta tai jaeta ulkopuolisille palvelimille."
+            }
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, dp(8), 0, dp(2))
+        })''',
+            '''        authCard.addView(TextView(context).apply {
+            text = if (en) {
+                "Credentials are stored only on your device and sent solely to the Numeron address you enter. They are never shared with third parties or external servers."
+            } else {
+                "Tunnukset tallennetaan vain laitteellesi ja välitetään ainoastaan antamaasi Numeron-osoitteeseen. Niitä ei tallenneta tai jaeta ulkopuolisille palvelimille."
+            }
+            textSize = 11f
+            setTextColor(Color.parseColor("#64748B"))
+            setPadding(0, dp(8), 0, dp(4))
+        })
+        authCard.addView(TextView(context).apply {
+            text = if (en) "Read privacy policy →" else "Lue tietoturvaseloste →"
+            textSize = 12.5f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#38BDF8"))
+            paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
+            setPadding(0, dp(4), 0, dp(4))
+            setOnClickListener { openPrivacyPolicy() }
+        })''',
+            "SettingsDialogHelper:authCard_privacy_link",
+        )
+
+        text = replace_once(
+            text,
+            '''        billingHelper.startConnection()
+
+        // Alapalkki: Peruuta ja Tallenna''',
+            '''        billingHelper.startConnection()
+
+        // === KORTTI 6: TIETOJA JA TIETOTURVA ===
+        val aboutCard = createSectionCard(if (en) "About and privacy" else "Tietoja ja tietoturva")
+
+        val (installedVersionName, installedVersionCode) = try {
+            val pInfo = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val vCode = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(pInfo)
+            (pInfo.versionName ?: "?") to vCode
+        } catch (_: Exception) {
+            "?" to 0L
+        }
+
+        val (_, versionSubTv) = addStatusRow(
+            aboutCard,
+            if (en) "App version" else "Sovelluksen versio",
+            "v$installedVersionName ($installedVersionCode)",
+            if (en) "Checking for updates..." else "Tarkistetaan päivityksiä..."
+        )
+        aboutCard.getChildAt(aboutCard.childCount - 1).setOnClickListener {
+            openPlayStorePage()
+        }
+
+        val btnUpdateApp = Button(context).apply {
+            text = if (en) "Update to latest version (Google Play)" else "Päivitä uusimpaan versioon (Google Play)"
+            styleButton(this, "#D97706", "#FBBF24", "#FFFFFF")
+            visibility = View.GONE
+            setOnClickListener { openPlayStorePage() }
+        }
+        aboutCard.addView(btnUpdateApp)
+
+        val btnPrivacyPolicy = Button(context).apply {
+            text = if (en) "Privacy policy" else "Tietoturvaseloste"
+            styleButton(this, "#233040", "#37475A", "#38BDF8")
+            setOnClickListener { openPrivacyPolicy() }
+        }
+        aboutCard.addView(btnPrivacyPolicy)
+
+        var isDialogDismissed = false
+
+        fun checkForAppUpdate() {
+            try {
+                val appUpdateManager = com.google.android.play.core.appupdate.AppUpdateManagerFactory.create(
+                    context.applicationContext
+                )
+                appUpdateManager.appUpdateInfo
+                    .addOnSuccessListener { info ->
+                        val act = context as? android.app.Activity
+                        if (isDialogDismissed || (act != null && (act.isFinishing || act.isDestroyed))) {
+                            return@addOnSuccessListener
                         }
-                    }''',
-        r'''                    applyShiftFormat();
-                    if (typeof MutationObserver !== 'undefined') {
-                        var shiftTarget = document.querySelector('.punching-shift-container');
-                        if (shiftTarget && !shiftTarget._vvShiftObs) {
-                            shiftTarget._vvShiftObs = true;
-                            new MutationObserver(function() {
-                                applyShiftFormat();
-                            }).observe(shiftTarget, { childList: true, subtree: true, characterData: true });
-                        }
-                    }''',
-        "MainActivity:todayShiftObserver_resilient",
-    )
+                        val availability = info.updateAvailability()
+                        val updateAvailable =
+                            availability == com.google.android.play.core.install.model.UpdateAvailability.UPDATE_AVAILABLE ||
+                            availability == com.google.android.play.core.install.model.UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS
 
-    text = replace_once(
-        text,
-        r'''                    checkSessionModal();
-                    if (document.body && typeof MutationObserver !== 'undefined') {
-                        var sessionObs = new MutationObserver(checkSessionModal);
-                        sessionObs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
-                    }
-                }''',
-        r'''                    window._vvCheckSessionModal = checkSessionModal;
-                    checkSessionModal();
-                }
-                if (window._vvCheckSessionModal && document.body && !document.body._vvSessionObs && typeof MutationObserver !== 'undefined') {
-                    document.body._vvSessionObs = true;
-                    new MutationObserver(window._vvCheckSessionModal).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
-                }''',
-        "MainActivity:sessionWatchObserver_resilient",
-    )
-
-    text = replace_once(
-        text,
-        r'''                    watchStampPageDom();
-                }''',
-        r'''                    window._vvWatchStampPageDom = watchStampPageDom;
-                    watchStampPageDom();
-                }
-                if (typeof window._vvWatchStampPageDom === 'function') {
-                    window._vvWatchStampPageDom();
-                }''',
-        "MainActivity:watchStampPageDom_rerun_on_finish",
-    )
-
-    text = replace_once(
-        text,
-        r'''                    function runCalendarCleanup() {
-                        cleanMonthTable();
-                        cleanListView();
-                    }''',
-        r'''                    function pickShiftColor(timesText) {
-                        var m = (timesText || '').match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
-                        if (!m) return null;
-                        var sMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-                        var eMin = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
-                        var crossesMidnight = eMin < sMin;
-                        if (crossesMidnight || sMin >= 20 * 60 || sMin < 4 * 60) {
-                            return { bg: '$nightBg', fg: '$nightFg' };
-                        }
-                        if (sMin >= 11 * 60 + 30) {
-                            return { bg: '$eveningBg', fg: '$eveningFg' };
-                        }
-                        return { bg: '$morningBg', fg: '$morningFg' };
-                    }
-
-                    function colorWorkShifts() {
-                        var monthItems = document.querySelectorAll('.month-item.work');
-                        for (var i = 0; i < monthItems.length; i++) {
-                            var item = monthItems[i];
-                            var timesEl = item.querySelector('.itemTimes');
-                            var rawTimes = timesEl ? (timesEl.textContent || '') : (item.textContent || '');
-                            var col = pickShiftColor(rawTimes);
-                            if (col) {
-                                item.style.setProperty('background-color', col.bg, 'important');
-                                item.style.setProperty('color', col.fg, 'important');
-                                if (timesEl) {
-                                    timesEl.style.setProperty('color', col.fg, 'important');
-                                }
+                        if (updateAvailable) {
+                            val availCode = info.availableVersionCode()
+                            updateBanner.visibility = View.VISIBLE
+                            updateBannerSubTv.text = if (en) {
+                                "A newer version (build $availCode) is available on Google Play. Please update for the latest fixes."
+                            } else {
+                                "Uudempi versio (koontiversio $availCode) on saatavilla Google Playssa. Päivitä sovellus saadaksesi uusimmat korjaukset."
                             }
-                        }
-
-                        var listItems = document.querySelectorAll('.schedule-item-container.schedule-item-work');
-                        for (var j = 0; j < listItems.length; j++) {
-                            var box = listItems[j];
-                            var ltEl = box.querySelector('.schedule-item-times');
-                            var lCol = pickShiftColor(ltEl ? (ltEl.textContent || '') : '');
-                            if (lCol) {
-                                box.style.setProperty('border-left-color', lCol.bg, 'important');
+                            versionSubTv.text = if (en) {
+                                "Outdated – update available (build $availCode)"
+                            } else {
+                                "Vanhentunut – uusi versio saatavilla (koontiversio $availCode)"
                             }
-                        }
-                    }
-
-                    function runCalendarCleanup() {
-                        cleanMonthTable();
-                        cleanListView();
-                        colorWorkShifts();
-                    }''',
-        "MainActivity:calendar_shift_color_coding",
-    )
-    return text
-
-
-def patch_demo_mode_helper(text: str) -> str:
-    return replace_once(
-        text,
-        r'''                val item = itemMap[cellDate]
-                val itemHtml = when {
-                    item == null -> ""
-                    item.isAbsence -> """
-                        <div class="month-item absence">
-                            <span class="itemName">${item.label}</span>
-                            <span class="itemTimes">${item.times}</span>
-                        </div>
-                    """.trimIndent()
-                    else -> """
-                        <div class="month-item work">
-                            <span class="itemTimes">${item.times}</span>
-                        </div>
-                    """.trimIndent()
-                }''',
-        r'''                val item = itemMap[cellDate]
-                val itemHtml = when {
-                    item == null -> ""
-                    item.isAbsence -> """
-                        <div class="month-item absence">
-                            <span class="itemName">${item.label}</span>
-                            <span class="itemTimes">${item.times}</span>
-                        </div>
-                    """.trimIndent()
-                    else -> {
-                        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
-                        val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
-                        val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
-                        val tm = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})").find(item.times)
-                        val chosenRgb = if (tm != null) {
-                            val sMin = tm.groupValues[1].toInt() * 60 + tm.groupValues[2].toInt()
-                            val eMin = tm.groupValues[3].toInt() * 60 + tm.groupValues[4].toInt()
-                            when {
-                                eMin < sMin || sMin >= 20 * 60 || sMin < 4 * 60 -> nRgb
-                                sMin >= 11 * 60 + 30 -> eRgb
-                                else -> mRgb
-                            }
+                            versionSubTv.setTextColor(Color.parseColor("#FBBF24"))
+                            versionSubTv.visibility = View.VISIBLE
+                            btnUpdateApp.visibility = View.VISIBLE
                         } else {
-                            mRgb
+                            versionSubTv.text = if (en) "Up to date" else "Sovellus on ajan tasalla"
+                            versionSubTv.setTextColor(Color.parseColor("#34D399"))
+                            versionSubTv.visibility = View.VISIBLE
                         }
-                        val bgHex = String.format("#%06X", 0xFFFFFF and chosenRgb)
-                        val lum = 0.299 * android.graphics.Color.red(chosenRgb) +
-                            0.587 * android.graphics.Color.green(chosenRgb) +
-                            0.114 * android.graphics.Color.blue(chosenRgb)
-                        val fgHex = if (lum > 150.0) "#0F1722" else "#FFFFFF"
-                        """
-                        <div class="month-item work" style="background-color:$bgHex;color:$fgHex;">
-                            <span class="itemTimes" style="color:$fgHex;">${item.times}</span>
-                        </div>
-                    """.trimIndent()
                     }
-                }''',
-        "DemoModeHelper:demo_shift_color_coding",
-    )
-
-
-def patch_calendar_sync_helper(text: str) -> str:
-    text = replace_once(
-        text,
-        r'''    private data class ExistingEvent(
-        val eventId: Long,
-        val title: String,
-        val location: String,
-        val description: String,
-        val colorKey: String?,
-        val startMs: Long,
-        val endMs: Long,
-        val isAllDay: Boolean,
-        val isOwnedByApp: Boolean
-    )''',
-        r'''    private data class ExistingEvent(
-        val eventId: Long,
-        val title: String,
-        val location: String,
-        val description: String,
-        val colorKey: String?,
-        val startMs: Long,
-        val endMs: Long,
-        val isAllDay: Boolean,
-        val isOwnedByApp: Boolean
-    )
-
-    private data class PreparedShift(
-        val shift: WorkShift,
-        val newStartMs: Long,
-        val newEndMs: Long,
-        val desiredTitle: String,
-        val fullDescription: String,
-        val desiredColorKey: String?
-    )''',
-        "CalendarSyncHelper:add_PreparedShift",
-    )
-
-    text = replace_once(
-        text,
-        r'''        val unmatchedOwned = ownedEvents.toMutableList()
-        val unmatchedExternal = unownedCandidateEvents.toMutableList()
-        val detectedChanges = mutableListOf<CalendarChangeItem>()
-
-        for (shift in upcomingShifts) {
-            val newStartMs = if (shift.isAllDayLeave) {
-                shift.start.toInstant(ZoneOffset.UTC).toEpochMilli()
-            } else {
-                shift.start.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            }
-            val newEndMs = if (shift.isAllDayLeave) {
-                shift.end.toInstant(ZoneOffset.UTC).toEpochMilli()
-            } else {
-                shift.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            }
-            val desiredTitle = formatShiftTitle(shift.title, userTag)
-            val fullDescription = buildFullDescription(shift.description, userTag)
-            val desiredColorKey = pickColorKeyForShift(shift, colorKeys)
-
-            val exactMatch = unmatchedOwned.firstOrNull {
-                it.title == desiredTitle &&
-                it.location == shift.location &&
-                it.description == fullDescription &&
-                it.colorKey == desiredColorKey &&
-                it.startMs == newStartMs &&
-                it.endMs == newEndMs &&
-                it.isAllDay == shift.isAllDayLeave
-            }
-
-            if (exactMatch != null) {
-                unmatchedOwned.remove(exactMatch)
-                continue
-            }
-
-            if (shift.isAllDayLeave) {
-                val coveringOwned = unmatchedOwned.firstOrNull { ex ->
-                    ex.isAllDay &&
-                    ex.title.equals(desiredTitle, ignoreCase = true) &&
-                    ex.startMs < newStartMs &&
-                    ex.endMs == newEndMs
-                }
-                if (coveringOwned != null) {
-                    unmatchedOwned.remove(coveringOwned)
-                    continue
-                }
-                val coveringExternal = unmatchedExternal.firstOrNull { ex ->
-                    ex.isAllDay &&
-                    ex.title.equals(desiredTitle, ignoreCase = true) &&
-                    ex.startMs < newStartMs &&
-                    ex.endMs == newEndMs
-                }
-                if (coveringExternal != null) {
-                    unmatchedExternal.remove(coveringExternal)
-                    continue
-                }
-            }
-
-            val sameDayOwned = unmatchedOwned.firstOrNull { ex ->
-                ex.isAllDay == shift.isAllDayLeave &&
-                isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
-            } ?: unmatchedOwned.firstOrNull { ex ->
-                shift.isAllDayLeave &&
-                ex.isAllDay &&
-                ex.title.equals(desiredTitle, ignoreCase = true) &&
-                ex.startMs < newStartMs &&
-                ex.endMs > newStartMs
-            } ?: unmatchedOwned.firstOrNull { ex ->
-                ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
-            }
-
-            val sameDayExternal = if (sameDayOwned == null) {
-                unmatchedExternal.firstOrNull { ex ->
-                    ex.isAllDay == shift.isAllDayLeave &&
-                    isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                    looksLikeShiftOrLeave(ex.title, desiredTitle, userTag)
-                }
-            } else {
-                null
-            }
-
-            val targetMatch = sameDayOwned ?: sameDayExternal
-
-            if (targetMatch != null) {
-                if (sameDayOwned != null) {
-                    unmatchedOwned.remove(sameDayOwned)
-                } else if (sameDayExternal != null) {
-                    unmatchedExternal.remove(sameDayExternal)
-                }
-
-                val effectiveStartMs = if (shift.isAllDayLeave && targetMatch.startMs < newStartMs) {
-                    targetMatch.startMs
+                    .addOnFailureListener {
+                        val act = context as? android.app.Activity
+                        if (isDialogDismissed || (act != null && (act.isFinishing || act.isDestroyed))) {
+                            return@addOnFailureListener
+                        }
+                        versionSubTv.text = if (en) {
+                            "Tap to check Google Play for updates"
+                        } else {
+                            "Napauta tarkistaaksesi päivitykset Google Playsta"
+                        }
+                        versionSubTv.setTextColor(Color.parseColor("#94A3B8"))
+                        versionSubTv.visibility = View.VISIBLE
+                    }
+            } catch (_: Exception) {
+                versionSubTv.text = if (en) {
+                    "Tap to check Google Play for updates"
                 } else {
-                    newStartMs
+                    "Napauta tarkistaaksesi päivitykset Google Playsta"
                 }
-                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, targetMatch.eventId)
-                val values = ContentValues().apply {
-                    put(CalendarContract.Events.TITLE, desiredTitle)
-                    put(CalendarContract.Events.EVENT_LOCATION, shift.location)
-                    put(CalendarContract.Events.DESCRIPTION, fullDescription)
-                    if (desiredColorKey != null) {
-                        put(CalendarContract.Events.EVENT_COLOR_KEY, desiredColorKey)
-                    } else {
-                        putNull(CalendarContract.Events.EVENT_COLOR_KEY)
-                    }
-                    put(CalendarContract.Events.ALL_DAY, if (shift.isAllDayLeave) 1 else 0)
-                    put(CalendarContract.Events.EVENT_TIMEZONE, if (shift.isAllDayLeave) "UTC" else TimeZone.getDefault().id)
-                    put(CalendarContract.Events.DTSTART, effectiveStartMs)
-                    put(CalendarContract.Events.DTEND, newEndMs)
-                }
-                resolver.update(uri, values, null, null)
-
-                val contentChanged =
-                    targetMatch.title != desiredTitle ||
-                    targetMatch.location != shift.location ||
-                    targetMatch.description != fullDescription ||
-                    targetMatch.startMs != effectiveStartMs ||
-                    targetMatch.endMs != newEndMs ||
-                    targetMatch.isAllDay != shift.isAllDayLeave
-
-                if (contentChanged) {
-                    detectedChanges.add(
-                        CalendarChangeItem(
-                            id = UUID.randomUUID().toString(),
-                            type = ChangeType.MODIFIED,
-                            calendarId = calendarId,
-                            eventId = targetMatch.eventId,
-                            title = desiredTitle,
-                            startMs = effectiveStartMs,
-                            endMs = newEndMs,
-                            isAllDay = shift.isAllDayLeave,
-                            location = shift.location,
-                            description = fullDescription,
-                            prevTitle = targetMatch.title,
-                            prevStartMs = targetMatch.startMs,
-                            prevEndMs = targetMatch.endMs,
-                            prevIsAllDay = targetMatch.isAllDay,
-                            prevLocation = targetMatch.location,
-                            prevDescription = targetMatch.description
-                        )
-                    )
-                }
-            } else {
-                val values = ContentValues().apply {
-                    put(CalendarContract.Events.CALENDAR_ID, calendarId)
-                    put(CalendarContract.Events.TITLE, desiredTitle)
-                    put(CalendarContract.Events.EVENT_LOCATION, shift.location)
-                    put(CalendarContract.Events.DESCRIPTION, fullDescription)
-                    if (desiredColorKey != null) {
-                        put(CalendarContract.Events.EVENT_COLOR_KEY, desiredColorKey)
-                    }
-                    put(CalendarContract.Events.ALL_DAY, if (shift.isAllDayLeave) 1 else 0)
-                    put(CalendarContract.Events.EVENT_TIMEZONE, if (shift.isAllDayLeave) "UTC" else TimeZone.getDefault().id)
-                    put(CalendarContract.Events.DTSTART, newStartMs)
-                    put(CalendarContract.Events.DTEND, newEndMs)
-                }
-                val insertedUri = resolver.insert(CalendarContract.Events.CONTENT_URI, values)
-                val newEventId = insertedUri?.lastPathSegment?.toLongOrNull()
-
-                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.ADDED,
-                        calendarId = calendarId,
-                        eventId = newEventId,
-                        title = desiredTitle,
-                        startMs = newStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave,
-                        location = shift.location,
-                        description = fullDescription
-                    )
-                )
+                versionSubTv.setTextColor(Color.parseColor("#94A3B8"))
+                versionSubTv.visibility = View.VISIBLE
             }
-        }''',
-        r'''        val unmatchedOwned = ownedEvents.toMutableList()
-        val unmatchedExternal = unownedCandidateEvents.toMutableList()
-        val detectedChanges = mutableListOf<CalendarChangeItem>()
-
-        val preparedShifts = upcomingShifts.map { shift ->
-            val newStartMs = if (shift.isAllDayLeave) {
-                shift.start.toInstant(ZoneOffset.UTC).toEpochMilli()
-            } else {
-                shift.start.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            }
-            val newEndMs = if (shift.isAllDayLeave) {
-                shift.end.toInstant(ZoneOffset.UTC).toEpochMilli()
-            } else {
-                shift.end.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-            }
-            PreparedShift(
-                shift = shift,
-                newStartMs = newStartMs,
-                newEndMs = newEndMs,
-                desiredTitle = formatShiftTitle(shift.title, userTag),
-                fullDescription = buildFullDescription(shift.description, userTag),
-                desiredColorKey = pickColorKeyForShift(shift, colorKeys)
-            )
         }
 
-        // Vaihe 1: Tarkat osumat ja kattavat koko päivän lomat pois ennen saman päivän täsmäytystä
-        val pendingShifts = mutableListOf<PreparedShift>()
-        for (prep in preparedShifts) {
-            val shift = prep.shift
-            val exactMatch = unmatchedOwned.firstOrNull {
-                it.title == prep.desiredTitle &&
-                it.location == shift.location &&
-                it.description == prep.fullDescription &&
-                it.colorKey == prep.desiredColorKey &&
-                it.startMs == prep.newStartMs &&
-                it.endMs == prep.newEndMs &&
-                it.isAllDay == shift.isAllDayLeave
-            }
-            if (exactMatch != null) {
-                unmatchedOwned.remove(exactMatch)
-                continue
-            }
+        // Alapalkki: Peruuta ja Tallenna''',
+            "SettingsDialogHelper:about_card_and_update_check",
+        )
 
-            if (shift.isAllDayLeave) {
-                val coveringOwned = unmatchedOwned.firstOrNull { ex ->
-                    ex.isAllDay &&
-                    ex.title.equals(prep.desiredTitle, ignoreCase = true) &&
-                    ex.startMs < prep.newStartMs &&
-                    ex.endMs == prep.newEndMs
-                }
-                if (coveringOwned != null) {
-                    unmatchedOwned.remove(coveringOwned)
-                    continue
-                }
-                val coveringExternal = unmatchedExternal.firstOrNull { ex ->
-                    ex.isAllDay &&
-                    ex.title.equals(prep.desiredTitle, ignoreCase = true) &&
-                    ex.startMs < prep.newStartMs &&
-                    ex.endMs == prep.newEndMs
-                }
-                if (coveringExternal != null) {
-                    unmatchedExternal.remove(coveringExternal)
-                    continue
-                }
-            }
+        text = replace_once(
+            text,
+            '''        dialog.setOnDismissListener {''',
+            '''        dialog.setOnDismissListener {
+            isDialogDismissed = true''',
+            "SettingsDialogHelper:mark_dismissed",
+        )
 
-            pendingShifts.add(prep)
-        }
+        text = replace_once(
+            text,
+            '''        dialog.show()''',
+            '''        dialog.show()
+        checkForAppUpdate()''',
+            "SettingsDialogHelper:trigger_update_check",
+        )
+        return text
 
-        // Vaihe 2: Saman päivän täsmäytys (lähimmän aloitusajan mukaan) sekä uusien lisäys
-        for (prep in pendingShifts) {
-            val shift = prep.shift
-            val newStartMs = prep.newStartMs
-            val newEndMs = prep.newEndMs
-            val desiredTitle = prep.desiredTitle
-            val fullDescription = prep.fullDescription
-            val desiredColorKey = prep.desiredColorKey
-
-            val sameDayOwned = unmatchedOwned
-                .filter { ex ->
-                    ex.isAllDay == shift.isAllDayLeave &&
-                    isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                    (!shift.isAllDayLeave || ex.title.equals(desiredTitle, ignoreCase = true) || ex.startMs == newStartMs)
-                }
-                .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
-                ?: unmatchedOwned.firstOrNull { ex ->
-                    shift.isAllDayLeave &&
-                    ex.isAllDay &&
-                    ex.title.equals(desiredTitle, ignoreCase = true) &&
-                    ex.startMs < newStartMs &&
-                    ex.endMs > newStartMs
-                }
-                ?: unmatchedOwned
-                    .filter { ex ->
-                        ex.isAllDay == shift.isAllDayLeave && isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave)
-                    }
-                    .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
-
-            val sameDayExternal = if (sameDayOwned == null) {
-                unmatchedExternal
-                    .filter { ex ->
-                        ex.isAllDay == shift.isAllDayLeave &&
-                        isSameCalendarDay(ex.startMs, newStartMs, shift.isAllDayLeave) &&
-                        looksLikeShiftOrLeave(ex.title, desiredTitle, userTag)
-                    }
-                    .minByOrNull { kotlin.math.abs(it.startMs - newStartMs) }
-            } else {
-                null
-            }
-
-            val targetMatch = sameDayOwned ?: sameDayExternal
-
-            if (targetMatch != null) {
-                if (sameDayOwned != null) {
-                    unmatchedOwned.remove(sameDayOwned)
-                } else if (sameDayExternal != null) {
-                    unmatchedExternal.remove(sameDayExternal)
-                }
-
-                val effectiveStartMs = if (shift.isAllDayLeave && targetMatch.startMs < newStartMs) {
-                    targetMatch.startMs
-                } else {
-                    newStartMs
-                }
-                val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, targetMatch.eventId)
-                val values = ContentValues().apply {
-                    put(CalendarContract.Events.TITLE, desiredTitle)
-                    put(CalendarContract.Events.EVENT_LOCATION, shift.location)
-                    put(CalendarContract.Events.DESCRIPTION, fullDescription)
-                    if (desiredColorKey != null) {
-                        put(CalendarContract.Events.EVENT_COLOR_KEY, desiredColorKey)
-                    } else {
-                        putNull(CalendarContract.Events.EVENT_COLOR_KEY)
-                    }
-                    put(CalendarContract.Events.ALL_DAY, if (shift.isAllDayLeave) 1 else 0)
-                    put(CalendarContract.Events.EVENT_TIMEZONE, if (shift.isAllDayLeave) "UTC" else TimeZone.getDefault().id)
-                    put(CalendarContract.Events.DTSTART, effectiveStartMs)
-                    put(CalendarContract.Events.DTEND, newEndMs)
-                }
-                resolver.update(uri, values, null, null)
-
-                val contentChanged =
-                    targetMatch.title != desiredTitle ||
-                    targetMatch.location != shift.location ||
-                    targetMatch.description != fullDescription ||
-                    targetMatch.startMs != effectiveStartMs ||
-                    targetMatch.endMs != newEndMs ||
-                    targetMatch.isAllDay != shift.isAllDayLeave
-
-                if (contentChanged) {
-                    detectedChanges.add(
-                        CalendarChangeItem(
-                            id = UUID.randomUUID().toString(),
-                            type = ChangeType.MODIFIED,
-                            calendarId = calendarId,
-                            eventId = targetMatch.eventId,
-                            title = desiredTitle,
-                            startMs = effectiveStartMs,
-                            endMs = newEndMs,
-                            isAllDay = shift.isAllDayLeave,
-                            location = shift.location,
-                            description = fullDescription,
-                            prevTitle = targetMatch.title,
-                            prevStartMs = targetMatch.startMs,
-                            prevEndMs = targetMatch.endMs,
-                            prevIsAllDay = targetMatch.isAllDay,
-                            prevLocation = targetMatch.location,
-                            prevDescription = targetMatch.description
-                        )
-                    )
-                }
-            } else {
-                val values = ContentValues().apply {
-                    put(CalendarContract.Events.CALENDAR_ID, calendarId)
-                    put(CalendarContract.Events.TITLE, desiredTitle)
-                    put(CalendarContract.Events.EVENT_LOCATION, shift.location)
-                    put(CalendarContract.Events.DESCRIPTION, fullDescription)
-                    if (desiredColorKey != null) {
-                        put(CalendarContract.Events.EVENT_COLOR_KEY, desiredColorKey)
-                    }
-                    put(CalendarContract.Events.ALL_DAY, if (shift.isAllDayLeave) 1 else 0)
-                    put(CalendarContract.Events.EVENT_TIMEZONE, if (shift.isAllDayLeave) "UTC" else TimeZone.getDefault().id)
-                    put(CalendarContract.Events.DTSTART, newStartMs)
-                    put(CalendarContract.Events.DTEND, newEndMs)
-                }
-                val insertedUri = resolver.insert(CalendarContract.Events.CONTENT_URI, values)
-                val newEventId = insertedUri?.lastPathSegment?.toLongOrNull()
-
-                detectedChanges.add(
-                    CalendarChangeItem(
-                        id = UUID.randomUUID().toString(),
-                        type = ChangeType.ADDED,
-                        calendarId = calendarId,
-                        eventId = newEventId,
-                        title = desiredTitle,
-                        startMs = newStartMs,
-                        endMs = newEndMs,
-                        isAllDay = shift.isAllDayLeave,
-                        location = shift.location,
-                        description = fullDescription
-                    )
-                )
-            }
-        }''',
-        "CalendarSyncHelper:two_phase_shift_matching",
-    )
-
-    text = replace_once(
-        text,
-        r'''        if (toDeleteIds.isNotEmpty()) {
-            CalendarChangeTracker.saveChanges(context, emptyList())
-        }
-        return toDeleteIds.size''',
-        r'''        if (toDeleteIds.isNotEmpty()) {
-            CalendarChangeTracker.saveChanges(context, emptyList())
-            scheduleShiftReminders(context, calendarId)
-        }
-        return toDeleteIds.size''',
-        "CalendarSyncHelper:reschedule_after_delete",
-    )
-    return text
-
-
-def patch_numeron_parser(text: str) -> str:
-    return replace_once(
-        text,
-        r'''        for (cell in dayCells) {
-            if (cell.hasClass("day-different-month")) continue
-
-            val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
-            val date = LocalDate.of(currentYear, currentMonth, dayNum)
-
-            // Sallitaan eilinen yövuorojen varalta, jotka päättyvät tänään nykyhetken jälkeen
-            if (date.isBefore(today.minusDays(1))) continue''',
-        r'''        val yesterday = today.minusDays(1)
-        val allowPrevMonthOverflow = today.dayOfMonth == 1 &&
-            currentYear == today.year &&
-            currentMonth == today.monthValue
-        val prevMonthYm = java.time.YearMonth.of(currentYear, currentMonth).minusMonths(1)
-
-        for (cell in dayCells) {
-            val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
-            val date = if (cell.hasClass("day-different-month")) {
-                if (!allowPrevMonthOverflow || dayNum < 20 || dayNum > prevMonthYm.lengthOfMonth()) continue
-                val overflowDate = prevMonthYm.atDay(dayNum)
-                if (overflowDate != yesterday) continue
-                overflowDate
-            } else {
-                try {
-                    LocalDate.of(currentYear, currentMonth, dayNum)
-                } catch (_: Exception) {
-                    continue
-                }
-            }
-
-            // Sallitaan eilinen yövuorojen varalta, jotka päättyvät tänään nykyhetken jälkeen
-            if (date.isBefore(yesterday)) continue''',
-        "NumeronParser:month_boundary_overnight_shift",
-    )
-
-
-def patch_shift_reminder_receiver(text: str) -> str:
-    return replace_once(
-        text,
-        r'''            val pi = PendingIntent.getActivity(
-                context, 3000 + id, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val notif = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .setContentIntent(pi)
-                .build()
-            nm.notify(3000 + id, notif)''',
-        r'''            val notifId = 100_000 + (id and 0x7FFF)
-            val pi = PendingIntent.getActivity(
-                context, notifId, openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val notif = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .setContentIntent(pi)
-                .build()
-            nm.notify(notifId, notif)''',
-        "ShiftReminderReceiver:safe_request_notif_id",
-    )
-
-
-def patch_calendar_change_tracker(text: str) -> str:
-    return replace_once(
-        text,
-        r'''            existing.add(item)
-        }
-        saveChanges(context, existing)''',
-        r'''            existing.add(item)
-        }
-        val nowMs = System.currentTimeMillis()
-        val maxAgeCutoffMs = nowMs - 30L * 24 * 60 * 60 * 1000L
-        val endedCutoffMs = nowMs - 7L * 24 * 60 * 60 * 1000L
-        val pruned = existing
-            .filter { it.timestampMs >= maxAgeCutoffMs && it.endMs >= endedCutoffMs }
-            .takeLast(50)
-        saveChanges(context, pruned)''',
-        "CalendarChangeTracker:prune_old_changes",
-    )
-
-
-def patch_quick_stamp_activity(text: str) -> str:
-    return replace_once(
-        text,
-        r'''            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener {
-                finishCleanly()
-            }''',
-        r'''            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener {
-                if (isCompleted) {
-                    finishCleanly()
-                }
-            }''',
-        "QuickStampActivity:prevent_accidental_dismiss",
-    )
-
-
-PATCH_PLAN = [
-    ("build.gradle.kts", 'applicationId = "com.numeron_vuorovahti"', patch_build_gradle),
-    ("BackgroundAuthHelper.kt", "object BackgroundAuthHelper", patch_background_auth_helper),
-    ("MainActivity.kt", "class MainActivity", patch_main_activity),
-    ("DemoModeHelper.kt", "object DemoModeHelper", patch_demo_mode_helper),
-    ("CalendarSyncHelper.kt", "object CalendarSyncHelper", patch_calendar_sync_helper),
-    ("NumeronParser.kt", "object NumeronParser", patch_numeron_parser),
-    ("ShiftReminderReceiver.kt", "class ShiftReminderReceiver", patch_shift_reminder_receiver),
-    ("CalendarChangeTracker.kt", "object CalendarChangeTracker", patch_calendar_change_tracker),
-    ("QuickStampActivity.kt", "class QuickStampActivity", patch_quick_stamp_activity),
-]
+    return patch_settings_dialog_helper
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Numeron Vuorovahti patch 4")
+    parser = argparse.ArgumentParser(
+        description="Lisää asetussivulle sovelluksen versionumero, päivityskehotus ja tietoturvaselosteen linkki"
+    )
     parser.add_argument("--root", default=".", help="Projektin juurikansio")
+    parser.add_argument(
+        "--privacy-url",
+        default=DEFAULT_PRIVACY_URL,
+        help="Julkinen HTTPS-osoite tietoturvaselosteeseen",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Tarkista muutokset kirjoittamatta tiedostoja")
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
+    patch_plan = [
+        ("build.gradle.kts", 'applicationId = "com.numeron_vuorovahti"', patch_build_gradle),
+        ("SettingsDialogHelper.kt", "object SettingsDialogHelper", make_settings_patcher(args.privacy_url)),
+    ]
+
     staged_writes: list[tuple[Path, str]] = []
 
-    for filename, marker, patch_fn in PATCH_PLAN:
+    for filename, marker, patch_fn in patch_plan:
         path = find_file(root, filename, marker)
         raw_text = path.read_bytes().decode("utf-8")
         eol = "\r\n" if "\r\n" in raw_text else "\n"
@@ -890,10 +423,15 @@ def main() -> int:
 
         patched = patch_fn(normalized)
         if patched == normalized:
-            raise RuntimeError(f"[{filename}] Tiedostoon ei tullut muutoksia.")
+            print(f"OK (jo ajan tasalla): {path.relative_to(root)}")
+            continue
 
         staged_writes.append((path, patched.replace("\n", eol)))
         print(f"OK: {path.relative_to(root)}")
+
+    if not staged_writes:
+        print("\nKaikki tiedostot olivat jo ajan tasalla.")
+        return 0
 
     if args.dry_run:
         print(f"\nDRY-RUN OK: {len(staged_writes)} tiedostoa valmiina, mitään ei kirjoitettu.")
