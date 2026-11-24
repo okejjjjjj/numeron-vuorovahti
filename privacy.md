@@ -16,8 +16,8 @@ Tietosuojaseloste / Privacy Policy
 ​Käyttäjä voi poistaa laitteelle tallennetut kirjautumistiedot milloin tahansa kirjautumalla ulos sovelluksesta, tyhjentämällä sovelluksen tiedot laitteen asetuksista tai poistamalla sovelluksen laitteesta. Kalenteriin synkronoidut merkinnät voi poistaa suoraan laitteen kalenterisovelluksesta.
 
 ​Yhteystiedot ja päivitys
-​Kehittäjä: Musju
-​Sähköposti: jukka.mustonen[at]gmail.com
+​Kehittäjä: Musju 
+​Sähköposti: jukka.mustonen[at]gmail.com 
 ​Päivitetty: 24.11.2026
 
 -----------------
