@@ -685,8 +685,18 @@ object SettingsDialogHelper {
         }
         authCard.addView(editPass)
 
+        val wasAuthBlocked = !isDemoActive && BackgroundAuthHelper.isCredentialBlocked(context)
         val tvTestStatus = TextView(context).apply {
-            text = ""
+            text = if (wasAuthBlocked) {
+                if (en) {
+                    "Automatic login paused after a rejected password. Please verify your credentials and save."
+                } else {
+                    "Automaattinen kirjautuminen pysäytettiin virheellisen tunnuksen tai salasanan vuoksi. Tarkista tiedot ja tallenna."
+                }
+            } else {
+                ""
+            }
+            setTextColor(Color.parseColor(if (wasAuthBlocked) "#EF4444" else "#94A3B8"))
             textSize = 13f
             setPadding(0, dp(8), 0, dp(2))
         }
@@ -1156,17 +1166,12 @@ object SettingsDialogHelper {
             val newShiftReminders = switchShiftReminders.isChecked
             val newTrackRequests = switchTrackRequests.isChecked
 
-            val prevUser = SecureCredentialManager.getUsername(context).orEmpty()
-            val prevUrl = UrlNormalizer.getSavedBaseUrl(context)
-
             val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
                 UrlNormalizer.isDemoInput(rawOrg) ||
                 DemoModeHelper.isDemoCredentials(rawOrg, savedUser, savedPass)
 
             SecureCredentialManager.saveCredentials(context, savedUser, savedPass)
-            if (savedUser != prevUser || savedPass != existingPassword || normalizedUrl != prevUrl) {
-                BackgroundAuthHelper.clearSessionCache(context)
-            }
+            BackgroundAuthHelper.clearSessionCache(context)
 
             prefs.edit()
                 .putString("org_raw_input", rawOrg)

@@ -23,14 +23,73 @@ object BackgroundAuthHelper {
     private var lastAuthSuccessMs: Long = 0L
     @Volatile
     private var lastAuthBaseUrl: String = ""
+    @Volatile
+    private var blockedCredentialFingerprint: String = ""
+
+    fun computeCredentialFingerprint(baseUrl: String, username: String, password: String): String {
+        val raw = "${baseUrl.trim()}\u0000${username.trim()}\u0000$password"
+        return try {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray(Charsets.UTF_8))
+            digest.joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            raw.hashCode().toString()
+        }
+    }
+
+    fun isCredentialBlocked(context: Context): Boolean {
+        val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
+        val username = SecureCredentialManager.getUsername(context).orEmpty()
+        val password = SecureCredentialManager.getPassword(context).orEmpty()
+        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) return false
+        val fp = computeCredentialFingerprint(baseUrl, username, password)
+        if (blockedCredentialFingerprint == fp) return true
+        val storedFp = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("failed_auth_fingerprint", "")
+            .orEmpty()
+        if (storedFp == fp) {
+            blockedCredentialFingerprint = fp
+            return true
+        }
+        return false
+    }
+
+    fun getBlockedReason(context: Context): String {
+        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getString("failed_auth_message", "")
+            .orEmpty()
+    }
+
+    fun markCredentialFailed(
+        context: Context,
+        baseUrl: String,
+        username: String,
+        password: String,
+        reason: String = ""
+    ) {
+        if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) return
+        val fp = computeCredentialFingerprint(baseUrl, username, password)
+        blockedCredentialFingerprint = fp
+        lastAuthSuccessMs = 0L
+        lastAuthBaseUrl = ""
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .putString("failed_auth_fingerprint", fp)
+            .putString("failed_auth_message", reason)
+            .putLong("last_valid_session_ms", 0L)
+            .apply()
+    }
 
     fun clearSessionCache(context: Context? = null) {
         lastAuthSuccessMs = 0L
         lastAuthBaseUrl = ""
+        blockedCredentialFingerprint = ""
         if (context != null) {
             context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 .edit()
                 .putLong("last_valid_session_ms", 0L)
+                .remove("failed_auth_fingerprint")
+                .remove("failed_auth_message")
                 .apply()
             try {
                 val cm = CookieManager.getInstance()
@@ -54,8 +113,14 @@ object BackgroundAuthHelper {
         if (baseUrl.isBlank() || username.isBlank() || password.isBlank()) {
             return@withContext false
         }
+        if (isCredentialBlocked(context)) {
+            return@withContext false
+        }
 
         authMutex.withLock {
+            if (isCredentialBlocked(context)) {
+                return@withLock false
+            }
             val nowMs = System.currentTimeMillis()
             val cachedCookies = try {
                 CookieManager.getInstance().getCookie(baseUrl)
@@ -129,6 +194,24 @@ object BackgroundAuthHelper {
                 loginResp.finalUrl.contains("/Login", ignoreCase = true)
             }
             if (loginResp.statusCode !in 200..399 || stillOnLogin || cookieStore.isEmpty()) {
+                if (loginResp.statusCode in 200..399 && stillOnLogin) {
+                    val errReason = if (loginResp.body.isNotEmpty()) {
+                        Jsoup.parse(loginResp.body)
+                            .selectFirst(".validation-summary-errors, .alert-danger")
+                            ?.text()
+                            ?.trim()
+                            .orEmpty()
+                    } else {
+                        ""
+                    }
+                    markCredentialFailed(
+                        context = context,
+                        baseUrl = baseUrl,
+                        username = username,
+                        password = password,
+                        reason = errReason.ifEmpty { "Virheellinen käyttäjätunnus tai salasana." }
+                    )
+                }
                 return@withContext false
             }
 

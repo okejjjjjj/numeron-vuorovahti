@@ -66,6 +66,14 @@ object DemoModeHelper {
             .apply()
     }
 
+    fun resetDemoCalendarMonth(context: Context) {
+        context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .edit()
+            .remove("demo_cal_year")
+            .remove("demo_cal_month")
+            .apply()
+    }
+
     private fun langSwitchHtml(en: Boolean): String {
         val fiStyle = if (!en) {
             "background:#1982C4;color:#FFFFFF;"
@@ -308,9 +316,11 @@ object DemoModeHelper {
                 val isIn = p[2].equals("Sisään", ignoreCase = true) || p[2].equals("In", ignoreCase = true)
                 val typeColor = if (isIn) "#4ADE80" else "#F87171"
                 val dirLabel = if (en) (if (isIn) "In" else "Out") else (if (isIn) "Sisään" else "Ulos")
+                val safeDate = android.text.TextUtils.htmlEncode(p[0])
+                val safeTime = android.text.TextUtils.htmlEncode(p[1])
                 """<tr>
-                    <td>${p[0]}</td>
-                    <td><strong>${p[1]}</strong></td>
+                    <td>$safeDate</td>
+                    <td><strong>$safeTime</strong></td>
                     <td style="color:$typeColor;font-weight:700;">$dirLabel</td>
                 </tr>"""
             } else ""
@@ -695,7 +705,16 @@ object DemoModeHelper {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val variant = prefs.getInt("demo_shift_variant", 0)
         val today = LocalDate.now()
-        val ym = YearMonth.from(today)
+        val savedYear = prefs.getInt("demo_cal_year", today.year)
+        val savedMonth = prefs.getInt("demo_cal_month", today.monthValue).coerceIn(1, 12)
+        val ym = try {
+            YearMonth.of(savedYear, savedMonth)
+        } catch (_: Exception) {
+            YearMonth.from(today)
+        }
+        val prevYm = ym.minusMonths(1)
+        val nextYm = ym.plusMonths(1)
+        val isCurrentMonth = (ym.year == today.year && ym.monthValue == today.monthValue)
 
         val monthNames = if (en) {
             listOf(
@@ -751,6 +770,11 @@ object DemoModeHelper {
         val gridEnd = lastOfMonth.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
         val weekFields = WeekFields.of(Locale("fi", "FI"))
 
+        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+        val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
+        val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
+        val timePairRegex = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})")
+
         val weeksHtml = StringBuilder()
         var cursor = gridStart
         while (!cursor.isAfter(gridEnd)) {
@@ -779,10 +803,7 @@ object DemoModeHelper {
                         </div>
                     """.trimIndent()
                     else -> {
-                        val mRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
-                        val eRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
-                        val nRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
-                        val tm = Regex("(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})").find(item.times)
+                        val tm = timePairRegex.find(item.times)
                         val chosenRgb = if (tm != null) {
                             val sMin = tm.groupValues[1].toInt() * 60 + tm.groupValues[2].toInt()
                             val eMin = tm.groupValues[3].toInt() * 60 + tm.groupValues[4].toInt()
@@ -834,29 +855,66 @@ object DemoModeHelper {
         val extraCss = """
             .calendar-heading {
                 display: flex;
-                justify-content: space-between;
+                flex-direction: column;
                 align-items: center;
                 background-color: #182332;
                 border: 1px solid #2A394A;
                 border-radius: 12px;
-                padding: 8px 12px;
+                padding: 10px 12px;
                 margin-bottom: 12px;
+                gap: 8px;
+            }
+            .demo-top-meta {
+                width: 100%;
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                gap: 6px;
             }
             .monthSelector {
+                width: 100%;
                 display: flex;
                 align-items: center;
-                gap: 10px;
+                justify-content: center;
+                gap: 12px;
             }
             #monthText {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
                 color: #F1F5F9;
-                font-size: 17px;
-                font-weight: 600;
+                font-size: 18px;
+                font-weight: 700;
                 margin: 0;
+                background-color: #111923;
+                border: 1px solid #2A394A;
+                border-radius: 10px;
+                padding: 6px 14px;
+                cursor: pointer;
+                user-select: none;
+            }
+            #monthText::after {
+                content: "▾";
+                color: #38BDF8;
+                font-size: 14px;
             }
             .nav-arrow {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 42px;
+                height: 38px;
+                background-color: #233040;
+                border: 1px solid #37475A;
+                border-radius: 10px;
                 color: #38BDF8;
-                font-size: 15px;
+                font-size: 18px;
+                cursor: pointer;
                 user-select: none;
+            }
+            .nav-arrow:active {
+                background-color: #2A394A;
+                border-color: #38BDF8;
             }
             .month-table {
                 width: 100%;
@@ -960,14 +1018,15 @@ object DemoModeHelper {
         <body>
             <div class="container">
                 <div class="calendar-heading">
-                    <div class="monthSelector">
-                        <span class="nav-arrow">◀</span>
-                        <span id="monthText">$monthTitle</span>
-                        <span class="nav-arrow">▶</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:6px;">
+                    <div class="demo-top-meta">
+                        ${if (!isCurrentMonth) """<button type="button" class="btn" style="padding:4px 10px;font-size:11px;" onclick="DemoBridge.selectMonth(${today.year}, ${today.monthValue})">${if (en) "Today" else "Tänään"}</button>""" else ""}
                         ${langSwitchHtml(en)}
                         <span class="badge badge-ok">DEMO</span>
+                    </div>
+                    <div class="monthSelector">
+                        <button type="button" class="nav-arrow" onclick="DemoBridge.selectMonth(${prevYm.year}, ${prevYm.monthValue})">◀</button>
+                        <span id="monthText" onclick="openDemoMonthJump()">$monthTitle</span>
+                        <button type="button" class="nav-arrow" onclick="DemoBridge.selectMonth(${nextYm.year}, ${nextYm.monthValue})">▶</button>
                     </div>
                 </div>
 
@@ -995,6 +1054,107 @@ object DemoModeHelper {
                     </div>
                 </div>
             </div>
+            <script>
+                function openDemoMonthJump() {
+                    var existing = document.getElementById('vv-demo-jump-modal');
+                    if (existing) existing.remove();
+                    var activeYear = ${ym.year};
+                    var activeMonth = ${ym.monthValue};
+                    var curRealYear = ${today.year};
+                    var curRealMonth = ${today.monthValue};
+                    var selectedYear = activeYear;
+                    var isEn = ${if (en) "true" else "false"};
+                    var shortMonths = isEn
+                        ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                        : ['Tammi', 'Helmi', 'Maalis', 'Huhti', 'Touko', 'Kesä', 'Heinä', 'Elo', 'Syys', 'Loka', 'Marras', 'Joulu'];
+
+                    var backdrop = document.createElement('div');
+                    backdrop.id = 'vv-demo-jump-modal';
+                    backdrop.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(6,11,19,0.78);display:flex;align-items:center;justify-content:center;padding:16px;';
+
+                    var card = document.createElement('div');
+                    card.style.cssText = 'width:100%;max-width:340px;background:#182332;border:1px solid #38BDF8;border-radius:14px;padding:16px;box-shadow:0 16px 36px rgba(0,0,0,0.65);color:#F1F5F9;';
+
+                    var title = document.createElement('div');
+                    title.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#38BDF8;margin-bottom:10px;text-align:center;';
+                    title.textContent = isEn ? 'Jump to month & year' : 'Siirry kuukauteen ja vuoteen';
+                    card.appendChild(title);
+
+                    var yearRow = document.createElement('div');
+                    yearRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:#111923;border:1px solid #2A394A;border-radius:10px;padding:6px 10px;margin-bottom:12px;';
+
+                    var btnPrevY = document.createElement('button');
+                    btnPrevY.type = 'button';
+                    btnPrevY.textContent = '◀';
+                    btnPrevY.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
+
+                    var yearLbl = document.createElement('span');
+                    yearLbl.style.cssText = 'font-size:18px;font-weight:700;color:#F1F5F9;';
+
+                    var btnNextY = document.createElement('button');
+                    btnNextY.type = 'button';
+                    btnNextY.textContent = '▶';
+                    btnNextY.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
+
+                    yearRow.appendChild(btnPrevY);
+                    yearRow.appendChild(yearLbl);
+                    yearRow.appendChild(btnNextY);
+                    card.appendChild(yearRow);
+
+                    var grid = document.createElement('div');
+                    grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;';
+                    card.appendChild(grid);
+
+                    function renderGrid() {
+                        yearLbl.textContent = String(selectedYear);
+                        grid.innerHTML = '';
+                        for (var i = 0; i < 12; i++) {
+                            (function(mVal, mName) {
+                                var b = document.createElement('button');
+                                b.type = 'button';
+                                b.textContent = mName;
+                                var sel = (selectedYear === activeYear && mVal === activeMonth);
+                                var cur = (selectedYear === curRealYear && mVal === curRealMonth);
+                                b.style.cssText = 'padding:10px 4px;border-radius:8px;font-size:13px;font-weight:600;background:' + (sel ? '#1982C4' : '#111923') + ';border:1px solid ' + ((sel || cur) ? '#38BDF8' : '#2A394A') + ';color:' + (sel ? '#FFFFFF' : '#E2E8F0') + ';';
+                                b.onclick = function() {
+                                    backdrop.remove();
+                                    DemoBridge.selectMonth(selectedYear, mVal);
+                                };
+                                grid.appendChild(b);
+                            })(i + 1, shortMonths[i]);
+                        }
+                    }
+
+                    btnPrevY.onclick = function() { selectedYear -= 1; renderGrid(); };
+                    btnNextY.onclick = function() { selectedYear += 1; renderGrid(); };
+
+                    var foot = document.createElement('div');
+                    foot.style.cssText = 'display:flex;gap:8px;';
+
+                    var btnNow = document.createElement('button');
+                    btnNow.type = 'button';
+                    btnNow.textContent = isEn ? 'Current month' : 'Nykyinen kuukausi';
+                    btnNow.style.cssText = 'flex:1;padding:10px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
+                    btnNow.onclick = function() {
+                        backdrop.remove();
+                        DemoBridge.selectMonth(curRealYear, curRealMonth);
+                    };
+
+                    var btnClose = document.createElement('button');
+                    btnClose.type = 'button';
+                    btnClose.textContent = isEn ? 'Cancel' : 'Peruuta';
+                    btnClose.style.cssText = 'flex:1;padding:10px;background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
+                    btnClose.onclick = function() { backdrop.remove(); };
+
+                    foot.appendChild(btnNow);
+                    foot.appendChild(btnClose);
+                    card.appendChild(foot);
+                    backdrop.appendChild(card);
+                    backdrop.addEventListener('click', function(ev) { if (ev.target === backdrop) backdrop.remove(); });
+                    document.body.appendChild(backdrop);
+                    renderGrid();
+                }
+            </script>
         </body>
         </html>
         """.trimIndent()
@@ -1039,6 +1199,18 @@ object DemoModeHelper {
         @JavascriptInterface
         fun setLanguage(lang: String) {
             setDemoLanguage(context, lang)
+            onReloadNeeded()
+        }
+
+        @JavascriptInterface
+        fun selectMonth(year: Int, month: Int) {
+            val safeYear = year.coerceIn(2000, 2100)
+            val safeMonth = month.coerceIn(1, 12)
+            context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("demo_cal_year", safeYear)
+                .putInt("demo_cal_month", safeMonth)
+                .apply()
             onReloadNeeded()
         }
 

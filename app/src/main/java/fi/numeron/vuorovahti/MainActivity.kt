@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private var navigateJob: Job? = null
     private var navigationToken: Int = 0
     private var isAutoSubmittingLogin: Boolean = false
+    private var webLoginAttemptFingerprint: String = ""
     private var lastThemedUrl: String? = null
     private var lastThemedAtMs: Long = 0L
 
@@ -102,7 +103,9 @@ class MainActivity : AppCompatActivity() {
         requestNeededPermissions()
         ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
 
-        CalendarSyncHelper.scheduleShiftReminders(this)
+        scope.launch(Dispatchers.IO) {
+            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity)
+        }
 
         webView = findViewById(R.id.webView)
         bannerDemoMode = findViewById(R.id.bannerDemoMode)
@@ -121,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         startSnapshotTransition()
 
         if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
+            intent.removeExtra("OPEN_REQUESTS")
             navigateToTab(Tab.REQUESTS)
         } else {
             navigateToTab(Tab.STAMP)
@@ -325,6 +329,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (DemoModeHelper.isDemoEnabled(this)) {
+            if (tab == Tab.SHIFTS) {
+                DemoModeHelper.resetDemoCalendarMonth(this)
+            }
             startSnapshotTransition {
                 if (token != navigationToken) return@startSnapshotTransition
                 val html = when (tab) {
@@ -345,6 +352,19 @@ class MainActivity : AppCompatActivity() {
                     Toast.LENGTH_LONG
                 ).show()
                 btnNavSettings.performClick()
+                return
+            }
+            if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+                endSnapshotTransition()
+                Toast.makeText(
+                    this,
+                    if (DemoModeHelper.isEnglish(this)) {
+                        "Login failed – please check username and password in Settings"
+                    } else {
+                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                    },
+                    Toast.LENGTH_LONG
+                ).show()
                 return
             }
             val now = LocalDate.now()
@@ -373,8 +393,21 @@ class MainActivity : AppCompatActivity() {
                         } catch (_: Exception) {
                         }
                         if (token == navigationToken && !isFinishing && !isDestroyed) {
-                            webView.stopLoading()
-                            webView.loadUrl(url)
+                            if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
+                                endSnapshotTransition()
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (DemoModeHelper.isEnglish(this@MainActivity)) {
+                                        "Login failed – please check username and password in Settings"
+                                    } else {
+                                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                                    },
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            } else {
+                                webView.stopLoading()
+                                webView.loadUrl(url)
+                            }
                         }
                     }
                 } else {
@@ -518,6 +551,15 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(
                 this,
                 if (en) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            val en = DemoModeHelper.isEnglish(this)
+            Toast.makeText(
+                this,
+                if (en) "Login failed – please check username and password in Settings" else "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista",
                 Toast.LENGTH_LONG
             ).show()
             return
@@ -706,11 +748,14 @@ class MainActivity : AppCompatActivity() {
                         startSnapshotTransition()
                         return false
                     }
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, uri))
-                    } catch (_: Exception) {
+                    if (request?.isForMainFrame == true) {
+                        try {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri))
+                        } catch (_: Exception) {
+                        }
+                        return true
                     }
-                    return true
+                    return false
                 }
                 return super.shouldOverrideUrlLoading(view, request)
             }
@@ -817,6 +862,7 @@ class MainActivity : AppCompatActivity() {
                     dashboardRedirectCount = 0
                 }
                 if (!url.contains("/Login/", ignoreCase = true)) {
+                    webLoginAttemptFingerprint = ""
                     getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                         .edit()
                         .putLong("last_valid_session_ms", System.currentTimeMillis())
@@ -919,6 +965,7 @@ class MainActivity : AppCompatActivity() {
         val eveningFg = contrastFg(eveningRgb)
         val nightBg = rgbToHex(nightRgb)
         val nightFg = contrastFg(nightRgb)
+        val colorCacheKey = "$morningBg|$eveningBg|$nightBg"
         val css = """
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
@@ -1527,36 +1574,103 @@ class MainActivity : AppCompatActivity() {
             .calendar-heading {
                 box-shadow: none !important;
                 display: flex !important;
-                justify-content: space-between !important;
+                flex-direction: column !important;
+                justify-content: center !important;
                 align-items: center !important;
                 background-color: #182332 !important;
                 border: 1px solid #2A394A !important;
                 border-radius: 12px !important;
-                padding: 8px 12px !important;
+                padding: 10px 12px !important;
                 margin-bottom: 12px !important;
             }
+            .monthSelector {
+                width: 100% !important;
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 8px !important;
+            }
             .monthSelector .panel-body {
-                padding: 4px !important;
+                width: 100% !important;
+                padding: 2px !important;
+                margin: 0 !important;
                 display: flex !important;
                 align-items: center !important;
+                justify-content: center !important;
                 gap: 12px !important;
+            }
+            #pcTodayButton {
+                display: flex !important;
+                justify-content: center !important;
+                width: 100% !important;
+                margin: 0 !important;
+            }
+            #todayButt {
+                padding: 5px 16px !important;
+                font-size: 12.5px !important;
+                min-width: auto !important;
+                max-width: none !important;
+                border-radius: 8px !important;
             }
             #monthText {
                 color: #F1F5F9 !important;
                 font-size: 18px !important;
-                font-weight: 600 !important;
+                font-weight: 700 !important;
                 margin: 0 !important;
+                text-align: center !important;
+                line-height: 1.25 !important;
+            }
+            #monthText.vv-month-jumpable {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 6px !important;
+                background-color: #111923 !important;
+                border: 1px solid #2A394A !important;
+                border-radius: 10px !important;
+                padding: 6px 14px !important;
+                cursor: pointer !important;
+                user-select: none !important;
+            }
+            #monthText.vv-month-jumpable:active {
+                background-color: #233040 !important;
+                border-color: #38BDF8 !important;
+            }
+            #monthText.vv-month-jumpable::after {
+                content: "▾" !important;
+                color: #38BDF8 !important;
+                font-size: 14px !important;
+                font-weight: 700 !important;
+            }
+            .prevButton, .nextButton {
+                display: inline-flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                width: 42px !important;
+                height: 38px !important;
+                background-color: #233040 !important;
+                border: 1px solid #37475A !important;
+                border-radius: 10px !important;
+                text-decoration: none !important;
+                flex-shrink: 0 !important;
+            }
+            .prevButton:active, .nextButton:active {
+                background-color: #2A394A !important;
+                border-color: #38BDF8 !important;
             }
             .prevButton::before {
                 content: "◀" !important;
                 color: #38BDF8 !important;
-                font-size: 16px !important;
+                font-size: 18px !important;
+                line-height: 1 !important;
                 text-decoration: none !important;
             }
             .nextButton::before {
                 content: "▶" !important;
                 color: #38BDF8 !important;
-                font-size: 16px !important;
+                font-size: 18px !important;
+                line-height: 1 !important;
                 text-decoration: none !important;
             }
             .month-table {
@@ -1884,7 +1998,8 @@ class MainActivity : AppCompatActivity() {
                 if (targetParent && style.parentNode !== targetParent) {
                     targetParent.appendChild(style);
                 }
-                if (style.textContent !== '$safeCss') {
+                if (style.getAttribute('data-vv-colors') !== '$colorCacheKey' || !style.textContent) {
+                    style.setAttribute('data-vv-colors', '$colorCacheKey');
                     style.textContent = '$safeCss';
                 }
 
@@ -2511,17 +2626,166 @@ class MainActivity : AppCompatActivity() {
                         colorWorkShifts();
                     }
 
-                    runCalendarCleanup();
-                    if (!window._calendarCleanupObserver && document.body && typeof MutationObserver !== 'undefined') {
-                        window._calendarCleanupObserver = true;
-                        var calCleanupTimer = null;
-                        var calObs = new MutationObserver(function() {
-                            if (calCleanupTimer) clearTimeout(calCleanupTimer);
-                            calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
-                        });
-                        calObs.observe(document.body, { childList: true, subtree: true });
+                    if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1) {
+                        runCalendarCleanup();
+                        if (!window._calendarCleanupObserver && typeof MutationObserver !== 'undefined') {
+                            var calObsRoot = document.getElementById('calendar-content') || document.body;
+                            if (calObsRoot) {
+                                window._calendarCleanupObserver = true;
+                                var calCleanupTimer = null;
+                                var calObs = new MutationObserver(function() {
+                                    if (calCleanupTimer) clearTimeout(calCleanupTimer);
+                                    calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
+                                });
+                                calObs.observe(calObsRoot, { childList: true, subtree: true });
+                            }
+                        }
                     }
                 })();
+
+                // === KUUKAUSI- JA VUOSIHYPPYVALITSIN (/Calendar/Month) ===
+                if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1) {
+                    var monthLabelEl = document.getElementById('monthText');
+                    if (monthLabelEl && !monthLabelEl._vvJumpInstalled) {
+                        monthLabelEl._vvJumpInstalled = true;
+                        monthLabelEl.classList.add('vv-month-jumpable');
+
+                        var jumpMonthMap = {
+                            'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
+                            'toukokuu': 5, 'kesäkuu': 6, 'heinäkuu': 7, 'elokuu': 8,
+                            'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12,
+                            'january': 1, 'february': 2, 'march': 3, 'april': 4,
+                            'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                            'september': 9, 'october': 10, 'november': 11, 'december': 12,
+                            'januari': 1, 'februari': 2, 'mars': 3, 'maj': 5,
+                            'juni': 6, 'juli': 7, 'augusti': 8, 'oktober': 10
+                        };
+
+                        monthLabelEl.addEventListener('click', function(ev) {
+                            ev.preventDefault();
+                            ev.stopPropagation();
+
+                            var existingModal = document.getElementById('vv-month-jump-modal');
+                            if (existingModal) existingModal.remove();
+
+                            var nowDate = new Date();
+                            var curRealMonth = nowDate.getMonth() + 1;
+                            var curRealYear = nowDate.getFullYear();
+
+                            var rawTxt = (monthLabelEl.textContent || '').trim().toLowerCase();
+                            var txtParts = rawTxt.split(/\s+/);
+                            var activeMonth = (txtParts.length >= 2 && jumpMonthMap[txtParts[0]]) ? jumpMonthMap[txtParts[0]] : curRealMonth;
+                            var activeYear = (txtParts.length >= 2 && parseInt(txtParts[1], 10)) ? parseInt(txtParts[1], 10) : curRealYear;
+                            var selectedYear = activeYear;
+
+                            var isEn = /^(january|february|march|april|may|june|july|august|september|october|november|december)/.test(rawTxt);
+                            var shortMonths = isEn
+                                ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                                : ['Tammi', 'Helmi', 'Maalis', 'Huhti', 'Touko', 'Kesä', 'Heinä', 'Elo', 'Syys', 'Loka', 'Marras', 'Joulu'];
+
+                            var backdrop = document.createElement('div');
+                            backdrop.id = 'vv-month-jump-modal';
+                            backdrop.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(6,11,19,0.78);display:flex;align-items:center;justify-content:center;padding:16px;';
+
+                            var card = document.createElement('div');
+                            card.style.cssText = 'width:100%;max-width:340px;background:#182332;border:1px solid #38BDF8;border-radius:14px;padding:16px;box-shadow:0 16px 36px rgba(0,0,0,0.65);color:#F1F5F9;';
+
+                            var titleRow = document.createElement('div');
+                            titleRow.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#38BDF8;margin-bottom:10px;text-align:center;';
+                            titleRow.textContent = isEn ? 'Jump to month & year' : 'Siirry kuukauteen ja vuoteen';
+                            card.appendChild(titleRow);
+
+                            var yearRow = document.createElement('div');
+                            yearRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:#111923;border:1px solid #2A394A;border-radius:10px;padding:6px 10px;margin-bottom:12px;';
+
+                            var btnPrevYear = document.createElement('button');
+                            btnPrevYear.type = 'button';
+                            btnPrevYear.textContent = '◀';
+                            btnPrevYear.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
+
+                            var yearLabel = document.createElement('span');
+                            yearLabel.style.cssText = 'font-size:18px;font-weight:700;color:#F1F5F9;';
+                            yearLabel.textContent = String(selectedYear);
+
+                            var btnNextYear = document.createElement('button');
+                            btnNextYear.type = 'button';
+                            btnNextYear.textContent = '▶';
+                            btnNextYear.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
+
+                            yearRow.appendChild(btnPrevYear);
+                            yearRow.appendChild(yearLabel);
+                            yearRow.appendChild(btnNextYear);
+                            card.appendChild(yearRow);
+
+                            var grid = document.createElement('div');
+                            grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;';
+                            card.appendChild(grid);
+
+                            function renderMonthButtons() {
+                                yearLabel.textContent = String(selectedYear);
+                                grid.innerHTML = '';
+                                for (var idx = 0; idx < 12; idx++) {
+                                    (function(mVal, mName) {
+                                        var btn = document.createElement('button');
+                                        btn.type = 'button';
+                                        btn.textContent = mName;
+                                        var isSelected = (selectedYear === activeYear && mVal === activeMonth);
+                                        var isCurrentReal = (selectedYear === curRealYear && mVal === curRealMonth);
+                                        var bg = isSelected ? '#1982C4' : '#111923';
+                                        var border = isSelected ? '#38BDF8' : (isCurrentReal ? '#38BDF8' : '#2A394A');
+                                        var fg = isSelected ? '#FFFFFF' : '#E2E8F0';
+                                        btn.style.cssText = 'padding:10px 4px;border-radius:8px;font-size:13px;font-weight:600;background:' + bg + ';border:1px solid ' + border + ';color:' + fg + ';';
+                                        btn.onclick = function() {
+                                            backdrop.remove();
+                                            window.location.href = '/Calendar/Month?month=' + mVal + '&year=' + selectedYear;
+                                        };
+                                        grid.appendChild(btn);
+                                    })(idx + 1, shortMonths[idx]);
+                                }
+                            }
+
+                            btnPrevYear.onclick = function() {
+                                selectedYear -= 1;
+                                renderMonthButtons();
+                            };
+                            btnNextYear.onclick = function() {
+                                selectedYear += 1;
+                                renderMonthButtons();
+                            };
+
+                            var footerRow = document.createElement('div');
+                            footerRow.style.cssText = 'display:flex;gap:8px;';
+
+                            var btnTodayJump = document.createElement('button');
+                            btnTodayJump.type = 'button';
+                            btnTodayJump.textContent = isEn ? 'Current month' : 'Nykyinen kuukausi';
+                            btnTodayJump.style.cssText = 'flex:1;padding:10px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
+                            btnTodayJump.onclick = function() {
+                                backdrop.remove();
+                                window.location.href = '/Calendar/Month?month=' + curRealMonth + '&year=' + curRealYear;
+                            };
+
+                            var btnCancelJump = document.createElement('button');
+                            btnCancelJump.type = 'button';
+                            btnCancelJump.textContent = isEn ? 'Cancel' : 'Peruuta';
+                            btnCancelJump.style.cssText = 'flex:1;padding:10px;background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
+                            btnCancelJump.onclick = function() {
+                                backdrop.remove();
+                            };
+
+                            footerRow.appendChild(btnTodayJump);
+                            footerRow.appendChild(btnCancelJump);
+                            card.appendChild(footerRow);
+
+                            backdrop.appendChild(card);
+                            backdrop.addEventListener('click', function(bgEv) {
+                                if (bgEv.target === backdrop) backdrop.remove();
+                            });
+                            document.body.appendChild(backdrop);
+                            renderMonthButtons();
+                        });
+                    }
+                }
 
                 // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
                 if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1 && !window._quickRequestInstalled) {
@@ -2585,7 +2849,8 @@ class MainActivity : AppCompatActivity() {
         view?.evaluateJavascript(js, null)
     }
 
-            private fun handleAutoLogin(attempt: Int = 0) {
+    private fun handleAutoLogin(attempt: Int = 0) {
+        val baseUrl = getBaseUrl()
         val rawUser = SecureCredentialManager.getUsername(this) ?: ""
         val rawPass = SecureCredentialManager.getPassword(this) ?: ""
         if (rawUser.isEmpty() || rawPass.isEmpty()) {
@@ -2593,6 +2858,34 @@ class MainActivity : AppCompatActivity() {
             endSnapshotTransition()
             return
         }
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            return
+        }
+        val fp = BackgroundAuthHelper.computeCredentialFingerprint(baseUrl, rawUser, rawPass)
+        if (attempt == 0 && webLoginAttemptFingerprint == fp) {
+            BackgroundAuthHelper.markCredentialFailed(
+                context = this,
+                baseUrl = baseUrl,
+                username = rawUser,
+                password = rawPass,
+                reason = "Virheellinen käyttäjätunnus tai salasana."
+            )
+            isAutoSubmittingLogin = false
+            endSnapshotTransition()
+            Toast.makeText(
+                this,
+                if (DemoModeHelper.isEnglish(this)) {
+                    "Login failed – please check username and password in Settings"
+                } else {
+                    "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                },
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
         val userJson = org.json.JSONObject.quote(rawUser)
         val passJson = org.json.JSONObject.quote(rawPass)
 
@@ -2619,8 +2912,15 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent()
 
         webView.evaluateJavascript(js) { res ->
-            if (res?.contains("WAITING") == true) {
-                if (attempt < 15) { webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L) }
+            if (res?.contains("SUBMITTED") == true) {
+                webLoginAttemptFingerprint = fp
+            } else if (res?.contains("WAITING") == true) {
+                if (attempt < 15) {
+                    webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L)
+                } else {
+                    isAutoSubmittingLogin = false
+                    endSnapshotTransition()
+                }
             }
         }
     }
@@ -2667,6 +2967,10 @@ class MainActivity : AppCompatActivity() {
 
         val baseUrl = getBaseUrl()
         if (baseUrl.isEmpty()) return
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            endSnapshotTransition()
+            return
+        }
 
         startSnapshotTransition {
             scope.launch {
@@ -2681,6 +2985,17 @@ class MainActivity : AppCompatActivity() {
                         .apply()
                     val targetUrl = resolveResumeUrl(baseUrl)
                     webView.loadUrl(targetUrl)
+                } else if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
+                    endSnapshotTransition()
+                    Toast.makeText(
+                        this@MainActivity,
+                        if (DemoModeHelper.isEnglish(this@MainActivity)) {
+                            "Login failed – please check username and password in Settings"
+                        } else {
+                            "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
+                        },
+                        Toast.LENGTH_LONG
+                    ).show()
                 } else {
                     webView.loadUrl("$baseUrl/Login/Login")
                 }
@@ -2784,7 +3099,11 @@ class MainActivity : AppCompatActivity() {
         if (pendingAction != Action.SYNC_CALENDAR) return
 
         webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
-            if (rawHtml == null || rawHtml == "null") return@evaluateJavascript
+            if (rawHtml == null || rawHtml == "null") {
+                pendingAction = Action.NONE
+                collectedCalendarHtml.clear()
+                return@evaluateJavascript
+            }
             val unescapedHtml = try {
                 JSONTokener(rawHtml).nextValue() as? String
             } catch (_: Exception) {
