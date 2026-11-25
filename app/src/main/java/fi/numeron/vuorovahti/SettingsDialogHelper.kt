@@ -80,7 +80,7 @@ object SettingsDialogHelper {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
             return emptyList()
         }
-        val list = mutableListOf<CalendarOption>()
+        val list = mutableListOf<Pair<CalendarOption, Boolean>>()
         val projection = arrayOf(
             CalendarContract.Calendars._ID,
             CalendarContract.Calendars.CALENDAR_DISPLAY_NAME,
@@ -104,14 +104,18 @@ object SettingsDialogHelper {
                 val account = cursor.getString(2) ?: ""
                 val accountType = cursor.getString(3) ?: ""
                 val isPrimary = cursor.getInt(4) == 1
-                list.add(CalendarOption(id, name, account, accountType, en))
-                if (accountType == "com.google" && isPrimary) {
-                    val item = list.removeAt(list.lastIndex)
-                    list.add(0, item)
-                }
+                list.add(CalendarOption(id, name, account, accountType, en) to isPrimary)
             }
         }
-        return list.sortedBy { if (it.accountType == "com.google") 0 else 1 }
+        return list
+            .sortedWith(
+                compareBy<Pair<CalendarOption, Boolean>>(
+                    { if (it.first.accountType == "com.google") 0 else 1 },
+                    { if (it.second) 0 else 1 },
+                    { it.first.id }
+                )
+            )
+            .map { it.first }
     }
 
 
