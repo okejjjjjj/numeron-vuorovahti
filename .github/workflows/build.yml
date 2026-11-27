@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "v2"]
   workflow_dispatch:
 
 jobs:
