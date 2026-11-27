@@ -466,6 +466,7 @@ object BackgroundAuthHelper {
             ) {
                 return@withContext null
             }
+            NumeronApiClient.extractAndSaveMaxSessionTime(context, res.body)
             bodies.add(res.body)
         }
 

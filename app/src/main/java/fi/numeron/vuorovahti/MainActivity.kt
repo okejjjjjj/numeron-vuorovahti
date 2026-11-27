@@ -61,7 +61,19 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private lateinit var webView: WebView
+    private var webView: WebView? = null
+    private lateinit var webViewHost: android.widget.LinearLayout
+    private lateinit var webOverlayHeader: android.widget.LinearLayout
+    private lateinit var btnWebOverlayBack: Button
+    private lateinit var txtWebOverlayTitle: TextView
+    private lateinit var webViewSlot: FrameLayout
+    private lateinit var nativeShiftsContainer: FrameLayout
+    private lateinit var nativeRequestsContainer: FrameLayout
+    private var nativeShiftsView: NativeShiftsView? = null
+    private var nativeRequestsView: NativeRequestsView? = null
+    private var isWebOverlayOpen: Boolean = false
+    private var pendingOverlayUrl: String? = null
+
     private lateinit var bannerDemoMode: TextView
     private lateinit var btnNavStamp: Button
     private lateinit var btnNavRequests: Button
@@ -118,7 +130,14 @@ class MainActivity : AppCompatActivity() {
 
         requestNeededPermissions()
 
-        webView = findViewById(R.id.webView)
+        webViewHost = findViewById(R.id.webViewHost)
+        webOverlayHeader = findViewById(R.id.webOverlayHeader)
+        btnWebOverlayBack = findViewById(R.id.btnWebOverlayBack)
+        txtWebOverlayTitle = findViewById(R.id.txtWebOverlayTitle)
+        webViewSlot = findViewById(R.id.webViewSlot)
+        nativeShiftsContainer = findViewById(R.id.nativeShiftsContainer)
+        nativeRequestsContainer = findViewById(R.id.nativeRequestsContainer)
+
         bannerDemoMode = findViewById(R.id.bannerDemoMode)
         btnNavStamp = findViewById(R.id.btnNavStamp)
         btnNavRequests = findViewById(R.id.btnNavRequests)
@@ -126,13 +145,13 @@ class MainActivity : AppCompatActivity() {
         btnNavSettings = findViewById(R.id.btnNavSettings)
         btnNavClose = findViewById(R.id.btnNavClose)
 
-        setupWebView()
+        btnWebOverlayBack.setOnClickListener {
+            closeWebOverlay(refreshNative = true)
+        }
+
         setupBottomBar()
         setupBackNavigation()
         handleIncomingIntent(intent)
-
-        // Näytetään heti käynnistyksessä splash-ruutu "Kirjaudutaan..."
-        startSnapshotTransition()
 
         if (intent?.getBooleanExtra("OPEN_REQUESTS", false) == true) {
             intent.removeExtra("OPEN_REQUESTS")
@@ -155,12 +174,147 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun resolveResumeUrl(baseUrl: String): String {
+        val overlayUrl = pendingOverlayUrl
         return when {
+            isWebOverlayOpen && !overlayUrl.isNullOrBlank() -> overlayUrl
             pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT -> "$baseUrl/WorktimeStamping"
             pendingAction == Action.SYNC_CALENDAR -> "$baseUrl/Calendar/Month"
             currentTab == Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
             currentTab == Tab.SHIFTS -> "$baseUrl/Calendar/Month"
             else -> "$baseUrl/WorktimeStamping"
+        }
+    }
+
+    private fun ensureWebView(): WebView {
+        webView?.let { return it }
+        val wv = WebView(this)
+        webViewSlot.removeAllViews()
+        webViewSlot.addView(
+            wv,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        webView = wv
+        setupWebView(wv)
+        return wv
+    }
+
+    private fun ensureNativeShiftsView(): NativeShiftsView {
+        nativeShiftsView?.let { return it }
+        val v = NativeShiftsView(
+            context = this,
+            scope = scope,
+            onOpenWebUrl = { url, title -> openWebOverlayUrl(url, title) }
+        )
+        nativeShiftsContainer.removeAllViews()
+        nativeShiftsContainer.addView(
+            v,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        nativeShiftsView = v
+        return v
+    }
+
+    private fun ensureNativeRequestsView(): NativeRequestsView {
+        nativeRequestsView?.let { return it }
+        val v = NativeRequestsView(
+            context = this,
+            scope = scope,
+            onOpenWebUrl = { url, title -> openWebOverlayUrl(url, title) }
+        )
+        nativeRequestsContainer.removeAllViews()
+        nativeRequestsContainer.addView(
+            v,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        nativeRequestsView = v
+        return v
+    }
+
+    private fun openWebOverlayUrl(url: String, title: String) {
+        val baseUrl = getBaseUrl()
+        val en = DemoModeHelper.isEnglish(this)
+        if (baseUrl.isBlank()) {
+            Toast.makeText(
+                this,
+                if (en) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        isWebOverlayOpen = true
+        pendingOverlayUrl = url
+        dashboardRedirectCount = 0
+        isAutoSubmittingLogin = false
+        val token = ++navigationToken
+        navigateJob?.cancel()
+
+        btnWebOverlayBack.text = if (en) "← Back" else "← Takaisin"
+        txtWebOverlayTitle.text = title
+        webOverlayHeader.visibility = View.VISIBLE
+        nativeShiftsContainer.visibility = View.GONE
+        nativeRequestsContainer.visibility = View.GONE
+        webViewHost.visibility = View.VISIBLE
+
+        val wv = ensureWebView()
+        startSnapshotTransition {
+            if (token != navigationToken) return@startSnapshotTransition
+            if (!NumeronApiClient.isSessionLikelyValid(this, baseUrl, isAutoStamping = false)) {
+                navigateJob = scope.launch {
+                    try {
+                        BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
+                    } catch (_: Exception) {
+                    }
+                    if (token == navigationToken && isWebOverlayOpen && !isFinishing && !isDestroyed) {
+                        wv.stopLoading()
+                        wv.loadUrl(url)
+                    }
+                }
+            } else {
+                wv.stopLoading()
+                wv.loadUrl(url)
+            }
+        }
+    }
+
+    private fun closeWebOverlay(refreshNative: Boolean) {
+        isWebOverlayOpen = false
+        pendingOverlayUrl = null
+        isAutoSubmittingLogin = false
+        endSnapshotTransition()
+        webOverlayHeader.visibility = View.GONE
+        webView?.stopLoading()
+
+        when (currentTab) {
+            Tab.SHIFTS -> {
+                webViewHost.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.GONE
+                nativeShiftsContainer.visibility = View.VISIBLE
+                if (refreshNative) {
+                    ensureNativeShiftsView().refreshFromCacheAndNetwork()
+                }
+            }
+            Tab.REQUESTS -> {
+                webViewHost.visibility = View.GONE
+                nativeShiftsContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.VISIBLE
+                if (refreshNative) {
+                    ensureNativeRequestsView().refreshAfterWebEdit()
+                }
+            }
+            Tab.STAMP -> {
+                nativeShiftsContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.GONE
+                webViewHost.visibility = View.VISIBLE
+            }
         }
     }
 
@@ -249,24 +403,24 @@ class MainActivity : AppCompatActivity() {
         }
         overlay.addView(progressBar, spinnerParams)
 
-        rootContent.addView(overlay, FrameLayout.LayoutParams(webView.width, webView.height))
+        rootContent.addView(overlay, FrameLayout.LayoutParams(webViewSlot.width, webViewSlot.height))
         syncOverlayBoundsToWebView(overlay)
-        webView.post { syncOverlayBoundsToWebView(overlay) }
+        webViewSlot.post { syncOverlayBoundsToWebView(overlay) }
         transitionOverlay = overlay
         return overlay
     }
 
     private fun syncOverlayBoundsToWebView(overlay: FrameLayout) {
-        if (webView.width <= 0 || webView.height <= 0) return
+        if (webViewSlot.width <= 0 || webViewSlot.height <= 0) return
         val rootContent = findViewById<View>(android.R.id.content)
         val webLoc = IntArray(2)
         val rootLoc = IntArray(2)
-        webView.getLocationInWindow(webLoc)
+        webViewSlot.getLocationInWindow(webLoc)
         rootContent.getLocationInWindow(rootLoc)
 
         val lp = overlay.layoutParams as FrameLayout.LayoutParams
-        lp.width = webView.width
-        lp.height = webView.height
+        lp.width = webViewSlot.width
+        lp.height = webViewSlot.height
         lp.leftMargin = webLoc[0] - rootLoc[0]
         lp.topMargin = webLoc[1] - rootLoc[1]
         overlay.layoutParams = lp
@@ -286,18 +440,19 @@ class MainActivity : AppCompatActivity() {
     private fun startSnapshotTransition(onReady: (() -> Unit)? = null) {
         val overlay = ensureTransitionOverlay()
         overlay.animate().cancel()
-        webView.removeCallbacks(transitionFallbackRunnable)
-        webView.postDelayed(transitionFallbackRunnable, 6500L)
+        webViewSlot.removeCallbacks(transitionFallbackRunnable)
+        webViewSlot.postDelayed(transitionFallbackRunnable, 6500L)
 
+        val wv = webView
         if (!isTransitionActive) {
             isTransitionActive = true
             recycleSnapshotBitmap()
 
-            if (webView.width > 0 && webView.height > 0 && webView.alpha > 0.5f) {
+            if (wv != null && wv.width > 0 && wv.height > 0 && wv.alpha > 0.5f && webViewHost.visibility == View.VISIBLE) {
                 try {
-                    val bitmap = Bitmap.createBitmap(webView.width, webView.height, Bitmap.Config.RGB_565)
+                    val bitmap = Bitmap.createBitmap(wv.width, wv.height, Bitmap.Config.RGB_565)
                     val canvas = Canvas(bitmap)
-                    webView.draw(canvas)
+                    wv.draw(canvas)
                     snapshotBitmap = bitmap
                     snapshotView?.setImageBitmap(bitmap)
                     snapshotView?.visibility = View.VISIBLE
@@ -308,11 +463,11 @@ class MainActivity : AppCompatActivity() {
 
             overlay.alpha = 1f
             overlay.visibility = View.VISIBLE
-            webView.alpha = 0f
-            webView.post { syncOverlayBoundsToWebView(overlay) }
+            wv?.alpha = 0f
+            webViewSlot.post { syncOverlayBoundsToWebView(overlay) }
 
             if (onReady != null) {
-                webView.post { onReady() }
+                webViewSlot.post { onReady() }
             }
         } else {
             onReady?.invoke()
@@ -320,8 +475,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun endSnapshotTransition() {
-        webView.removeCallbacks(transitionFallbackRunnable)
-        webView.alpha = 1f
+        webViewSlot.removeCallbacks(transitionFallbackRunnable)
+        webView?.alpha = 1f
         isTransitionActive = false
 
         val overlay = transitionOverlay ?: return
@@ -333,6 +488,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun navigateToTab(tab: Tab) {
         currentTab = tab
+        isWebOverlayOpen = false
+        pendingOverlayUrl = null
         dashboardRedirectCount = 0
         isAutoSubmittingLogin = false
         val token = ++navigationToken
@@ -345,19 +502,40 @@ class MainActivity : AppCompatActivity() {
             Tab.SHIFTS -> setActiveTab(btnNavShifts)
         }
 
+        if (tab == Tab.SHIFTS) {
+            endSnapshotTransition()
+            webView?.stopLoading()
+            webOverlayHeader.visibility = View.GONE
+            webViewHost.visibility = View.GONE
+            nativeRequestsContainer.visibility = View.GONE
+            nativeShiftsContainer.visibility = View.VISIBLE
+            ensureNativeShiftsView().onShow(forceNetwork = false)
+            return
+        }
+
+        if (tab == Tab.REQUESTS) {
+            endSnapshotTransition()
+            webView?.stopLoading()
+            webOverlayHeader.visibility = View.GONE
+            webViewHost.visibility = View.GONE
+            nativeShiftsContainer.visibility = View.GONE
+            nativeRequestsContainer.visibility = View.VISIBLE
+            ensureNativeRequestsView().onShow(forceNetwork = false)
+            return
+        }
+
+        nativeShiftsContainer.visibility = View.GONE
+        nativeRequestsContainer.visibility = View.GONE
+        webOverlayHeader.visibility = View.GONE
+        webViewHost.visibility = View.VISIBLE
+        val wv = ensureWebView()
+
         if (DemoModeHelper.isDemoEnabled(this)) {
-            if (tab == Tab.SHIFTS) {
-                DemoModeHelper.resetDemoCalendarMonth(this)
-            }
             startSnapshotTransition {
                 if (token != navigationToken) return@startSnapshotTransition
-                val html = when (tab) {
-                    Tab.STAMP -> DemoModeHelper.getDemoStampingHtml(this)
-                    Tab.REQUESTS -> DemoModeHelper.getDemoRequestsHtml(this)
-                    Tab.SHIFTS -> DemoModeHelper.getDemoShiftsHtml(this)
-                }
-                webView.stopLoading()
-                webView.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
+                val html = DemoModeHelper.getDemoStampingHtml(this)
+                wv.stopLoading()
+                wv.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
             }
         } else {
             val baseUrl = getBaseUrl()
@@ -384,23 +562,14 @@ class MainActivity : AppCompatActivity() {
                 ).show()
                 return
             }
-            val now = LocalDate.now()
-            val url = when (tab) {
-                Tab.STAMP -> "$baseUrl/WorktimeStamping"
-                Tab.REQUESTS -> "$baseUrl/PersonRequests/List"
-                Tab.SHIFTS -> "$baseUrl/Calendar/Month?month=${now.monthValue}&year=${now.year}"
-            }
+            val url = "$baseUrl/WorktimeStamping"
             startSnapshotTransition {
                 if (token != navigationToken) return@startSnapshotTransition
                 navigateJob?.cancel()
                 val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-                val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
-                val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
-                val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
                 val isAutoStamping = (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT)
-                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 4L * 60 * 60 * 1000L
 
-                if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
+                if (!NumeronApiClient.isSessionLikelyValid(this, baseUrl, isAutoStamping)) {
                     navigateJob = scope.launch {
                         try {
                             val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
@@ -422,14 +591,14 @@ class MainActivity : AppCompatActivity() {
                                     Toast.LENGTH_LONG
                                 ).show()
                             } else {
-                                webView.stopLoading()
-                                webView.loadUrl(url)
+                                wv.stopLoading()
+                                wv.loadUrl(url)
                             }
                         }
                     }
                 } else {
-                    webView.stopLoading()
-                    webView.loadUrl(url)
+                    wv.stopLoading()
+                    wv.loadUrl(url)
                 }
             }
         }
@@ -479,9 +648,14 @@ class MainActivity : AppCompatActivity() {
             this,
             object : androidx.activity.OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (::webView.isInitialized && webView.canGoBack()) {
+                    if (isWebOverlayOpen) {
+                        closeWebOverlay(refreshNative = true)
+                        return
+                    }
+                    val wv = webView
+                    if (currentTab == Tab.STAMP && wv != null && wv.canGoBack()) {
                         startSnapshotTransition()
-                        webView.goBack()
+                        wv.goBack()
                     } else {
                         isEnabled = false
                         onBackPressedDispatcher.onBackPressed()
@@ -604,7 +778,7 @@ class MainActivity : AppCompatActivity() {
                 pendingAction = Action.SYNC_CALENDAR
                 syncStep = 0
                 collectedCalendarHtml.clear()
-                webView.loadUrl(urls[0])
+                ensureWebView().loadUrl(urls[0])
             }
         }
     }
@@ -693,19 +867,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        webView.setBackgroundColor(Color.parseColor("#0F1722"))
-        (webView.parent as? View)?.setBackgroundColor(Color.parseColor("#0F1722"))
+    private fun setupWebView(wv: WebView) {
+        wv.setBackgroundColor(Color.parseColor("#0F1722"))
+        (wv.parent as? View)?.setBackgroundColor(Color.parseColor("#0F1722"))
 
-        webView.settings.apply {
+        wv.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
             userAgentString = WebSettings.getDefaultUserAgent(this@MainActivity)
         }
-        webView.webChromeClient = android.webkit.WebChromeClient()
+        wv.webChromeClient = android.webkit.WebChromeClient()
 
-        webView.addJavascriptInterface(
+        wv.addJavascriptInterface(
             DemoModeHelper.DemoJsBridge(
                 context = this,
                 onReloadNeeded = { runOnUiThread { navigateToTab(currentTab) } },
@@ -715,7 +889,7 @@ class MainActivity : AppCompatActivity() {
             "DemoBridge"
         )
 
-        webView.addJavascriptInterface(
+        wv.addJavascriptInterface(
             object {
                 @android.webkit.JavascriptInterface
                 fun onSessionExpired() {
@@ -735,9 +909,9 @@ class MainActivity : AppCompatActivity() {
         )
 
         CookieManager.getInstance().setAcceptCookie(true)
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
-        webView.webViewClient = object : WebViewClient() {
+        wv.webViewClient = object : WebViewClient() {
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val uri = request?.url ?: return false
@@ -753,6 +927,15 @@ class MainActivity : AppCompatActivity() {
                         (!reqHost.isNullOrBlank() && (reqHost.endsWith(".numeronwfm.com", ignoreCase = true) || reqHost.endsWith(".numeronwfm.fi", ignoreCase = true))) ||
                         (!allowedHost.isNullOrBlank() && reqHost.equals(allowedHost, ignoreCase = true))
                     if (isInternal) {
+                        if (request?.isForMainFrame == true &&
+                            isWebOverlayOpen &&
+                            pendingAction != Action.SYNC_CALENDAR &&
+                            (url.contains("/PersonRequests/List", ignoreCase = true) ||
+                                url.contains("/Calendar/Month", ignoreCase = true))
+                        ) {
+                            closeWebOverlay(refreshNative = true)
+                            return true
+                        }
                         if (request?.isForMainFrame == true &&
                             url.contains("/InfraDashboard", ignoreCase = true) &&
                             dashboardRedirectCount < 2
@@ -790,7 +973,7 @@ class MainActivity : AppCompatActivity() {
                 val url = request?.url?.toString()?.lowercase()
                     ?: return super.shouldInterceptRequest(view, request)
 
-                if (url.contains("amplitude")) {
+                if (url.contains("amplitude") || url.contains("eligibility.")) {
                     return WebResourceResponse(
                         "application/javascript",
                         "UTF-8",
@@ -862,8 +1045,22 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
+                if (isWebOverlayOpen &&
+                    pendingAction != Action.SYNC_CALENDAR &&
+                    (url.contains("/PersonRequests/List", ignoreCase = true) ||
+                        url.contains("/Calendar/Month", ignoreCase = true))
+                ) {
+                    closeWebOverlay(refreshNative = true)
+                    return
+                }
+
                 injectDarkTheme(view, forceDomInit = true)
-                CookieManager.getInstance().flush()
+                if (url.contains("/Login/", ignoreCase = true) ||
+                    url.contains("/WorktimeStamping", ignoreCase = true) ||
+                    isAutoSubmittingLogin
+                ) {
+                    CookieManager.getInstance().flush()
+                }
                 if (!url.contains("/Login/", ignoreCase = true) && !url.contains("/InfraDashboard", ignoreCase = true)) {
                     dashboardRedirectCount = 0
                 }
@@ -879,7 +1076,7 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/Login/LogOff", ignoreCase = true) -> {
                         isAutoSubmittingLogin = true
                         startSnapshotTransition()
-                        webView.loadUrl("${getBaseUrl()}/Login/Login")
+                        wv.loadUrl("${getBaseUrl()}/Login/Login")
                         return
                     }
                     url.contains("/Login/Login", ignoreCase = true) -> {
@@ -891,26 +1088,26 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/InfraDashboard", ignoreCase = true) && dashboardRedirectCount < 2 -> {
                         dashboardRedirectCount++
                         startSnapshotTransition()
-                        webView.loadUrl(resolveResumeUrl(getBaseUrl()))
+                        wv.loadUrl(resolveResumeUrl(getBaseUrl()))
                         return
                     }
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
                         isAutoSubmittingLogin = false
-                        setActiveTab(btnNavStamp)
+                        if (!isWebOverlayOpen) setActiveTab(btnNavStamp)
                         handleStampingPage()
                     }
                     url.contains("/PersonRequests", ignoreCase = true) -> {
                         isAutoSubmittingLogin = false
-                        setActiveTab(btnNavRequests)
+                        if (!isWebOverlayOpen) setActiveTab(btnNavRequests)
                     }
                     url.contains("/Calendar", ignoreCase = true) -> {
                         isAutoSubmittingLogin = false
-                        setActiveTab(btnNavShifts)
+                        if (!isWebOverlayOpen) setActiveTab(btnNavShifts)
                         handleCalendarPage()
                     }
                     pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT -> {
                         isAutoSubmittingLogin = false
-                        webView.loadUrl("${getBaseUrl()}/WorktimeStamping")
+                        wv.loadUrl("${getBaseUrl()}/WorktimeStamping")
                         return
                     }
                     else -> {
@@ -935,14 +1132,14 @@ class MainActivity : AppCompatActivity() {
             val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             val currentlyIn = prefs.getBoolean("demo_stamped_in", false)
             if (wantIn != currentlyIn) {
-                webView.evaluateJavascript("DemoBridge.toggleStamp()", null)
-                webView.postDelayed({ finishAndRemoveTask() }, 1200L)
+                webView?.evaluateJavascript("DemoBridge.toggleStamp()", null)
+                webViewSlot.postDelayed({ finishAndRemoveTask() }, 1200L)
             } else {
                 val en = DemoModeHelper.isEnglish(this)
                 val stateStr = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
                 val msg = if (en) "Demo mode: Already clocked $stateStr" else "Demotila: Olet jo leimannut tilaan $stateStr"
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-                webView.postDelayed({ finishAndRemoveTask() }, 1200L)
+                webViewSlot.postDelayed({ finishAndRemoveTask() }, 1200L)
             }
         }
     }
@@ -2916,12 +3113,13 @@ class MainActivity : AppCompatActivity() {
             })();
         """.trimIndent()
 
-        webView.evaluateJavascript(js) { res ->
+        val wv = webView ?: return
+        wv.evaluateJavascript(js) { res ->
             if (res?.contains("SUBMITTED") == true) {
                 webLoginAttemptFingerprint = fp
             } else if (res?.contains("WAITING") == true) {
                 if (attempt < 15) {
-                    webView.postDelayed({ handleAutoLogin(attempt + 1) }, 300L)
+                    wv.postDelayed({ handleAutoLogin(attempt + 1) }, 300L)
                 } else {
                     isAutoSubmittingLogin = false
                     endSnapshotTransition()
@@ -2989,7 +3187,7 @@ class MainActivity : AppCompatActivity() {
                         .putLong("last_valid_session_ms", System.currentTimeMillis())
                         .apply()
                     val targetUrl = resolveResumeUrl(baseUrl)
-                    webView.loadUrl(targetUrl)
+                    ensureWebView().loadUrl(targetUrl)
                 } else if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
                     endSnapshotTransition()
                     Toast.makeText(
@@ -3002,7 +3200,7 @@ class MainActivity : AppCompatActivity() {
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
-                    webView.loadUrl("$baseUrl/Login/Login")
+                    ensureWebView().loadUrl("$baseUrl/Login/Login")
                 }
             }
         }
@@ -3014,7 +3212,8 @@ class MainActivity : AppCompatActivity() {
         val wantIn = (pendingAction == Action.STAMP_IN)
         val targetText = if (wantIn) "Sisään" else "Ulos"
 
-        webView.evaluateJavascript(StampingWebHelper.buildClickStampJs(wantIn)) { rawResult ->
+        val wv = webView ?: return
+        wv.evaluateJavascript(StampingWebHelper.buildClickStampJs(wantIn)) { rawResult ->
             val obj = StampingWebHelper.parseJsonResult(rawResult)
             val status = obj?.optString("status", "") ?: ""
 
@@ -3037,10 +3236,10 @@ class MainActivity : AppCompatActivity() {
                     val en = DemoModeHelper.isEnglish(this)
                     val dirLabel = if (en) (if (wantIn) "In" else "Out") else targetText
                     Toast.makeText(this, if (en) "Already clocked $dirLabel" else "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
-                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
+                    wv.postDelayed({ finishAndRemoveTask() }, 1500L)
                 }
                 status == "NO_BUTTON" && attempt < 10 -> {
-                    webView.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
+                    wv.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
                 }
                 else -> {
                     pendingAction = Action.NONE
@@ -3057,9 +3256,10 @@ class MainActivity : AppCompatActivity() {
         beforeRowId: String,
         checkAttempt: Int
     ) {
-        webView.postDelayed({
+        val wv = webView ?: return
+        wv.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
-            webView.evaluateJavascript(StampingWebHelper.buildVerifyStampJs()) { rawResult ->
+            wv.evaluateJavascript(StampingWebHelper.buildVerifyStampJs()) { rawResult ->
                 val obj = StampingWebHelper.parseJsonResult(rawResult)
                 val nowDir = obj?.optString("dir", "") ?: ""
                 val nowBtn = obj?.optString("btn", "") ?: ""
@@ -3086,7 +3286,7 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     inFlightStampAction = Action.NONE
                     CookieManager.getInstance().flush()
-                    webView.postDelayed({ finishAndRemoveTask() }, 1500L)
+                    wv.postDelayed({ finishAndRemoveTask() }, 1500L)
                 } else if (checkAttempt < 25) {
                     verifyStampAndClose(wantIn, beforeDir, beforeBtn, beforeRow, beforeRowId, checkAttempt + 1)
                 } else {
@@ -3102,8 +3302,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleCalendarPage() {
         if (pendingAction != Action.SYNC_CALENDAR) return
+        val wv = webView ?: return
 
-        webView.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
+        wv.evaluateJavascript("document.documentElement.outerHTML") { rawHtml ->
             if (rawHtml == null || rawHtml == "null") {
                 pendingAction = Action.NONE
                 collectedCalendarHtml.clear()
@@ -3124,7 +3325,7 @@ class MainActivity : AppCompatActivity() {
                 syncStep = 1
                 val nextMonth = LocalDate.now().plusMonths(1)
                 val baseUrl = getBaseUrl()
-                webView.loadUrl("$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}")
+                wv.loadUrl("$baseUrl/Calendar/Month?month=${nextMonth.monthValue}&year=${nextMonth.year}")
             } else {
                 pendingAction = Action.NONE
                 val pagesToParse = collectedCalendarHtml.toList()
@@ -3136,6 +3337,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun processSyncedCalendarPages(pagesToParse: List<String>) {
         scope.launch(Dispatchers.IO) {
+            pagesToParse.forEach { html ->
+                NumeronParser.parseMonthForDisplay(html)?.let { displayData ->
+                    NumeronApiClient.saveMonthDisplayCache(this@MainActivity, displayData)
+                }
+            }
             val parsedPages = pagesToParse.map { NumeronParser.parseCalendarHtml(it) }
             if (parsedPages.any { it == null }) {
                 withContext(Dispatchers.Main) {
@@ -3178,6 +3384,11 @@ class MainActivity : AppCompatActivity() {
 
             withContext(Dispatchers.Main) {
                 if (isFinishing || isDestroyed) return@withContext
+                if (currentTab == Tab.SHIFTS && !isWebOverlayOpen) {
+                    nativeShiftsView?.onShow(forceNetwork = false)
+                } else if (currentTab == Tab.REQUESTS && !isWebOverlayOpen) {
+                    nativeRequestsView?.refreshAfterWebEdit()
+                }
                 val en = DemoModeHelper.isEnglish(this@MainActivity)
                 if (syncCalendar && calId == null) {
                     Toast.makeText(
@@ -3206,7 +3417,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         try {
-            webView.onPause()
+            webView?.onPause()
         } catch (_: Exception) {}
         super.onPause()
     }
@@ -3214,21 +3425,26 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         try {
-            webView.onResume()
+            webView?.onResume()
         } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
         navigateJob?.cancel()
-        webView.removeCallbacks(transitionFallbackRunnable)
+        webViewSlot.removeCallbacks(transitionFallbackRunnable)
         recycleSnapshotBitmap()
         try {
-            CookieManager.getInstance().flush()
+            if (webView != null) {
+                CookieManager.getInstance().flush()
+            }
         } catch (_: Exception) {}
         try {
-            (webView.parent as? ViewGroup)?.removeView(webView)
-            webView.stopLoading()
-            webView.destroy()
+            webView?.let { wv ->
+                (wv.parent as? ViewGroup)?.removeView(wv)
+                wv.stopLoading()
+                wv.destroy()
+            }
+            webView = null
         } catch (_: Exception) {}
         scope.cancel()
         super.onDestroy()

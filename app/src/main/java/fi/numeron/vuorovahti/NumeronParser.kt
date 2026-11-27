@@ -21,6 +21,42 @@ data class WorkShift(
     val description: String = ""
 )
 
+data class CalendarDisplayShift(
+    val startText: String,
+    val endText: String,
+    val startMinutes: Int,
+    val endMinutes: Int,
+    val location: String,
+    val shiftName: String,
+    val role: String,
+    val rawTitle: String
+)
+
+data class CalendarDisplayAbsence(
+    val title: String,
+    val kind: String,
+    val spanDays: Int = 1
+)
+
+data class CalendarDisplayRequest(
+    val title: String
+)
+
+data class CalendarDisplayDay(
+    val date: LocalDate,
+    val shifts: List<CalendarDisplayShift>,
+    val absences: List<CalendarDisplayAbsence>,
+    val requests: List<CalendarDisplayRequest>,
+    val hasCommentCircle: Boolean = false
+)
+
+data class MonthDisplayData(
+    val year: Int,
+    val month: Int,
+    val days: Map<LocalDate, CalendarDisplayDay>
+)
+
+
 object NumeronParser {
 
     private val finnishMonths = mapOf(
@@ -462,5 +498,150 @@ object NumeronParser {
         }
         workShifts.add(currentLeave)
         return workShifts.sortedBy { it.start }
+    }
+
+    private fun isDisplayIgnoredAbsence(nameText: String): Boolean {
+        val lower = nameText.trim().lowercase()
+        return lower == "vapaa" ||
+            lower.startsWith("vapaapäivä") ||
+            lower.startsWith("arkipyhä") ||
+            lower.startsWith("viikkolepo") ||
+            lower.startsWith("viikkovapaa") ||
+            lower.startsWith("tasausvapaa") ||
+            lower.startsWith("saldovapaa") ||
+            lower.startsWith("pekkanen") ||
+            lower.startsWith("pekkaspäivä") ||
+            lower.startsWith("ei suunniteltuja töitä") ||
+            lower == "ei työvuoroa" ||
+            lower == "ei vuoroa"
+    }
+
+    private fun classifyDisplayAbsence(nameText: String): String {
+        val lower = nameText.trim().lowercase()
+        return when {
+            lower.contains("sairaus") || lower.contains("hoitovapaa") -> "sick"
+            lower.contains("loma") || lower.contains("säästövapaa") || lower.contains("lomarahavapaa") -> "vacation"
+            else -> "other"
+        }
+    }
+
+    fun parseMonthForDisplay(html: String): MonthDisplayData? {
+        val doc = Jsoup.parse(html)
+        val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return null
+        val parts = monthHeader.split(Regex("\\s+"))
+        if (parts.size < 2) return null
+
+        val currentMonth = finnishMonths[parts[0]] ?: return null
+        val currentYear = parts[1].toIntOrNull() ?: return null
+        val dayCells = doc.select("table.month-table td.month-day")
+        if (dayCells.isEmpty()) return null
+
+        val shiftsByDate = mutableMapOf<LocalDate, MutableList<CalendarDisplayShift>>()
+        val absencesByDate = mutableMapOf<LocalDate, MutableList<CalendarDisplayAbsence>>()
+        val requestsByDate = mutableMapOf<LocalDate, MutableList<CalendarDisplayRequest>>()
+        val circleDates = mutableSetOf<LocalDate>()
+        val timeFmt = DateTimeFormatter.ofPattern("H:mm")
+
+        for (cell in dayCells) {
+            if (cell.hasClass("day-different-month")) continue
+            val dayNum = cell.selectFirst(".dayNum")?.text()?.trim()?.toIntOrNull() ?: continue
+            val date = try {
+                LocalDate.of(currentYear, currentMonth, dayNum)
+            } catch (_: Exception) {
+                continue
+            }
+
+            if (cell.selectFirst(".circle") != null) {
+                circleDates.add(date)
+            }
+
+            // Poissaolot (säilyttää lomat, sairauslomat ja koulutukset/muut)
+            cell.select(".month-item.absence").forEach { item ->
+                val nameText = item.selectFirst(".itemName")?.text()?.trim() ?: return@forEach
+                if (nameText.isEmpty() || isDisplayIgnoredAbsence(nameText)) return@forEach
+                val kind = classifyDisplayAbsence(nameText)
+                val spanDays = parseAbsenceSpanDays(item.attr("style"))
+                for (offset in 0 until spanDays) {
+                    val targetDate = date.plusDays(offset.toLong())
+                    if (targetDate.monthValue == currentMonth && targetDate.year == currentYear) {
+                        val list = absencesByDate.getOrPut(targetDate) { mutableListOf() }
+                        if (list.none { it.title.equals(nameText, ignoreCase = true) }) {
+                            list.add(CalendarDisplayAbsence(nameText, kind, if (offset == 0) spanDays else 1))
+                        }
+                    }
+                }
+            }
+
+            // Työvuorot (sekä menneet että tulevat koko kuukaudelta)
+            cell.select(".month-item.work").forEach { item ->
+                val timesText = item.selectFirst(".itemTimes")?.text()?.trim() ?: ""
+                val rawNameText = item.selectFirst(".itemName")?.text()?.trim() ?: ""
+                val timeParts = timesText.split("-").map { it.trim() }
+                if (timeParts.size == 2) {
+                    val startTime = try {
+                        LocalTime.parse(timeParts[0], timeFmt)
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
+                    val endTime = try {
+                        LocalTime.parse(timeParts[1], timeFmt)
+                    } catch (_: Exception) {
+                        return@forEach
+                    }
+                    val parsed = parseShiftText(rawNameText)
+                    val list = shiftsByDate.getOrPut(date) { mutableListOf() }
+                    list.add(
+                        CalendarDisplayShift(
+                            startText = String.format("%d:%02d", startTime.hour, startTime.minute),
+                            endText = String.format("%d:%02d", endTime.hour, endTime.minute),
+                            startMinutes = startTime.hour * 60 + startTime.minute,
+                            endMinutes = endTime.hour * 60 + endTime.minute,
+                            location = parsed.location,
+                            shiftName = parsed.shiftName,
+                            role = parsed.role,
+                            rawTitle = rawNameText
+                        )
+                    )
+                }
+            }
+
+            // Toiveet kalenterissa
+            cell.select(".month-item.request").forEach { item ->
+                val title = (item.selectFirst(".itemName")?.text() ?: item.text()).replace(Regex("\\s+"), " ").trim()
+                if (title.isNotEmpty()) {
+                    val list = requestsByDate.getOrPut(date) { mutableListOf() }
+                    if (list.none { it.title.equals(title, ignoreCase = true) }) {
+                        list.add(CalendarDisplayRequest(title))
+                    }
+                }
+            }
+        }
+
+        val allDates = (shiftsByDate.keys + absencesByDate.keys + requestsByDate.keys + circleDates)
+        val dayMap = mutableMapOf<LocalDate, CalendarDisplayDay>()
+        for (d in allDates) {
+            dayMap[d] = CalendarDisplayDay(
+                date = d,
+                shifts = shiftsByDate[d].orEmpty(),
+                absences = absencesByDate[d].orEmpty(),
+                requests = requestsByDate[d].orEmpty(),
+                hasCommentCircle = d in circleDates
+            )
+        }
+        return MonthDisplayData(year = currentYear, month = currentMonth, days = dayMap)
+    }
+
+    fun fetchDayComments(baseUrl: String, cookieHeader: String?, date: LocalDate): String? {
+        if (baseUrl.isBlank()) return null
+        val cleanBase = baseUrl.trimEnd('/')
+        val listUrl = "$cleanBase/Calendar/List?date=${date.monthValue}%2F${date.dayOfMonth}%2F${date.year}%2000%3A00%3A00"
+        val html = fetchHtmlWithCookies(listUrl, cookieHeader) ?: return null
+        val parsed = parseListCommentsHtml(html)
+        val comments = parsed.entries
+            .filter { it.key.first == date }
+            .map { it.value.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        return if (comments.isEmpty()) null else comments.joinToString("\n")
     }
 }

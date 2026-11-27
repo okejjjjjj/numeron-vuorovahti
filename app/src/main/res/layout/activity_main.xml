@@ -18,11 +18,79 @@
         android:paddingVertical="4dp"
         android:visibility="gone" />
 
-    <WebView
-        android:id="@+id/webView"
+    <FrameLayout
+        android:id="@+id/contentContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1"
+        android:background="#0F1722">
+
+        <LinearLayout
+            android:id="@+id/webViewHost"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:background="#0F1722"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/webOverlayHeader"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="10dp"
+                android:background="#182332"
+                android:visibility="gone">
+
+                <Button
+                    android:id="@+id/btnWebOverlayBack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="34dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="12dp"
+                    android:background="@drawable/nav_btn_inactive"
+                    android:text="← Takaisin"
+                    android:textAllCaps="false"
+                    android:textColor="#38BDF8"
+                    android:textStyle="bold"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/txtWebOverlayTitle"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="10dp"
+                    android:textColor="#F1F5F9"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:id="@+id/webViewSlot"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="#0F1722" />
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/nativeShiftsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#0F1722"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:id="@+id/nativeRequestsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#0F1722"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="match_parent"

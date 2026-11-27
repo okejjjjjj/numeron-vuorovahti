@@ -558,7 +558,7 @@ object CalendarSyncHelper {
         return !raw.isNullOrBlank()
     }
 
-    private fun loadCachedShifts(context: Context): List<WorkShift>? {
+    fun loadCachedShifts(context: Context): List<WorkShift>? {
         val raw = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             .getString("cached_work_shifts_json", null) ?: return null
         return try {
