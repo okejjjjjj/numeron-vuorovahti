@@ -408,11 +408,163 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle(title)
                 .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
                 .setContentIntent(pi)
                 .build()
             nm.notify(notifId, notif)
+        }
+
+        fun syncRequestsAndNotify(context: Context, baseUrl: String): Int {
+            if (baseUrl.isBlank()) return 0
+            val jsonStr = fetchRequestsJson(context, baseUrl) ?: return 0
+            return checkRequestUpdates(context, jsonStr)
+        }
+
+        private fun fetchRequestsJson(context: Context, baseUrl: String): String? {
+            var conn: java.net.HttpURLConnection? = null
+            val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            return try {
+                val cookies = CookieManager.getInstance().getCookie(baseUrl)
+                if (cookies.isNullOrBlank()) {
+                    prefs.edit().putString("last_requests_check_status", "NO_COOKIES").apply()
+                    return null
+                }
+                conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    instanceFollowRedirects = false
+                    setRequestProperty("Cookie", cookies)
+                    setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                    setRequestProperty("Accept", "application/json, text/javascript, */*; q=0.01")
+                    setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                    setRequestProperty(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                    )
+                    doOutput = true
+                    connectTimeout = 15000
+                    readTimeout = 15000
+                }
+                java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                    writer.write("sort=&page=1&pageSize=100&group=&filter=&selectedFilter=active")
+                    writer.flush()
+                }
+                val code = conn.responseCode
+                val text = if (code == 200) {
+                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                } else {
+                    null
+                }
+                if (text != null && text.trim().startsWith("{")) {
+                    text
+                } else {
+                    prefs.edit().putString("last_requests_check_status", "HTTP_$code").apply()
+                    null
+                }
+            } catch (e: Exception) {
+                prefs.edit().putString("last_requests_check_status", "ERR:${e.javaClass.simpleName}").apply()
+                null
+            } finally {
+                conn?.disconnect()
+            }
+        }
+
+        private fun resolveRequestStatusCode(rawStatus: Int, statusDesc: String): Int {
+            if (rawStatus == 40 || rawStatus == 50 || rawStatus == 80) return rawStatus
+            val lower = statusDesc.trim().lowercase()
+            if (lower.isEmpty()) return rawStatus
+            return when {
+                lower.contains("odottaa") || lower.contains("pending") || lower.contains("waiting") || lower.contains("väntar") -> 10
+                lower.contains("osittain") || lower.contains("partial") || lower.contains("delvis") -> 40
+                lower.contains("hylätty") || lower.contains("reject") || lower.contains("denied") || lower.contains("avslag") -> 80
+                lower.contains("hyväksytty") || lower.contains("approved") || lower.contains("godkänd") -> 50
+                else -> rawStatus
+            }
+        }
+
+        private fun fallbackStatusLabel(statusId: Int, en: Boolean): String = when (statusId) {
+            40 -> if (en) "Partially approved" else "Osittain hyväksytty"
+            50 -> if (en) "Approved" else "Hyväksytty"
+            80 -> if (en) "Rejected" else "Hylätty"
+            else -> ""
+        }
+
+        private fun checkRequestUpdates(context: Context, jsonStr: String): Int {
+            var sentCount = 0
+            try {
+                val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false)
+                val notifiedIds = prefs.getStringSet("notified_request_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+                var changed = false
+                var processedFound = 0
+
+                val root = JSONObject(jsonStr)
+                val dataArray = root.optJSONArray("data") ?: root.optJSONArray("Data") ?: return 0
+                val en = DemoModeHelper.isEnglish(context)
+
+                for (i in 0 until dataArray.length()) {
+                    val item = dataArray.optJSONObject(i) ?: continue
+                    val id = item.optInt("Id", -1).let { if (it > 0) it else item.optInt("RowId", -1) }
+                    val rawStatus = item.optInt("Status", -1).let { if (it > 0) it else item.optInt("StatusId", -1) }
+                    val typeName = item.optString("Type", if (en) "Request" else "Toive")
+                    val rawDesc = item.optString("StatusDescription", "").trim()
+                    val statusId = resolveRequestStatusCode(rawStatus, rawDesc)
+                    val statusDesc = rawDesc.ifEmpty { fallbackStatusLabel(statusId, en) }
+                    val dateStr = formatRequestDate(item.optString("DateFrom", ""))
+                    val bodyText = if (dateStr.isNotEmpty()) "$typeName ($dateStr)" else typeName
+
+                    if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
+                        processedFound++
+                        val key = "${id}_$statusId"
+                        if (!notifiedIds.contains(key)) {
+                            notifiedIds.add(key)
+                            changed = true
+                            if (baselineInitialized) {
+                                showRequestDecisionNotification(
+                                    context,
+                                    if (en) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
+                                    bodyText,
+                                    id
+                                )
+                                sentCount++
+                            }
+                        }
+                    }
+                }
+                prefs.edit().apply {
+                    putString("last_requests_check_status", "OK:${dataArray.length()}/$processedFound")
+                    if (changed || !baselineInitialized) {
+                        putStringSet("notified_request_ids", notifiedIds)
+                        putBoolean("requests_baseline_initialized", true)
+                    }
+                }.apply()
+            } catch (_: Exception) {
+            }
+            return sentCount
+        }
+
+        private fun formatRequestDate(raw: String): String {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) return ""
+            val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            val msMatch = Regex("/Date\\((-?\\d+)\\)/").find(trimmed)
+            if (msMatch != null) {
+                val ms = msMatch.groupValues[1].toLongOrNull() ?: return ""
+                return java.time.Instant.ofEpochMilli(ms)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
+                    .format(fmt)
+            }
+            val isoMatch = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(trimmed)
+            if (isoMatch != null) {
+                return try {
+                    LocalDate.parse(isoMatch.groupValues[1]).format(fmt)
+                } catch (_: Exception) {
+                    ""
+                }
+            }
+            val fiMatch = Regex("^\\d{1,2}\\.\\d{1,2}\\.\\d{4}").find(trimmed)
+            return fiMatch?.value ?: ""
         }
     }
 }
@@ -499,7 +651,7 @@ class BackgroundSyncWorker(
             }
 
             if (trackRequests) {
-                fetchRequestsJson(baseUrl)?.let { checkRequestUpdates(it) }
+                ShiftReminderReceiver.syncRequestsAndNotify(appContext, baseUrl)
             }
 
             if (detectedChanges.isNotEmpty()) {
@@ -518,105 +670,5 @@ class BackgroundSyncWorker(
                 Result.retry()
             }
         }
-    }
-
-    private fun fetchRequestsJson(baseUrl: String): String? {
-        var conn: java.net.HttpURLConnection? = null
-        return try {
-            val cookies = CookieManager.getInstance().getCookie(baseUrl)
-            if (cookies.isNullOrBlank()) return null
-            conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "POST"
-                setRequestProperty("Cookie", cookies)
-                setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                setRequestProperty("X-Requested-With", "XMLHttpRequest")
-                doOutput = true
-                connectTimeout = 15000
-                readTimeout = 15000
-            }
-            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                writer.write("page=1&pageSize=50")
-                writer.flush()
-            }
-            val text = if (conn.responseCode == 200) {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                null
-            }
-            if (text != null && text.trim().startsWith("{")) text else null
-        } catch (_: Exception) {
-            null
-        } finally {
-            conn?.disconnect()
-        }
-    }
-
-    private fun checkRequestUpdates(jsonStr: String) {
-        try {
-            val prefs = appContext.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false)
-            val notifiedIds = prefs.getStringSet("notified_request_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
-            var changed = false
-
-            val root = JSONObject(jsonStr)
-            val dataArray = root.optJSONArray("data") ?: return
-
-            for (i in 0 until dataArray.length()) {
-                val item = dataArray.optJSONObject(i) ?: continue
-                val id = item.optInt("Id", -1)
-                val statusId = item.optInt("Status", -1)
-                val typeName = item.optString("Type", "Toive")
-                val statusDesc = item.optString("StatusDescription", "")
-                val dateStr = formatRequestDate(item.optString("DateFrom", ""))
-                val bodyText = if (dateStr.isNotEmpty()) "$typeName ($dateStr)" else typeName
-
-                if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
-                    val key = "${id}_$statusId"
-                    if (!notifiedIds.contains(key)) {
-                        notifiedIds.add(key)
-                        changed = true
-                        if (baselineInitialized) {
-                            ShiftReminderReceiver.showRequestDecisionNotification(
-                                appContext,
-                                if (DemoModeHelper.isEnglish(appContext)) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
-                                bodyText,
-                                id
-                            )
-                        }
-                    }
-                }
-            }
-            if (changed || !baselineInitialized) {
-                prefs.edit()
-                    .putStringSet("notified_request_ids", notifiedIds)
-                    .putBoolean("requests_baseline_initialized", true)
-                    .apply()
-            }
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun formatRequestDate(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) return ""
-        val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
-        val msMatch = Regex("/Date\\((-?\\d+)\\)/").find(trimmed)
-        if (msMatch != null) {
-            val ms = msMatch.groupValues[1].toLongOrNull() ?: return ""
-            return java.time.Instant.ofEpochMilli(ms)
-                .atZone(java.time.ZoneId.systemDefault())
-                .toLocalDate()
-                .format(fmt)
-        }
-        val isoMatch = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(trimmed)
-        if (isoMatch != null) {
-            return try {
-                LocalDate.parse(isoMatch.groupValues[1]).format(fmt)
-            } catch (_: Exception) {
-                ""
-            }
-        }
-        val fiMatch = Regex("^\\d{1,2}\\.\\d{1,2}\\.\\d{4}").find(trimmed)
-        return fiMatch?.value ?: ""
     }
 }

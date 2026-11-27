@@ -45,6 +45,22 @@ import java.io.ByteArrayInputStream
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        @Volatile
+        private var cachedSafeDarkCss: String? = null
+
+        private val BLOCKED_CSS_PATTERNS = listOf(
+            "/content/css/cssvisma",
+            "/content/css/login.css",
+            "/content/css/calendar.css",
+            "/content/css/buttons.css",
+            "/bundles/cssworktimestamping",
+            "/content/css/worktimestamping.css",
+            "/content/css/listlayout.css",
+            "fonts.googleapis.com"
+        )
+    }
+
     private lateinit var webView: WebView
     private lateinit var bannerDemoMode: TextView
     private lateinit var btnNavStamp: Button
@@ -101,11 +117,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestNeededPermissions()
-        ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
-
-        scope.launch(Dispatchers.IO) {
-            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity)
-        }
 
         webView = findViewById(R.id.webView)
         bannerDemoMode = findViewById(R.id.bannerDemoMode)
@@ -133,6 +144,12 @@ class MainActivity : AppCompatActivity() {
         if (intent?.getBooleanExtra("OPEN_CALENDAR_CHANGES", false) == true) {
             intent.removeExtra("OPEN_CALENDAR_CHANGES")
             CalendarChangeTracker.showManageChangesDialog(this)
+        }
+
+        scope.launch(Dispatchers.IO) {
+            SecureCredentialManager.getUsername(this@MainActivity)
+            ShiftReminderReceiver.ensureBackgroundSyncScheduled(this@MainActivity)
+            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity)
         }
     }
 
@@ -381,7 +398,7 @@ class MainActivity : AppCompatActivity() {
                 val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
                 val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
                 val isAutoStamping = (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT)
-                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 25L * 60 * 1000L
+                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 4L * 60 * 60 * 1000L
 
                 if (existingCookies.isNullOrBlank() || sessionAgeMs > maxSessionAgeMs) {
                     navigateJob = scope.launch {
@@ -773,7 +790,7 @@ class MainActivity : AppCompatActivity() {
                 val url = request?.url?.toString()?.lowercase()
                     ?: return super.shouldInterceptRequest(view, request)
 
-                if (url.contains("amplitude.com")) {
+                if (url.contains("amplitude")) {
                     return WebResourceResponse(
                         "application/javascript",
                         "UTF-8",
@@ -781,18 +798,7 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
 
-                val blockedCssPatterns = listOf(
-                    "/content/css/cssvisma",
-                    "/content/css/login.css",
-                    "/content/css/calendar.css",
-                    "/content/css/buttons.css",
-                    "/bundles/cssworktimestamping",
-                    "/content/css/worktimestamping.css",
-                    "/content/css/listlayout.css",
-                    "fonts.googleapis.com"
-                )
-
-                if (blockedCssPatterns.any { url.contains(it) }) {
+                if (BLOCKED_CSS_PATTERNS.any { url.contains(it) }) {
                     return WebResourceResponse(
                         "text/css",
                         "UTF-8",
@@ -912,7 +918,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 280L else 180L
+                val revealDelay = if (url.contains("/Calendar", ignoreCase = true)) 120L else 60L
                 view?.postDelayed({
                     if (!isAutoSubmittingLogin) {
                         endSnapshotTransition()
@@ -966,7 +972,7 @@ class MainActivity : AppCompatActivity() {
         val nightBg = rgbToHex(nightRgb)
         val nightFg = contrastFg(nightRgb)
         val colorCacheKey = "$morningBg|$eveningBg|$nightBg"
-        val css = """
+        val safeCss = cachedSafeDarkCss ?: """
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
                 background-color: #0F1722 !important;
@@ -1980,13 +1986,12 @@ class MainActivity : AppCompatActivity() {
             #mobileViewDropdown {
                 margin-top: 8px !important;
             }
-        """.trimIndent().replace("\n", " ")
-
-        val safeCss = css
+        """.trimIndent()
             .replace("\r", " ")
             .replace("\n", " ")
             .replace("\\", "\\\\")
             .replace("'", "\\'")
+            .also { cachedSafeDarkCss = it }
         val js = """
             (function() {
                 var style = document.getElementById('custom-dark-theme');
@@ -3167,6 +3172,9 @@ class MainActivity : AppCompatActivity() {
                 emptyList()
             }
             CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)
+            if (prefs.getBoolean("track_requests", true) && baseUrl.isNotBlank()) {
+                ShiftReminderReceiver.syncRequestsAndNotify(this@MainActivity, baseUrl)
+            }
 
             withContext(Dispatchers.Main) {
                 if (isFinishing || isDestroyed) return@withContext
