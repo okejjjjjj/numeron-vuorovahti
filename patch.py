@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Numeron Vuorovahti – Toiveilmoitusten korjaus + avautumisnopeuden optimointi (patch.py).
-Päivittää tiedostot ShiftReminderReceiver.kt ja MainActivity.kt.
+Päivittää tiedostot ShiftReminderReceiver.kt ja MainActivity.kt vastaamaan
+/PersonRequests/Read -rajapinnan todellista rakennetta.
 """
 
 import sys
@@ -91,7 +92,7 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "                    prefs.edit().putString(\"last_requests_check_status\", \"NO_COOKIES\").apply()\n"
         "                    return null\n"
         "                }\n"
-        "                conn = (java.net.URL(\"$baseUrl/PersonRequests/Read?selectedFilter=active\").openConnection() as java.net.HttpURLConnection).apply {\n"
+        "                conn = (java.net.URL(\"$baseUrl/PersonRequests/Read\").openConnection() as java.net.HttpURLConnection).apply {\n"
         "                    requestMethod = \"POST\"\n"
         "                    instanceFollowRedirects = false\n"
         "                    setRequestProperty(\"Cookie\", cookies)\n"
@@ -111,13 +112,13 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "                    writer.flush()\n"
         "                }\n"
         "                val code = conn.responseCode\n"
-        "                val text = if (code == 200) {\n"
+        "                val body = if (code == 200) {\n"
         "                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }\n"
         "                } else {\n"
         "                    null\n"
         "                }\n"
-        "                if (text != null && text.trim().startsWith(\"{\")) {\n"
-        "                    text\n"
+        "                if (body != null && body.trim().startsWith(\"{\")) {\n"
+        "                    body\n"
         "                } else {\n"
         "                    prefs.edit().putString(\"last_requests_check_status\", \"HTTP_$code\").apply()\n"
         "                    null\n"
@@ -128,6 +129,13 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "            } finally {\n"
         "                conn?.disconnect()\n"
         "            }\n"
+        "        }\n\n"
+        "        private fun parseStatusCode(item: JSONObject): Int {\n"
+        "            val fromStr = item.optString(\"Status\", \"\").trim().toIntOrNull()\n"
+        "                ?: item.optString(\"StatusId\", \"\").trim().toIntOrNull()\n"
+        "            if (fromStr != null) return fromStr\n"
+        "            val fromInt = item.optInt(\"Status\", -1)\n"
+        "            return if (fromInt > 0) fromInt else item.optInt(\"StatusId\", -1)\n"
         "        }\n\n"
         "        private fun resolveRequestStatusCode(rawStatus: Int, statusDesc: String): Int {\n"
         "            if (rawStatus == 40 || rawStatus == 50 || rawStatus == 80) return rawStatus\n"
@@ -147,12 +155,17 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "            80 -> if (en) \"Rejected\" else \"Hylätty\"\n"
         "            else -> \"\"\n"
         "        }\n\n"
+        "        private fun parseDotNetDateMs(raw: String): Long? {\n"
+        "            val match = Regex(\"/Date\\\\((-?\\\\d+)\\\\)/\").find(raw.trim()) ?: return null\n"
+        "            return match.groupValues[1].toLongOrNull()\n"
+        "        }\n\n"
         "        private fun checkRequestUpdates(context: Context, jsonStr: String): Int {\n"
         "            var sentCount = 0\n"
         "            try {\n"
         "                val prefs = context.getSharedPreferences(\"NumeronPrefs\", Context.MODE_PRIVATE)\n"
-        "                val baselineInitialized = prefs.getBoolean(\"requests_baseline_initialized\", false)\n"
         "                val notifiedIds = prefs.getStringSet(\"notified_request_ids\", emptySet())?.toMutableSet() ?: mutableSetOf()\n"
+        "                val baselineInitialized = prefs.getBoolean(\"requests_baseline_initialized\", false) || notifiedIds.isNotEmpty()\n"
+        "                val nowMs = System.currentTimeMillis()\n"
         "                var changed = false\n"
         "                var processedFound = 0\n\n"
         "                val root = JSONObject(jsonStr)\n"
@@ -161,20 +174,22 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "                for (i in 0 until dataArray.length()) {\n"
         "                    val item = dataArray.optJSONObject(i) ?: continue\n"
         "                    val id = item.optInt(\"Id\", -1).let { if (it > 0) it else item.optInt(\"RowId\", -1) }\n"
-        "                    val rawStatus = item.optInt(\"Status\", -1).let { if (it > 0) it else item.optInt(\"StatusId\", -1) }\n"
+        "                    val rawStatus = parseStatusCode(item)\n"
         "                    val typeName = item.optString(\"Type\", if (en) \"Request\" else \"Toive\")\n"
         "                    val rawDesc = item.optString(\"StatusDescription\", \"\").trim()\n"
         "                    val statusId = resolveRequestStatusCode(rawStatus, rawDesc)\n"
         "                    val statusDesc = rawDesc.ifEmpty { fallbackStatusLabel(statusId, en) }\n"
         "                    val dateStr = formatRequestDate(item.optString(\"DateFrom\", \"\"))\n"
-        "                    val bodyText = if (dateStr.isNotEmpty()) \"$typeName ($dateStr)\" else typeName\n\n"
+        "                    val bodyText = if (dateStr.isNotEmpty()) \"$typeName ($dateStr)\" else typeName\n"
+        "                    val approvedMs = parseDotNetDateMs(item.optString(\"ApprovedDate\", \"\"))\n"
+        "                    val approvedRecently = approvedMs != null && (nowMs - approvedMs) in 0L..(24L * 60L * 60L * 1000L)\n\n"
         "                    if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {\n"
         "                        processedFound++\n"
         "                        val key = \"${id}_$statusId\"\n"
         "                        if (!notifiedIds.contains(key)) {\n"
         "                            notifiedIds.add(key)\n"
         "                            changed = true\n"
-        "                            if (baselineInitialized) {\n"
+        "                            if (baselineInitialized || approvedRecently) {\n"
         "                                showRequestDecisionNotification(\n"
         "                                    context,\n"
         "                                    if (en) \"Request processed: $statusDesc\" else \"Toive käsitelty: $statusDesc\",\n"
@@ -201,9 +216,8 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         "            val trimmed = raw.trim()\n"
         "            if (trimmed.isEmpty() || trimmed.equals(\"null\", ignoreCase = true)) return \"\"\n"
         "            val fmt = java.time.format.DateTimeFormatter.ofPattern(\"dd.MM.yyyy\")\n"
-        "            val msMatch = Regex(\"/Date\\\\((-?\\\\d+)\\\\)/\").find(trimmed)\n"
-        "            if (msMatch != null) {\n"
-        "                val ms = msMatch.groupValues[1].toLongOrNull() ?: return \"\"\n"
+        "            val ms = parseDotNetDateMs(trimmed)\n"
+        "            if (ms != null) {\n"
         "                return java.time.Instant.ofEpochMilli(ms)\n"
         "                    .atZone(java.time.ZoneId.systemDefault())\n"
         "                    .toLocalDate()\n"
@@ -228,7 +242,7 @@ def patch_shift_reminder_receiver(path: Path) -> bool:
         text,
         old_notif_tail,
         new_notif_tail,
-        "Jaettu toiveiden tarkistus (Status + StatusDescription-tunnistus + Kendo POST -runko)"
+        "Jaettu toiveiden tarkistus (tarkka Read-POST, merkkijono-Status, korjattu baseline + ApprovedDate)"
     )
 
     old_worker_call = (
@@ -360,7 +374,6 @@ def patch_main_activity(path: Path) -> bool:
     text, nl = read_kt(path)
     orig = text
 
-    # 1. Companion object CSS- ja estolistavälimuistia varten
     old_class_header = (
         "class MainActivity : AppCompatActivity() {\n\n"
         "    private lateinit var webView: WebView"
@@ -390,7 +403,6 @@ def patch_main_activity(path: Path) -> bool:
         "Lisätty companion object (CSS-välimuisti + vakioitu estolista)"
     )
 
-    # 2. Siirretään WorkManager-ajastus ja kalenterimuistutukset taustasäikeeseen vasta navigateToTab-kutsun jälkeen
     old_oncreate_bg = (
         "        requestNeededPermissions()\n"
         "        ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)\n\n"
@@ -436,7 +448,6 @@ def patch_main_activity(path: Path) -> bool:
         "Taustatehtävät ja Keystore-esilämmitys ajetaan IO-säikeessä WebView-latauksen jälkeen"
     )
 
-    # 3. Nostetaan normaalin navigoinnin istuntoraja 25 min -> 4 h
     old_session_age = "                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 25L * 60 * 1000L"
     new_session_age = "                val maxSessionAgeMs = if (isAutoStamping) 10L * 60 * 1000L else 4L * 60 * 60 * 1000L"
     text = replace_once(
@@ -446,7 +457,6 @@ def patch_main_activity(path: Path) -> bool:
         "Normaalin navigoinnin maxSessionAgeMs 25 min -> 4 h"
     )
 
-    # 4. Estetään myös paikallinen amplitude-min.js ja käytetään vakioitua BLOCKED_CSS_PATTERNS-listaa
     old_intercept = (
         "                if (url.contains(\"amplitude.com\")) {\n"
         "                    return WebResourceResponse(\n"
@@ -484,7 +494,6 @@ def patch_main_activity(path: Path) -> bool:
         "Paikallisen amplitude-min.js:n esto + vakioitu CSS-estolista"
     )
 
-    # 5. Lyhennetään revealDelay (280/180 ms -> 120/60 ms)
     old_reveal = "                val revealDelay = if (url.contains(\"/Calendar\", ignoreCase = true)) 280L else 180L"
     new_reveal = "                val revealDelay = if (url.contains(\"/Calendar\", ignoreCase = true)) 120L else 60L"
     text = replace_once(
@@ -494,7 +503,6 @@ def patch_main_activity(path: Path) -> bool:
         "Lyhennetty revealDelay (120 ms / 60 ms)"
     )
 
-    # 6. Välimuistitetaan tumman teeman CSS kertaalleen prosessin aikana
     old_css_start = '        val css = """'
     new_css_start = '        val safeCss = cachedSafeDarkCss ?: """'
     text = replace_once(
@@ -527,7 +535,6 @@ def patch_main_activity(path: Path) -> bool:
         "Tumman teeman CSS-välimuistin tallennus"
     )
 
-    # 7. Tarkistetaan käsitellyt toiveet myös manuaalisen synkronoinnin yhteydessä
     old_manual_sync = (
         "            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity, calId)\n\n"
         "            withContext(Dispatchers.Main) {"
