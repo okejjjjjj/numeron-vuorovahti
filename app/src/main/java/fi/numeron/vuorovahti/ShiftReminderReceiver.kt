@@ -430,7 +430,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                     prefs.edit().putString("last_requests_check_status", "NO_COOKIES").apply()
                     return null
                 }
-                conn = (java.net.URL("$baseUrl/PersonRequests/Read?selectedFilter=active").openConnection() as java.net.HttpURLConnection).apply {
+                conn = (java.net.URL("$baseUrl/PersonRequests/Read").openConnection() as java.net.HttpURLConnection).apply {
                     requestMethod = "POST"
                     instanceFollowRedirects = false
                     setRequestProperty("Cookie", cookies)
@@ -469,6 +469,14 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             }
         }
 
+        private fun parseStatusCode(item: JSONObject): Int {
+            val fromStr = item.optString("Status", "").trim().toIntOrNull()
+                ?: item.optString("StatusId", "").trim().toIntOrNull()
+            if (fromStr != null) return fromStr
+            val fromInt = item.optInt("Status", -1)
+            return if (fromInt > 0) fromInt else item.optInt("StatusId", -1)
+        }
+
         private fun resolveRequestStatusCode(rawStatus: Int, statusDesc: String): Int {
             if (rawStatus == 40 || rawStatus == 50 || rawStatus == 80) return rawStatus
             val lower = statusDesc.trim().lowercase()
@@ -489,12 +497,18 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             else -> ""
         }
 
+        private fun parseDotNetDateMs(raw: String): Long? {
+            val match = Regex("/Date\\((-?\\d+)\\)/").find(raw.trim()) ?: return null
+            return match.groupValues[1].toLongOrNull()
+        }
+
         private fun checkRequestUpdates(context: Context, jsonStr: String): Int {
             var sentCount = 0
             try {
                 val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-                val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false)
                 val notifiedIds = prefs.getStringSet("notified_request_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
+                val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false) || notifiedIds.isNotEmpty()
+                val nowMs = System.currentTimeMillis()
                 var changed = false
                 var processedFound = 0
 
@@ -505,13 +519,15 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 for (i in 0 until dataArray.length()) {
                     val item = dataArray.optJSONObject(i) ?: continue
                     val id = item.optInt("Id", -1).let { if (it > 0) it else item.optInt("RowId", -1) }
-                    val rawStatus = item.optInt("Status", -1).let { if (it > 0) it else item.optInt("StatusId", -1) }
+                    val rawStatus = parseStatusCode(item)
                     val typeName = item.optString("Type", if (en) "Request" else "Toive")
                     val rawDesc = item.optString("StatusDescription", "").trim()
                     val statusId = resolveRequestStatusCode(rawStatus, rawDesc)
                     val statusDesc = rawDesc.ifEmpty { fallbackStatusLabel(statusId, en) }
                     val dateStr = formatRequestDate(item.optString("DateFrom", ""))
                     val bodyText = if (dateStr.isNotEmpty()) "$typeName ($dateStr)" else typeName
+                    val approvedMs = parseDotNetDateMs(item.optString("ApprovedDate", ""))
+                    val approvedRecently = approvedMs != null && (nowMs - approvedMs) in 0L..(24L * 60L * 60L * 1000L)
 
                     if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
                         processedFound++
@@ -519,7 +535,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                         if (!notifiedIds.contains(key)) {
                             notifiedIds.add(key)
                             changed = true
-                            if (baselineInitialized) {
+                            if (baselineInitialized || approvedRecently) {
                                 showRequestDecisionNotification(
                                     context,
                                     if (en) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
@@ -547,9 +563,8 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             val trimmed = raw.trim()
             if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) return ""
             val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
-            val msMatch = Regex("/Date\\((-?\\d+)\\)/").find(trimmed)
-            if (msMatch != null) {
-                val ms = msMatch.groupValues[1].toLongOrNull() ?: return ""
+            val ms = parseDotNetDateMs(trimmed)
+            if (ms != null) {
                 return java.time.Instant.ofEpochMilli(ms)
                     .atZone(java.time.ZoneId.systemDefault())
                     .toLocalDate()
