@@ -67,12 +67,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnWebOverlayBack: Button
     private lateinit var txtWebOverlayTitle: TextView
     private lateinit var webViewSlot: FrameLayout
+    private lateinit var nativeStampContainer: FrameLayout
     private lateinit var nativeShiftsContainer: FrameLayout
     private lateinit var nativeRequestsContainer: FrameLayout
+    private var nativeStampView: NativeStampView? = null
     private var nativeShiftsView: NativeShiftsView? = null
     private var nativeRequestsView: NativeRequestsView? = null
     private var isWebOverlayOpen: Boolean = false
     private var pendingOverlayUrl: String? = null
+    private var pendingOverlayAction: String? = null
 
     private lateinit var bannerDemoMode: TextView
     private lateinit var btnNavStamp: Button
@@ -135,6 +138,7 @@ class MainActivity : AppCompatActivity() {
         btnWebOverlayBack = findViewById(R.id.btnWebOverlayBack)
         txtWebOverlayTitle = findViewById(R.id.txtWebOverlayTitle)
         webViewSlot = findViewById(R.id.webViewSlot)
+        nativeStampContainer = findViewById(R.id.nativeStampContainer)
         nativeShiftsContainer = findViewById(R.id.nativeShiftsContainer)
         nativeRequestsContainer = findViewById(R.id.nativeRequestsContainer)
 
@@ -201,6 +205,47 @@ class MainActivity : AppCompatActivity() {
         return wv
     }
 
+    private fun ensureNativeStampView(): NativeStampView {
+        nativeStampView?.let { return it }
+        val v = NativeStampView(
+            context = this,
+            scope = scope,
+            onOpenForgottenStampWeb = {
+                val baseUrl = getBaseUrl()
+                val en = DemoModeHelper.isEnglish(this)
+                if (baseUrl.isNotBlank()) {
+                    openWebOverlayUrl(
+                        url = "$baseUrl/WorktimeStamping",
+                        title = if (en) "Missing stamp" else "Puuttuva leimaus",
+                        overlayAction = "FORGOTTEN"
+                    )
+                }
+            },
+            onOpenEditStampWeb = { rowId ->
+                val baseUrl = getBaseUrl()
+                val en = DemoModeHelper.isEnglish(this)
+                if (baseUrl.isNotBlank()) {
+                    openWebOverlayUrl(
+                        url = "$baseUrl/WorktimeStamping",
+                        title = if (en) "Edit stamp" else "Muokkaa leimausta",
+                        overlayAction = "EDIT:$rowId"
+                    )
+                }
+            },
+            onOpenSettings = { btnNavSettings.performClick() }
+        )
+        nativeStampContainer.removeAllViews()
+        nativeStampContainer.addView(
+            v,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        nativeStampView = v
+        return v
+    }
+
     private fun ensureNativeShiftsView(): NativeShiftsView {
         nativeShiftsView?.let { return it }
         val v = NativeShiftsView(
@@ -239,7 +284,7 @@ class MainActivity : AppCompatActivity() {
         return v
     }
 
-    private fun openWebOverlayUrl(url: String, title: String) {
+    private fun openWebOverlayUrl(url: String, title: String, overlayAction: String? = null) {
         val baseUrl = getBaseUrl()
         val en = DemoModeHelper.isEnglish(this)
         if (baseUrl.isBlank()) {
@@ -252,6 +297,7 @@ class MainActivity : AppCompatActivity() {
         }
         isWebOverlayOpen = true
         pendingOverlayUrl = url
+        pendingOverlayAction = overlayAction
         dashboardRedirectCount = 0
         isAutoSubmittingLogin = false
         val token = ++navigationToken
@@ -260,6 +306,7 @@ class MainActivity : AppCompatActivity() {
         btnWebOverlayBack.text = if (en) "← Back" else "← Takaisin"
         txtWebOverlayTitle.text = title
         webOverlayHeader.visibility = View.VISIBLE
+        nativeStampContainer.visibility = View.GONE
         nativeShiftsContainer.visibility = View.GONE
         nativeRequestsContainer.visibility = View.GONE
         webViewHost.visibility = View.VISIBLE
@@ -288,14 +335,24 @@ class MainActivity : AppCompatActivity() {
     private fun closeWebOverlay(refreshNative: Boolean) {
         isWebOverlayOpen = false
         pendingOverlayUrl = null
+        pendingOverlayAction = null
         isAutoSubmittingLogin = false
         endSnapshotTransition()
         webOverlayHeader.visibility = View.GONE
         webView?.stopLoading()
+        webViewHost.visibility = View.GONE
 
         when (currentTab) {
+            Tab.STAMP -> {
+                nativeShiftsContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.GONE
+                nativeStampContainer.visibility = View.VISIBLE
+                if (refreshNative) {
+                    ensureNativeStampView().refreshFromNetwork()
+                }
+            }
             Tab.SHIFTS -> {
-                webViewHost.visibility = View.GONE
+                nativeStampContainer.visibility = View.GONE
                 nativeRequestsContainer.visibility = View.GONE
                 nativeShiftsContainer.visibility = View.VISIBLE
                 if (refreshNative) {
@@ -303,17 +360,12 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             Tab.REQUESTS -> {
-                webViewHost.visibility = View.GONE
+                nativeStampContainer.visibility = View.GONE
                 nativeShiftsContainer.visibility = View.GONE
                 nativeRequestsContainer.visibility = View.VISIBLE
                 if (refreshNative) {
                     ensureNativeRequestsView().refreshAfterWebEdit()
                 }
-            }
-            Tab.STAMP -> {
-                nativeShiftsContainer.visibility = View.GONE
-                nativeRequestsContainer.visibility = View.GONE
-                webViewHost.visibility = View.VISIBLE
             }
         }
     }
@@ -490,9 +542,10 @@ class MainActivity : AppCompatActivity() {
         currentTab = tab
         isWebOverlayOpen = false
         pendingOverlayUrl = null
+        pendingOverlayAction = null
         dashboardRedirectCount = 0
         isAutoSubmittingLogin = false
-        val token = ++navigationToken
+        navigationToken++
         navigateJob?.cancel()
         updateDemoBanner()
 
@@ -502,104 +555,38 @@ class MainActivity : AppCompatActivity() {
             Tab.SHIFTS -> setActiveTab(btnNavShifts)
         }
 
-        if (tab == Tab.SHIFTS) {
-            endSnapshotTransition()
-            webView?.stopLoading()
-            webOverlayHeader.visibility = View.GONE
-            webViewHost.visibility = View.GONE
-            nativeRequestsContainer.visibility = View.GONE
-            nativeShiftsContainer.visibility = View.VISIBLE
-            ensureNativeShiftsView().onShow(forceNetwork = false)
-            return
-        }
-
-        if (tab == Tab.REQUESTS) {
-            endSnapshotTransition()
-            webView?.stopLoading()
-            webOverlayHeader.visibility = View.GONE
-            webViewHost.visibility = View.GONE
-            nativeShiftsContainer.visibility = View.GONE
-            nativeRequestsContainer.visibility = View.VISIBLE
-            ensureNativeRequestsView().onShow(forceNetwork = false)
-            return
-        }
-
-        nativeShiftsContainer.visibility = View.GONE
-        nativeRequestsContainer.visibility = View.GONE
+        endSnapshotTransition()
+        webView?.stopLoading()
         webOverlayHeader.visibility = View.GONE
-        webViewHost.visibility = View.VISIBLE
-        val wv = ensureWebView()
+        webViewHost.visibility = View.GONE
 
-        if (DemoModeHelper.isDemoEnabled(this)) {
-            startSnapshotTransition {
-                if (token != navigationToken) return@startSnapshotTransition
-                val html = DemoModeHelper.getDemoStampingHtml(this)
-                wv.stopLoading()
-                wv.loadDataWithBaseURL("https://demo.local/", html, "text/html", "UTF-8", null)
-            }
-        } else {
-            val baseUrl = getBaseUrl()
-            if (baseUrl.isEmpty() || (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://"))) {
-                endSnapshotTransition()
-                Toast.makeText(
-                    this,
-                    if (DemoModeHelper.isEnglish(this)) "Set organization ID in settings first" else "Aseta ensin organisaatiotunnus asetuksista",
-                    Toast.LENGTH_LONG
-                ).show()
-                btnNavSettings.performClick()
-                return
-            }
-            if (BackgroundAuthHelper.isCredentialBlocked(this)) {
-                endSnapshotTransition()
-                Toast.makeText(
-                    this,
-                    if (DemoModeHelper.isEnglish(this)) {
-                        "Login failed – please check username and password in Settings"
-                    } else {
-                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
-                    },
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-            val url = "$baseUrl/WorktimeStamping"
-            startSnapshotTransition {
-                if (token != navigationToken) return@startSnapshotTransition
-                navigateJob?.cancel()
-                val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-                val isAutoStamping = (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT)
-
-                if (!NumeronApiClient.isSessionLikelyValid(this, baseUrl, isAutoStamping)) {
-                    navigateJob = scope.launch {
-                        try {
-                            val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@MainActivity)
-                            if (ok) {
-                                prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
-                            }
-                        } catch (_: Exception) {
-                        }
-                        if (token == navigationToken && !isFinishing && !isDestroyed) {
-                            if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
-                                endSnapshotTransition()
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    if (DemoModeHelper.isEnglish(this@MainActivity)) {
-                                        "Login failed – please check username and password in Settings"
-                                    } else {
-                                        "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista"
-                                    },
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            } else {
-                                wv.stopLoading()
-                                wv.loadUrl(url)
-                            }
-                        }
+        when (tab) {
+            Tab.STAMP -> {
+                nativeShiftsContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.GONE
+                nativeStampContainer.visibility = View.VISIBLE
+                val stampView = ensureNativeStampView()
+                if (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT) {
+                    val wantIn = (pendingAction == Action.STAMP_IN)
+                    pendingAction = Action.NONE
+                    stampView.performAutoStamp(wantIn) {
+                        if (!isFinishing && !isDestroyed) finishAndRemoveTask()
                     }
                 } else {
-                    wv.stopLoading()
-                    wv.loadUrl(url)
+                    stampView.onShow(forceNetwork = false)
                 }
+            }
+            Tab.SHIFTS -> {
+                nativeStampContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.GONE
+                nativeShiftsContainer.visibility = View.VISIBLE
+                ensureNativeShiftsView().onShow(forceNetwork = false)
+            }
+            Tab.REQUESTS -> {
+                nativeStampContainer.visibility = View.GONE
+                nativeShiftsContainer.visibility = View.GONE
+                nativeRequestsContainer.visibility = View.VISIBLE
+                ensureNativeRequestsView().onShow(forceNetwork = false)
             }
         }
     }
@@ -652,14 +639,8 @@ class MainActivity : AppCompatActivity() {
                         closeWebOverlay(refreshNative = true)
                         return
                     }
-                    val wv = webView
-                    if (currentTab == Tab.STAMP && wv != null && wv.canGoBack()) {
-                        startSnapshotTransition()
-                        wv.goBack()
-                    } else {
-                        isEnabled = false
-                        onBackPressedDispatcher.onBackPressed()
-                    }
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
                 }
             }
         )
@@ -1094,7 +1075,28 @@ class MainActivity : AppCompatActivity() {
                     url.contains("/WorktimeStamping", ignoreCase = true) -> {
                         isAutoSubmittingLogin = false
                         if (!isWebOverlayOpen) setActiveTab(btnNavStamp)
-                        handleStampingPage()
+                        val action = pendingOverlayAction
+                        if (isWebOverlayOpen && action != null) {
+                            pendingOverlayAction = null
+                            view?.postDelayed({
+                                if (action == "FORGOTTEN") {
+                                    view.evaluateJavascript(
+                                        "(function(){ try { if (typeof window.reloadForgottenStampPane === 'function') window.reloadForgottenStampPane(); if (typeof window.openForgottenStampPane === 'function') window.openForgottenStampPane(); var b = document.getElementById('forgottenStampButton'); if (b) b.click(); } catch(e){} })();",
+                                        null
+                                    )
+                                } else if (action.startsWith("EDIT:")) {
+                                    val rowId = action.removePrefix("EDIT:").filter { it.isDigit() }
+                                    if (rowId.isNotEmpty()) {
+                                        view.evaluateJavascript(
+                                            "(function(){ try { if (typeof window.getStampEditModal === 'function') window.getStampEditModal($rowId); } catch(e){} })();",
+                                            null
+                                        )
+                                    }
+                                }
+                            }, 250L)
+                        } else {
+                            handleStampingPage()
+                        }
                     }
                     url.contains("/PersonRequests", ignoreCase = true) -> {
                         isAutoSubmittingLogin = false

@@ -474,23 +474,83 @@ class QuickStampActivity : AppCompatActivity() {
 
         scheduleTimeout(22_000L)
 
+        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
+            showFinalState(
+                title = if (en) "Login failed" else "Kirjautuminen epäonnistui",
+                subtitle = if (en) "Check username and password in Settings" else "Tarkista käyttäjätunnus ja salasana asetuksista",
+                badgeText = "!",
+                badgeFillHex = "#3B181E",
+                badgeStrokeHex = "#EF4444",
+                badgeTextHex = "#F87171",
+                closeDelayMs = 1700L
+            )
+            return
+        }
+
         activeJob = scope.launch {
-            val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            val lastSessionMs = prefs.getLong("last_valid_session_ms", 0L)
-            val sessionAgeMs = System.currentTimeMillis() - lastSessionMs
-            val existingCookies = CookieManager.getInstance().getCookie(baseUrl)
-
-            if (existingCookies.isNullOrBlank() || sessionAgeMs > 10L * 60 * 1000L) {
-                statusText.text = "Kirjaudutaan sisään…"
-                val ok = BackgroundAuthHelper.ensureAuthenticatedSession(this@QuickStampActivity)
-                if (ok) {
-                    prefs.edit().putLong("last_valid_session_ms", System.currentTimeMillis()).apply()
+            val wantIn = !isEnding
+            val result = NumeronApiClient.performQuickStamp(
+                context = this@QuickStampActivity,
+                wantIn = wantIn,
+                onStatusUpdate = { msg ->
+                    runOnUiThread {
+                        if (!isCompleted) statusText.text = msg
+                    }
                 }
-            }
+            )
+            if (isCompleted) return@launch
 
-            if (!isCompleted) {
-                statusText.text = if (en) "Opening time stamping…" else "Avataan työaikaleimaus…"
-                startHiddenStampingWebView(baseUrl, wantIn = !isEnding, targetText = targetText)
+            when (result) {
+                is StampSubmitResult.Success -> {
+                    val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    showFinalState(
+                        title = if (en) "Stamp confirmed" else "Leimaus vahvistettu",
+                        subtitle = if (en) "$targetText • at $nowTime" else "$targetText • klo $nowTime",
+                        badgeText = "✓",
+                        badgeFillHex = "#0F2E26",
+                        badgeStrokeHex = "#10B981",
+                        badgeTextHex = "#34D399",
+                        closeDelayMs = 1150L
+                    )
+                }
+                is StampSubmitResult.AlreadyInDirection -> {
+                    showFinalState(
+                        title = if (en) "Not stamped" else "Ei leimattu",
+                        subtitle = if (en) "Already clocked $targetText" else "Olet jo leimannut tilaan: $targetText",
+                        badgeText = "!",
+                        badgeFillHex = "#1E3A5F",
+                        badgeStrokeHex = "#38BDF8",
+                        badgeTextHex = "#7DD3FC",
+                        closeDelayMs = 1400L
+                    )
+                }
+                is StampSubmitResult.ValidationRejected -> {
+                    showFinalState(
+                        title = if (en) "Stamp rejected" else "Leimausta ei hyväksytty",
+                        subtitle = result.message,
+                        badgeText = "!",
+                        badgeFillHex = "#3B2810",
+                        badgeStrokeHex = "#F59E0B",
+                        badgeTextHex = "#FBBF24",
+                        closeDelayMs = 2000L
+                    )
+                }
+                is StampSubmitResult.Failed -> {
+                    if (result.fallbackToWebView && !BackgroundAuthHelper.isCredentialBlocked(this@QuickStampActivity)) {
+                        statusText.text = if (en) "Opening time stamping…" else "Avataan työaikaleimaus…"
+                        startHiddenStampingWebView(baseUrl, wantIn = wantIn, targetText = targetText)
+                    } else {
+                        showFinalState(
+                            title = if (en) "Stamp failed" else "Leimaus epäonnistui",
+                            subtitle = result.message,
+                            badgeText = "!",
+                            badgeFillHex = "#3B181E",
+                            badgeStrokeHex = "#EF4444",
+                            badgeTextHex = "#F87171",
+                            closeDelayMs = 1700L
+                        )
+                    }
+                }
             }
         }
     }
@@ -569,7 +629,7 @@ class QuickStampActivity : AppCompatActivity() {
             ): WebResourceResponse? {
                 val url = request?.url?.toString()?.lowercase()
                     ?: return super.shouldInterceptRequest(view, request)
-                if (url.contains("amplitude.com") || url.endsWith(".css") || url.contains("/content/css/")) {
+                if (url.contains("amplitude") || url.contains("eligibility.") || url.endsWith(".css") || url.contains("/content/css/")) {
                     return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 return super.shouldInterceptRequest(view, request)

@@ -644,4 +644,12 @@ object NumeronParser {
             .distinct()
         return if (comments.isEmpty()) null else comments.joinToString("\n")
     }
+
+    fun formatShiftBannerLines(rawName: String): Pair<String, String> {
+        val parsed = parseShiftText(rawName)
+        val details = listOf(parsed.shiftName, parsed.role)
+            .filter { it.isNotBlank() }
+            .joinToString(" • ")
+        return parsed.location to details
+    }
 }

@@ -78,6 +78,13 @@
         </LinearLayout>
 
         <FrameLayout
+            android:id="@+id/nativeStampContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#0F1722"
+            android:visibility="gone" />
+
+        <FrameLayout
             android:id="@+id/nativeShiftsContainer"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
