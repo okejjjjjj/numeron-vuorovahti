@@ -3,7 +3,6 @@ package fi.numeron.vuorovahti
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -14,6 +13,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -31,6 +31,7 @@ class NativeRequestsView(
     private var currentFilter: String = "active"
     private var loadJob: Job? = null
 
+    private val swipeRefresh: SwipeRefreshLayout
     private val txtTitle: TextView
     private val btnAdd: Button
     private val btnRefresh: Button
@@ -42,7 +43,10 @@ class NativeRequestsView(
     private val listContainer: LinearLayout
 
     private val dateFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+    private val shortDateFmt = DateTimeFormatter.ofPattern("dd.MM.")
     private val dateTimeFmt = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+    private val fiDow = arrayOf("Ma", "Ti", "Ke", "To", "Pe", "La", "Su")
+    private val enDow = arrayOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
     init {
         orientation = VERTICAL
@@ -51,7 +55,7 @@ class NativeRequestsView(
 
         val topCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = roundedBg("#182332", "#2A394A", 12f)
+            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
 
@@ -71,9 +75,9 @@ class NativeRequestsView(
             text = "↻"
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setPadding(0, 0, 0, 0)
-            setOnClickListener { loadRequests(forceNetwork = true) }
+            setOnClickListener { loadRequests(forceNetwork = true, fromSwipe = false) }
         }
         titleRow.addView(
             btnRefresh,
@@ -87,7 +91,7 @@ class NativeRequestsView(
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
             setTypeface(null, Typeface.BOLD)
-            background = roundedBg("#1982C4", "#38BDF8", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#1982C4", "#38BDF8", 8f, "#44FFFFFF")
             setPadding(dp(14), dp(4), dp(14), dp(4))
             minHeight = 0
             minimumHeight = dp(36)
@@ -138,6 +142,11 @@ class NativeRequestsView(
             }
         )
 
+        swipeRefresh = SwipeRefreshLayout(context).apply {
+            UiStyleHelper.configureSwipeRefresh(this)
+            setOnRefreshListener { loadRequests(forceNetwork = true, fromSwipe = true) }
+        }
+
         val scroll = ScrollView(context).apply {
             isFillViewport = true
         }
@@ -145,7 +154,8 @@ class NativeRequestsView(
             orientation = VERTICAL
         }
         scroll.addView(listContainer, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        swipeRefresh.addView(scroll)
+        addView(swipeRefresh, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     private fun makeFilterButton(filterKey: String): Button {
@@ -159,7 +169,7 @@ class NativeRequestsView(
                 if (currentFilter != filterKey) {
                     currentFilter = filterKey
                     updateFilterStyles()
-                    loadRequests(forceNetwork = true)
+                    loadRequests(forceNetwork = true, fromSwipe = false)
                 }
             }
         }
@@ -168,12 +178,12 @@ class NativeRequestsView(
     fun onShow(forceNetwork: Boolean = false) {
         updateLocalizedLabels()
         updateFilterStyles()
-        loadRequests(forceNetwork = forceNetwork)
+        loadRequests(forceNetwork = forceNetwork, fromSwipe = false)
     }
 
     fun refreshAfterWebEdit() {
         updateLocalizedLabels()
-        loadRequests(forceNetwork = true)
+        loadRequests(forceNetwork = true, fromSwipe = false)
     }
 
     private fun updateLocalizedLabels() {
@@ -193,7 +203,8 @@ class NativeRequestsView(
         )
         for ((key, btn) in pairs) {
             val selected = (key == currentFilter)
-            btn.background = roundedBg(
+            btn.background = UiStyleHelper.rippleRoundedBg(
+                context,
                 if (selected) "#1982C4" else "#111923",
                 if (selected) "#38BDF8" else "#2A394A",
                 8f
@@ -225,12 +236,13 @@ class NativeRequestsView(
         onOpenWebUrl("$baseUrl/PersonRequests/Edit", if (en) "New request" else "Uusi toive")
     }
 
-    private fun loadRequests(forceNetwork: Boolean) {
+    private fun loadRequests(forceNetwork: Boolean, fromSwipe: Boolean = false) {
         val filter = currentFilter
         val en = DemoModeHelper.isEnglish(context)
         loadJob?.cancel()
 
         if (DemoModeHelper.isDemoEnabled(context)) {
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Demo mode" else "Demotila"
             val today = LocalDate.now()
@@ -270,36 +282,43 @@ class NativeRequestsView(
 
         // 1. Näytetään heti paikallinen välimuisti
         val cached = NumeronApiClient.loadCachedRequests(context, filter)
+        val cachedAtMs = NumeronApiClient.getRequestsCacheSavedAtMs(context, filter)
         if (cached != null) {
             renderRequests(cached)
         }
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
         if (baseUrl.isBlank()) {
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Set organization in Settings" else "Aseta organisaatio asetuksista"
             return
         }
 
-        progressBar.visibility = View.VISIBLE
+        if (!fromSwipe) {
+            progressBar.visibility = View.VISIBLE
+        }
         txtStatus.text = if (cached != null && !forceNetwork) {
-            if (en) "Updating..." else "Päivitetään..."
+            if (en) "Updating…" else "Päivitetään…"
         } else {
-            if (en) "Loading requests..." else "Haetaan toiveita..."
+            if (en) "Loading requests…" else "Haetaan toiveita…"
         }
 
         loadJob = scope.launch {
             val result = NumeronApiClient.fetchRequests(context, filter)
             if (filter != currentFilter) return@launch
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
 
             if (result.items != null) {
                 renderRequests(result.items)
-                txtStatus.text = if (result.fromCache) {
-                    if (en) "Offline cache (${result.items.size})" else "Välimuisti (${result.items.size} kpl)"
-                } else {
-                    if (en) "${result.items.size} requests" else "${result.items.size} toivetta"
-                }
+                val countPart = if (en) "${result.items.size} requests" else "${result.items.size} toivetta"
+                val timePart = UiStyleHelper.formatUpdatedLabel(
+                    context,
+                    if (result.fromCache) cachedAtMs else System.currentTimeMillis(),
+                    isCache = result.fromCache
+                )
+                txtStatus.text = if (timePart.isNotEmpty()) "$countPart • $timePart" else countPart
             } else {
                 txtStatus.text = result.errorMessage ?: (if (en) "Failed to load" else "Haku epäonnistui")
                 if (cached == null) {
@@ -307,6 +326,12 @@ class NativeRequestsView(
                 }
             }
         }
+    }
+
+    private fun formatDateWithDow(date: LocalDate, en: Boolean, includeYear: Boolean = true): String {
+        val dow = (if (en) enDow else fiDow)[date.dayOfWeek.value - 1]
+        val dStr = date.format(if (includeYear) dateFmt else shortDateFmt)
+        return "$dow $dStr"
     }
 
     private fun renderRequests(items: List<PersonRequestItem>) {
@@ -319,7 +344,7 @@ class NativeRequestsView(
                 setTextColor(Color.parseColor("#94A3B8"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 gravity = Gravity.CENTER
-                background = roundedBg("#182332", "#2A394A", 12f)
+                background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
                 setPadding(dp(16), dp(24), dp(16), dp(24))
             }
             listContainer.addView(emptyCard, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -330,10 +355,18 @@ class NativeRequestsView(
         val isDemo = DemoModeHelper.isDemoEnabled(context)
 
         for (item in items) {
-            val card = LinearLayout(context).apply {
-                orientation = VERTICAL
-                background = roundedBg("#182332", "#2A394A", 12f)
-                setPadding(dp(14), dp(12), dp(14), dp(12))
+            val (badgeBg, badgeBorder, badgeFg) = when (item.statusCode) {
+                50 -> Triple("#0F2E26", "#22C55E", "#4ADE80")
+                40 -> Triple("#3B2810", "#F59E0B", "#FBBF24")
+                80 -> Triple("#3F1D24", "#EF4444", "#F87171")
+                else -> Triple("#1E3A5F", "#38BDF8", "#7DD3FC")
+            }
+
+            // Kortti jossa 4dp tilaväripalkki vasemmassa reunassa + Ripple
+            val cardOuter = LinearLayout(context).apply {
+                orientation = HORIZONTAL
+                background = UiStyleHelper.rippleRoundedBg(context, "#182332", "#2A394A", 12f)
+                setPadding(dp(10), dp(12), dp(14), dp(12))
                 setOnClickListener {
                     if (isDemo) {
                         Toast.makeText(
@@ -345,6 +378,20 @@ class NativeRequestsView(
                         onOpenWebUrl("$baseUrl/PersonRequests/Edit/${item.id}", item.type)
                     }
                 }
+            }
+
+            val accentBar = View(context).apply {
+                background = UiStyleHelper.roundedBg(context, badgeBorder, badgeBorder, 2f, 0)
+            }
+            cardOuter.addView(
+                accentBar,
+                LayoutParams(dp(4), LayoutParams.MATCH_PARENT).apply {
+                    marginEnd = dp(11)
+                }
+            )
+
+            val cardBody = LinearLayout(context).apply {
+                orientation = VERTICAL
             }
 
             // Ylärivi: tyyppi + tilabadge
@@ -361,19 +408,12 @@ class NativeRequestsView(
             }
             topRow.addView(typeTv, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
 
-            val (badgeBg, badgeBorder, badgeFg) = when (item.statusCode) {
-                50 -> Triple("#0F2E26", "#22C55E", "#4ADE80")
-                40 -> Triple("#3B2810", "#F59E0B", "#FBBF24")
-                80 -> Triple("#3F1D24", "#EF4444", "#F87171")
-                else -> Triple("#1E3A5F", "#38BDF8", "#7DD3FC")
-            }
-
             val statusTv = TextView(context).apply {
                 text = item.statusDescription
                 setTextColor(Color.parseColor(badgeFg))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                 setTypeface(null, Typeface.BOLD)
-                background = roundedBg(badgeBg, badgeBorder, 99f)
+                background = UiStyleHelper.roundedBg(context, badgeBg, badgeBorder, 99f)
                 setPadding(dp(10), dp(3), dp(10), dp(3))
             }
             topRow.addView(
@@ -382,15 +422,18 @@ class NativeRequestsView(
                     marginStart = dp(8)
                 }
             )
-            card.addView(topRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            cardBody.addView(topRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-            // Päivämäärä ja kellonaika
+            // Viikonpäivä + päivämäärä ja kellonaika
             val dateLine = buildString {
                 if (item.dateFrom != null) {
-                    append(item.dateFrom.format(dateFmt))
                     if (item.dateTo != null && item.dateTo != item.dateFrom) {
+                        val sameYear = item.dateFrom.year == item.dateTo.year
+                        append(formatDateWithDow(item.dateFrom, en, includeYear = !sameYear))
                         append(" – ")
-                        append(item.dateTo.format(dateFmt))
+                        append(formatDateWithDow(item.dateTo, en, includeYear = true))
+                    } else {
+                        append(formatDateWithDow(item.dateFrom, en, includeYear = true))
                     }
                 }
                 if (item.timeFromText.isNotEmpty() || item.timeToText.isNotEmpty()) {
@@ -408,7 +451,7 @@ class NativeRequestsView(
             }
 
             if (dateLine.isNotEmpty()) {
-                card.addView(
+                cardBody.addView(
                     TextView(context).apply {
                         text = dateLine
                         setTextColor(Color.parseColor("#38BDF8"))
@@ -420,7 +463,7 @@ class NativeRequestsView(
             }
 
             if (item.info.isNotEmpty()) {
-                card.addView(
+                cardBody.addView(
                     TextView(context).apply {
                         text = item.info
                         setTextColor(Color.parseColor("#CBD5E1"))
@@ -443,7 +486,7 @@ class NativeRequestsView(
                 metaParts.add(item.approvedBy)
             }
             if (metaParts.isNotEmpty()) {
-                card.addView(
+                cardBody.addView(
                     TextView(context).apply {
                         text = metaParts.joinToString(" • ")
                         setTextColor(Color.parseColor("#94A3B8"))
@@ -453,8 +496,9 @@ class NativeRequestsView(
                 )
             }
 
+            cardOuter.addView(cardBody, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
             listContainer.addView(
-                card,
+                cardOuter,
                 LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = dp(8)
                 }
@@ -462,20 +506,5 @@ class NativeRequestsView(
         }
     }
 
-    private fun roundedBg(fillHex: String, strokeHex: String, radiusDp: Float): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(radiusDp.toInt()).toFloat()
-            setColor(Color.parseColor(fillHex))
-            setStroke(dp(1), Color.parseColor(strokeHex))
-        }
-    }
-
-    private fun dp(value: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics
-        ).toInt()
-    }
+    private fun dp(value: Int): Int = UiStyleHelper.dp(context, value)
 }

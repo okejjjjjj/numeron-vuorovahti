@@ -832,6 +832,43 @@ object SettingsDialogHelper {
 
         calCard.addView(calDetailsContainer)
 
+        val initialShowShiftPeriods = prefs.getBoolean("show_shift_periods", true)
+        val periodDetailsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (initialShowShiftPeriods) View.VISIBLE else View.GONE
+        }
+
+        val switchShowShiftPeriods = createToggleRow(
+            parent = calCard,
+            title = if (en) "Show 3-week shift periods" else "Näytä 3 viikon työvuorolistajaksot",
+            subtitle = if (en) "Marks 3-week schedule boundaries in the Shifts calendar" else "Näyttää 3 viikon työvuorolistojen rajat Vuorot-kalenterissa",
+            initialChecked = initialShowShiftPeriods
+        ) { enabled ->
+            periodDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
+        }
+
+        val savedAnchorIso = prefs.getString("shift_period_anchor_iso", "2026-12-28").orEmpty().trim()
+        val initialAnchorDisplay = try {
+            java.time.LocalDate.parse(savedAnchorIso)
+                .with(java.time.DayOfWeek.MONDAY)
+                .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+        } catch (_: Exception) {
+            "28.12.2026"
+        }
+
+        periodDetailsContainer.addView(
+            createLabel(if (en) "Period start Monday (dd.MM.yyyy)" else "Jakson alkamismaanantai (pp.kk.vvvv)")
+        )
+        val editPeriodAnchor = EditText(context).apply {
+            hint = "28.12.2026"
+            setText(initialAnchorDisplay)
+            inputType = InputType.TYPE_CLASS_TEXT
+            isSingleLine = true
+            styleEditText(this)
+        }
+        periodDetailsContainer.addView(editPeriodAnchor)
+        calCard.addView(periodDetailsContainer)
+
         // === KORTTI 4: MUISTUTUKSET JA ILMOITUKSET ===
         val actionCard = createSectionCard(if (en) "Reminders and notifications" else "Muistutukset ja ilmoitukset")
 
@@ -1169,6 +1206,23 @@ object SettingsDialogHelper {
             val newSyncCalendar = switchSyncCalendar.isChecked
             val newShiftReminders = switchShiftReminders.isChecked
             val newTrackRequests = switchTrackRequests.isChecked
+            val newShowShiftPeriods = switchShowShiftPeriods.isChecked
+            val rawAnchorInput = editPeriodAnchor.text.toString().trim()
+            val parsedAnchorIso = try {
+                val parsedDate = if (rawAnchorInput.contains(".")) {
+                    val p = rawAnchorInput.split(".").map { it.trim() }
+                    if (p.size == 3) {
+                        java.time.LocalDate.of(p[2].toInt(), p[1].toInt(), p[0].toInt())
+                    } else {
+                        java.time.LocalDate.of(2026, 12, 28)
+                    }
+                } else {
+                    java.time.LocalDate.parse(rawAnchorInput)
+                }
+                parsedDate.with(java.time.DayOfWeek.MONDAY).toString()
+            } catch (_: Exception) {
+                prefs.getString("shift_period_anchor_iso", "2026-12-28") ?: "2026-12-28"
+            }
 
             val isDemo = savedUser.isEmpty() || savedPass.isEmpty() || rawOrg.isEmpty() ||
                 UrlNormalizer.isDemoInput(rawOrg) ||
@@ -1184,6 +1238,8 @@ object SettingsDialogHelper {
                 .putBoolean("sync_calendar_enabled", newSyncCalendar)
                 .putBoolean("shift_reminders_enabled", newShiftReminders)
                 .putBoolean("track_requests", newTrackRequests)
+                .putBoolean("show_shift_periods", newShowShiftPeriods)
+                .putString("shift_period_anchor_iso", parsedAnchorIso)
                 .putString("calendar_user_tag", userTag)
                 .putInt("reminder_minutes", reminderMins)
                 .putInt("color_morning_rgb", morningRgb)

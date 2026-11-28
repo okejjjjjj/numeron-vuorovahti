@@ -1176,4 +1176,19 @@ object NumeronApiClient {
         }
         return MonthDisplayData(year = year, month = month, days = dayMap)
     }
+
+    fun getStampingCacheSavedAtMs(context: Context): Long {
+        val file = stampingCacheFile(context)
+        return if (file.exists()) file.lastModified() else 0L
+    }
+
+    fun getRequestsCacheSavedAtMs(context: Context, filter: String): Long {
+        val file = requestsCacheFile(context, filter)
+        return if (file.exists()) file.lastModified() else 0L
+    }
+
+    fun getMonthCacheSavedAtMs(context: Context, year: Int, month: Int): Long {
+        val file = monthCacheFile(context, year, month)
+        return if (file.exists()) file.lastModified() else 0L
+    }
 }

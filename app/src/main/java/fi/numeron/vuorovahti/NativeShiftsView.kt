@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.webkit.CookieManager
 import android.widget.Button
@@ -16,6 +17,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,7 +28,9 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.time.temporal.WeekFields
+import kotlin.math.abs
 
 class NativeShiftsView(
     private val context: Context,
@@ -38,6 +42,10 @@ class NativeShiftsView(
     private var currentData: MonthDisplayData? = null
     private var loadJob: Job? = null
 
+    private var swipeDownX: Float = 0f
+    private var swipeDownY: Float = 0f
+
+    private val swipeRefresh: SwipeRefreshLayout
     private val txtMonthTitle: TextView
     private val btnPrev: Button
     private val btnNext: Button
@@ -46,6 +54,7 @@ class NativeShiftsView(
     private val progressBar: ProgressBar
     private val txtStatus: TextView
     private val gridContainer: LinearLayout
+    private val txtMonthSummary: TextView
 
     private val fiMonths = arrayOf(
         "Tammikuu", "Helmikuu", "Maaliskuu", "Huhtikuu", "Toukokuu", "Kesäkuu",
@@ -72,7 +81,7 @@ class NativeShiftsView(
         // Yläkortti: kuukausivalitsin + pikapainikkeet
         val headerCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = roundedBg("#182332", "#2A394A", 12f)
+            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
             setPadding(dp(10), dp(10), dp(10), dp(8))
         }
 
@@ -85,11 +94,11 @@ class NativeShiftsView(
             text = "◀"
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            background = roundedBg("#233040", "#37475A", 10f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 10f)
             setPadding(0, 0, 0, 0)
             setOnClickListener {
                 displayedMonth = displayedMonth.minusMonths(1)
-                loadMonth(forceNetwork = true)
+                loadMonth(forceNetwork = true, fromSwipe = false)
             }
         }
         navRow.addView(btnPrev, LayoutParams(dp(44), dp(38)))
@@ -99,7 +108,7 @@ class NativeShiftsView(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             setTypeface(null, Typeface.BOLD)
             gravity = Gravity.CENTER
-            background = roundedBg("#111923", "#2A394A", 10f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#111923", "#2A394A", 10f)
             setPadding(dp(12), dp(7), dp(12), dp(7))
             setOnClickListener { showMonthJumpDialog() }
         }
@@ -115,11 +124,11 @@ class NativeShiftsView(
             text = "▶"
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-            background = roundedBg("#233040", "#37475A", 10f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 10f)
             setPadding(0, 0, 0, 0)
             setOnClickListener {
                 displayedMonth = displayedMonth.plusMonths(1)
-                loadMonth(forceNetwork = true)
+                loadMonth(forceNetwork = true, fromSwipe = false)
             }
         }
         navRow.addView(btnNext, LayoutParams(dp(44), dp(38)))
@@ -136,13 +145,13 @@ class NativeShiftsView(
             isAllCaps = false
             setTextColor(Color.parseColor("#E2E8F0"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setPadding(dp(12), dp(4), dp(12), dp(4))
             minHeight = 0
             minimumHeight = dp(32)
             setOnClickListener {
                 displayedMonth = YearMonth.now()
-                loadMonth(forceNetwork = true)
+                loadMonth(forceNetwork = true, fromSwipe = false)
             }
         }
         actionRow.addView(btnToday, LayoutParams(LayoutParams.WRAP_CONTENT, dp(32)))
@@ -151,11 +160,11 @@ class NativeShiftsView(
             isAllCaps = false
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setPadding(dp(12), dp(4), dp(12), dp(4))
             minHeight = 0
             minimumHeight = dp(32)
-            setOnClickListener { loadMonth(forceNetwork = true) }
+            setOnClickListener { loadMonth(forceNetwork = true, fromSwipe = false) }
         }
         actionRow.addView(
             btnRefresh,
@@ -188,24 +197,75 @@ class NativeShiftsView(
             }
         )
 
+        swipeRefresh = SwipeRefreshLayout(context).apply {
+            UiStyleHelper.configureSwipeRefresh(this)
+            setOnRefreshListener { loadMonth(forceNetwork = true, fromSwipe = true) }
+        }
+
         val scroll = ScrollView(context).apply {
             isFillViewport = true
+        }
+        val scrollBody = LinearLayout(context).apply {
+            orientation = VERTICAL
         }
         gridContainer = LinearLayout(context).apply {
             orientation = VERTICAL
         }
-        scroll.addView(gridContainer, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-        addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        scrollBody.addView(gridContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        txtMonthSummary = TextView(context).apply {
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            gravity = Gravity.CENTER
+            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 10f)
+            setPadding(dp(10), dp(9), dp(10), dp(9))
+            visibility = View.GONE
+        }
+        scrollBody.addView(
+            txtMonthSummary,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(8)
+                bottomMargin = dp(6)
+            }
+        )
+
+        scroll.addView(scrollBody, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+        swipeRefresh.addView(scroll)
+        addView(swipeRefresh, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeDownX = ev.x
+                swipeDownY = ev.y
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = ev.x - swipeDownX
+                val dy = ev.y - swipeDownY
+                if (abs(dx) > dp(64) && abs(dx) > abs(dy) * 1.8f) {
+                    val cancelEv = MotionEvent.obtain(ev)
+                    cancelEv.action = MotionEvent.ACTION_CANCEL
+                    super.dispatchTouchEvent(cancelEv)
+                    cancelEv.recycle()
+
+                    displayedMonth = if (dx < 0f) displayedMonth.plusMonths(1) else displayedMonth.minusMonths(1)
+                    loadMonth(forceNetwork = true, fromSwipe = false)
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     fun onShow(forceNetwork: Boolean = false) {
         updateLocalizedLabels()
-        loadMonth(forceNetwork = forceNetwork)
+        loadMonth(forceNetwork = forceNetwork, fromSwipe = false)
     }
 
     fun refreshFromCacheAndNetwork() {
         updateLocalizedLabels()
-        loadMonth(forceNetwork = true)
+        loadMonth(forceNetwork = true, fromSwipe = false)
     }
 
     private fun updateLocalizedLabels() {
@@ -216,15 +276,16 @@ class NativeShiftsView(
         btnRefresh.text = if (en) "↻ Refresh" else "↻ Päivitä"
     }
 
-    private fun loadMonth(forceNetwork: Boolean) {
+    private fun loadMonth(forceNetwork: Boolean, fromSwipe: Boolean = false) {
         val ym = displayedMonth
         val en = DemoModeHelper.isEnglish(context)
         updateLocalizedLabels()
         loadJob?.cancel()
 
         if (DemoModeHelper.isDemoEnabled(context)) {
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
-            txtStatus.text = if (en) "Demo" else "Demo"
+            txtStatus.text = "Demo"
             val demoShifts = DemoModeHelper.generateDemoWorkShifts(context)
             currentData = NumeronApiClient.buildMonthDisplayFromCachedShifts(demoShifts, ym.year, ym.monthValue)
                 ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
@@ -234,6 +295,7 @@ class NativeShiftsView(
 
         // 1. Näytetään heti välimuistista (0 ms viive)
         val cachedMonth = NumeronApiClient.loadMonthDisplayCache(context, ym.year, ym.monthValue)
+        val cachedAtMs = NumeronApiClient.getMonthCacheSavedAtMs(context, ym.year, ym.monthValue)
         val fallbackCached = if (cachedMonth == null) {
             CalendarSyncHelper.loadCachedShifts(context)?.let {
                 NumeronApiClient.buildMonthDisplayFromCachedShifts(it, ym.year, ym.monthValue)
@@ -247,23 +309,26 @@ class NativeShiftsView(
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
         if (baseUrl.isBlank()) {
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Set organization in Settings" else "Aseta organisaatio asetuksista"
             return
         }
 
-        if (!forceNetwork && cachedMonth != null) {
-            // Haetaan silti taustalla tuore data hiljaisesti
-            txtStatus.text = if (en) "Updating..." else "Päivitetään..."
-        } else {
-            txtStatus.text = if (en) "Loading..." else "Ladataan..."
+        if (!fromSwipe) {
+            progressBar.visibility = View.VISIBLE
         }
-        progressBar.visibility = View.VISIBLE
+        txtStatus.text = if (!forceNetwork && cachedMonth != null) {
+            if (en) "Updating…" else "Päivitetään…"
+        } else {
+            if (en) "Loading…" else "Ladataan…"
+        }
 
         loadJob = scope.launch {
             val html = NumeronApiClient.fetchMonthCalendarHtml(context, ym.year, ym.monthValue)
             if (ym != displayedMonth) return@launch
 
+            swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             if (html != null) {
                 val parsed = withContext(Dispatchers.Default) {
@@ -274,18 +339,30 @@ class NativeShiftsView(
                         NumeronApiClient.saveMonthDisplayCache(context, parsed)
                     }
                     currentData = parsed
-                    txtStatus.text = ""
+                    txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, System.currentTimeMillis(), isCache = false)
                     renderCalendarGrid()
                     return@launch
                 }
             }
 
             txtStatus.text = if (cachedMonth != null || fallbackCached != null) {
-                if (en) "Offline cache" else "Välimuisti"
+                UiStyleHelper.formatUpdatedLabel(context, cachedAtMs, isCache = true)
+                    .ifEmpty { if (en) "Offline cache" else "Välimuisti" }
             } else {
                 if (en) "Could not load" else "Lataus epäonnistui"
             }
         }
+    }
+
+    private fun resolvePeriodAnchorMonday(): LocalDate {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val raw = prefs.getString("shift_period_anchor_iso", "2026-12-28").orEmpty().trim()
+        val parsed = try {
+            LocalDate.parse(raw)
+        } catch (_: Exception) {
+            LocalDate.of(2026, 12, 28)
+        }
+        return parsed.with(DayOfWeek.MONDAY)
     }
 
     private fun renderCalendarGrid() {
@@ -299,6 +376,10 @@ class NativeShiftsView(
         val morningRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
         val eveningRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
         val nightRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
+        val showShiftPeriods = prefs.getBoolean("show_shift_periods", true)
+        val periodDays = 21L
+        val anchorMonday = resolvePeriodAnchorMonday()
+        val shortDateFmt = DateTimeFormatter.ofPattern("d.M.")
 
         // Otsikkorivi: Vko + Ma..Su
         val headerRow = LinearLayout(context).apply {
@@ -310,13 +391,14 @@ class NativeShiftsView(
             arrayOf("Vko", "Ma", "Ti", "Ke", "To", "Pe", "La", "Su")
         }
         for (i in dayHeaders.indices) {
+            val isWeekendHeader = (i == 6 || i == 7)
             val tv = TextView(context).apply {
                 text = dayHeaders[i]
                 gravity = Gravity.CENTER
-                setTextColor(Color.parseColor("#CBD5E1"))
+                setTextColor(Color.parseColor(if (isWeekendHeader) "#93C5FD" else "#CBD5E1"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, if (i == 0) 10f else 11.5f)
                 setTypeface(null, Typeface.BOLD)
-                background = cellBg("#233040", "#2A394A")
+                background = UiStyleHelper.cellBg(context, if (isWeekendHeader) "#1E2B3D" else "#233040", "#2A394A")
                 setPadding(dp(1), dp(6), dp(1), dp(6))
             }
             val lp = if (i == 0) LayoutParams(dp(26), LayoutParams.WRAP_CONTENT) else LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
@@ -332,21 +414,65 @@ class NativeShiftsView(
         var weekStart = startMonday
         val weekFields = WeekFields.ISO
 
+        // Kuukausikoosteen laskurit
+        var shiftCount = 0
+        var totalMinutes = 0
+        var morningCount = 0
+        var eveningCount = 0
+        var nightCount = 0
+
         while (!weekStart.isAfter(endSunday)) {
+            val daysFromAnchor = ChronoUnit.DAYS.between(anchorMonday, weekStart)
+            val periodIdx = Math.floorDiv(daysFromAnchor, periodDays)
+            val periodStart = anchorMonday.plusDays(periodIdx * periodDays)
+            val periodEnd = periodStart.plusDays(periodDays - 1L)
+            val isPeriodStartRow = (weekStart == periodStart)
+            val periodAccentHex = if (abs(periodIdx) % 2L == 0L) "#38BDF8" else "#F59E0B"
+
+            // 3 viikon työvuorolistajakson raja (ei listanumeroa, ei viikkonumerointia 1/3)
+            if (showShiftPeriods && (isPeriodStartRow || weekStart == startMonday)) {
+                val periodBar = LinearLayout(context).apply {
+                    orientation = HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    background = UiStyleHelper.cellBg(
+                        context = context,
+                        fillHex = if (isPeriodStartRow) "#162436" else "#121B28",
+                        strokeHex = "#2A394A",
+                        leftAccentHex = periodAccentHex
+                    )
+                    setPadding(dp(8), dp(3), dp(8), dp(3))
+                }
+                val labelPrefix = if (en) "Period" else "Työvuorolista"
+                val rangeText = "${periodStart.format(shortDateFmt)}–${periodEnd.format(shortDateFmt)}"
+                val pTv = TextView(context).apply {
+                    text = "$labelPrefix $rangeText"
+                    setTextColor(Color.parseColor(if (isPeriodStartRow) periodAccentHex else "#94A3B8"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                    setTypeface(null, if (isPeriodStartRow) Typeface.BOLD else Typeface.NORMAL)
+                }
+                periodBar.addView(pTv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+                gridContainer.addView(periodBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            }
+
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 minimumHeight = dp(72)
             }
 
-            // Viikkonumero
+            // Viikkonumero (vain tavallinen kalenteriviikko + jakson vasen värikorostusreuna)
             val weekNum = weekStart.get(weekFields.weekOfWeekBasedYear())
             val wkTv = TextView(context).apply {
                 text = weekNum.toString()
                 gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
                 setTextColor(Color.parseColor("#64748B"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                background = cellBg("#131C28", "#2A394A")
-                setPadding(dp(1), dp(5), dp(1), dp(4))
+                background = UiStyleHelper.cellBg(
+                    context = context,
+                    fillHex = "#131C28",
+                    strokeHex = "#2A394A",
+                    leftAccentHex = if (showShiftPeriods) periodAccentHex else null
+                )
+                setPadding(dp(3), dp(5), dp(1), dp(4))
             }
             row.addView(wkTv, LayoutParams(dp(26), LayoutParams.MATCH_PARENT))
 
@@ -355,18 +481,43 @@ class NativeShiftsView(
                 val isCurrentMonth = (date.monthValue == ym.monthValue && date.year == ym.year)
                 val isToday = (date == today)
                 val isPast = date.isBefore(today)
+                val isWeekend = (offset == 5 || offset == 6)
                 val dayData = dayMap[date]
+
+                if (isCurrentMonth && dayData != null) {
+                    for (shift in dayData.shifts) {
+                        shiftCount++
+                        val dur = if (shift.endMinutes >= shift.startMinutes) {
+                            shift.endMinutes - shift.startMinutes
+                        } else {
+                            (24 * 60 - shift.startMinutes) + shift.endMinutes
+                        }
+                        totalMinutes += dur
+                        val crossesMidnight = shift.endMinutes < shift.startMinutes
+                        when {
+                            crossesMidnight || shift.startMinutes >= 20 * 60 || shift.startMinutes < 4 * 60 -> nightCount++
+                            shift.startMinutes >= 11 * 60 + 30 -> eveningCount++
+                            else -> morningCount++
+                        }
+                    }
+                }
 
                 val cellBgColor = when {
                     isToday -> "#1E3A5F"
-                    !isCurrentMonth || isPast -> "#121A24"
+                    !isCurrentMonth -> "#101720"
+                    isPast -> if (isWeekend) "#111924" else "#121A24"
+                    isWeekend -> "#15202E"
                     else -> "#182332"
                 }
                 val cellBorderColor = if (isToday) "#38BDF8" else "#2A394A"
 
                 val cell = LinearLayout(context).apply {
                     orientation = VERTICAL
-                    background = cellBg(cellBgColor, cellBorderColor)
+                    background = if (isCurrentMonth) {
+                        UiStyleHelper.rippleCellBg(context, cellBgColor, cellBorderColor)
+                    } else {
+                        UiStyleHelper.cellBg(context, cellBgColor, cellBorderColor)
+                    }
                     setPadding(dp(2), dp(2), dp(2), dp(3))
                     minimumHeight = dp(72)
                     if (isCurrentMonth) {
@@ -382,9 +533,12 @@ class NativeShiftsView(
                 val numTv = TextView(context).apply {
                     text = date.dayOfMonth.toString()
                     setTextColor(
-                        if (!isCurrentMonth) Color.parseColor("#64748B")
-                        else if (isToday) Color.parseColor("#38BDF8")
-                        else Color.parseColor("#F1F5F9")
+                        when {
+                            !isCurrentMonth -> Color.parseColor("#64748B")
+                            isToday -> Color.parseColor("#38BDF8")
+                            isWeekend -> Color.parseColor("#93C5FD")
+                            else -> Color.parseColor("#F1F5F9")
+                        }
                     )
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTypeface(null, Typeface.BOLD)
@@ -408,22 +562,36 @@ class NativeShiftsView(
                 }
                 cell.addView(topRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
-                // Poissaolot (loma, sairaus, koulutus/muu)
-                dayData?.absences?.forEach { abs ->
-                    val (bgHex, fgHex) = when (abs.kind) {
+                // Poissaolot (yhtenäiset lomapalkit peräkkäisille päiville)
+                val prevDate = date.minusDays(1)
+                val nextDate = date.plusDays(1)
+                val prevAbsences = if (offset > 0) dayMap[prevDate]?.absences.orEmpty() else emptyList()
+                val nextAbsences = if (offset < 6) dayMap[nextDate]?.absences.orEmpty() else emptyList()
+
+                dayData?.absences?.forEach { absItem ->
+                    val connectedLeft = prevAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
+                    val connectedRight = nextAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
+                    val (bgHex, fgHex) = when (absItem.kind) {
                         "vacation" -> "#15803D" to "#FFFFFF"
                         "sick" -> "#B91C1C" to "#FFFFFF"
                         else -> "#334155" to "#F1F5F9"
                     }
+                    val r = dp(4).toFloat()
+                    val rL = if (connectedLeft) 0f else r
+                    val rR = if (connectedRight) 0f else r
                     val badge = TextView(context).apply {
-                        text = abs.title
+                        text = if (connectedLeft) " " else absItem.title
                         setTextColor(Color.parseColor(fgHex))
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
                         setTypeface(null, Typeface.BOLD)
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
-                        background = roundedBg(bgHex, bgHex, 4f)
-                        setPadding(dp(3), dp(1), dp(3), dp(1))
+                        background = GradientDrawable().apply {
+                            shape = GradientDrawable.RECTANGLE
+                            setColor(Color.parseColor(bgHex))
+                            cornerRadii = floatArrayOf(rL, rL, rR, rR, rR, rR, rL, rL)
+                        }
+                        setPadding(if (connectedLeft) 0 else dp(3), dp(1), if (connectedRight) 0 else dp(3), dp(1))
                     }
                     cell.addView(
                         badge,
@@ -469,7 +637,7 @@ class NativeShiftsView(
                         setTypeface(null, Typeface.BOLD)
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
-                        background = roundedBg("#2E1F47", "#8B5CF6", 4f)
+                        background = UiStyleHelper.roundedBg(context, "#2E1F47", "#8B5CF6", 4f)
                         setPadding(dp(3), dp(1), dp(3), dp(1))
                     }
                     cell.addView(
@@ -485,6 +653,31 @@ class NativeShiftsView(
 
             gridContainer.addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             weekStart = weekStart.plusWeeks(1)
+        }
+
+        // Kuukauden pikakooste
+        if (shiftCount > 0) {
+            val hours = totalMinutes / 60.0
+            val hoursStr = if (totalMinutes % 60 == 0) {
+                "${totalMinutes / 60}"
+            } else {
+                String.format("%.1f", hours).replace(".", if (en) "." else ",")
+            }
+            val breakdownParts = mutableListOf<String>()
+            if (morningCount > 0) breakdownParts.add(if (en) "$morningCount morn" else "$morningCount aamu")
+            if (eveningCount > 0) breakdownParts.add(if (en) "$eveningCount eve" else "$eveningCount ilta")
+            if (nightCount > 0) breakdownParts.add(if (en) "$nightCount night" else "$nightCount yö")
+
+            val shiftWord = if (en) {
+                if (shiftCount == 1) "shift" else "shifts"
+            } else {
+                if (shiftCount == 1) "vuoro" else "vuoroa"
+            }
+            val breakdownSuffix = if (breakdownParts.isNotEmpty()) "  •  ${breakdownParts.joinToString(" / ")}" else ""
+            txtMonthSummary.text = "$shiftCount $shiftWord • $hoursStr h$breakdownSuffix"
+            txtMonthSummary.visibility = View.VISIBLE
+        } else {
+            txtMonthSummary.visibility = View.GONE
         }
     }
 
@@ -519,7 +712,7 @@ class NativeShiftsView(
             hasAny = true
             val card = LinearLayout(context).apply {
                 orientation = VERTICAL
-                background = roundedBg("#111923", "#2A394A", 10f)
+                background = UiStyleHelper.roundedBg(context, "#111923", "#2A394A", 10f)
                 setPadding(dp(12), dp(10), dp(12), dp(10))
             }
             card.addView(
@@ -560,19 +753,19 @@ class NativeShiftsView(
             )
         }
 
-        dayData?.absences?.forEach { abs ->
+        dayData?.absences?.forEach { absItem ->
             hasAny = true
-            val borderHex = when (abs.kind) {
+            val borderHex = when (absItem.kind) {
                 "vacation" -> "#22C55E"
                 "sick" -> "#F87171"
                 else -> "#64748B"
             }
             val tv = TextView(context).apply {
-                text = abs.title
+                text = absItem.title
                 setTextColor(Color.parseColor("#F1F5F9"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 setTypeface(null, Typeface.BOLD)
-                background = roundedBg("#111923", borderHex, 8f)
+                background = UiStyleHelper.roundedBg(context, "#111923", borderHex, 8f)
                 setPadding(dp(12), dp(9), dp(12), dp(9))
             }
             contentBox.addView(
@@ -589,7 +782,7 @@ class NativeShiftsView(
                 text = (if (en) "Request: " else "Toive: ") + req.title
                 setTextColor(Color.parseColor("#EDE9FE"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                background = roundedBg("#2E1F47", "#8B5CF6", 8f)
+                background = UiStyleHelper.roundedBg(context, "#2E1F47", "#8B5CF6", 8f)
                 setPadding(dp(12), dp(9), dp(12), dp(9))
             }
             contentBox.addView(
@@ -613,7 +806,7 @@ class NativeShiftsView(
         val commentTv = TextView(context).apply {
             setTextColor(Color.parseColor("#FDE68A"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = roundedBg("#2A2210", "#F59E0B", 8f)
+            background = UiStyleHelper.roundedBg(context, "#2A2210", "#F59E0B", 8f)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             visibility = if (dayData?.hasCommentCircle == true && !DemoModeHelper.isDemoEnabled(context)) View.VISIBLE else View.GONE
             text = if (en) "Loading shift comment..." else "Haetaan vuorokommenttia..."
@@ -645,7 +838,7 @@ class NativeShiftsView(
                 setTextColor(Color.WHITE)
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
                 setTypeface(null, Typeface.BOLD)
-                background = roundedBg("#1982C4", "#38BDF8", 8f)
+                background = UiStyleHelper.rippleRoundedBg(context, "#1982C4", "#38BDF8", 8f, "#44FFFFFF")
                 setOnClickListener {
                     dialog.dismiss()
                     if (baseUrl.isNotBlank()) {
@@ -668,7 +861,7 @@ class NativeShiftsView(
                 isAllCaps = false
                 setTextColor(Color.parseColor("#E2E8F0"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                background = roundedBg("#233040", "#37475A", 8f)
+                background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
                 setOnClickListener {
                     dialog.dismiss()
                     if (baseUrl.isNotBlank()) {
@@ -709,7 +902,7 @@ class NativeShiftsView(
             isAllCaps = false
             setTextColor(Color.parseColor("#CBD5E1"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setOnClickListener { dialog.dismiss() }
         }
         root.addView(
@@ -719,11 +912,7 @@ class NativeShiftsView(
             }
         )
 
-        dialog.window?.setBackgroundDrawable(GradientDrawable().apply {
-            cornerRadius = dp(14).toFloat()
-            setColor(Color.parseColor("#182332"))
-            setStroke(dp(1), Color.parseColor("#38BDF8"))
-        })
+        dialog.window?.setBackgroundDrawable(UiStyleHelper.roundedBg(context, "#182332", "#38BDF8", 14f))
         dialog.show()
     }
 
@@ -753,7 +942,7 @@ class NativeShiftsView(
         val yearRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = roundedBg("#111923", "#2A394A", 10f)
+            background = UiStyleHelper.roundedBg(context, "#111923", "#2A394A", 10f)
             setPadding(dp(8), dp(6), dp(8), dp(6))
         }
 
@@ -793,11 +982,11 @@ class NativeShiftsView(
                         setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#E2E8F0"))
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                         setTypeface(null, Typeface.BOLD)
-                        background = roundedBg(bgHex, borderHex, 8f)
+                        background = UiStyleHelper.rippleRoundedBg(context, bgHex, borderHex, 8f)
                         setOnClickListener {
                             dialog.dismiss()
                             displayedMonth = YearMonth.of(selectedYear, mVal)
-                            loadMonth(forceNetwork = true)
+                            loadMonth(forceNetwork = true, fromSwipe = false)
                         }
                     }
                     mRow.addView(
@@ -814,7 +1003,7 @@ class NativeShiftsView(
         val btnPrevYear = Button(context).apply {
             text = "◀"
             setTextColor(Color.parseColor("#38BDF8"))
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setOnClickListener {
                 selectedYear -= 1
                 renderMonths()
@@ -823,7 +1012,7 @@ class NativeShiftsView(
         val btnNextYear = Button(context).apply {
             text = "▶"
             setTextColor(Color.parseColor("#38BDF8"))
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setOnClickListener {
                 selectedYear += 1
                 renderMonths()
@@ -845,11 +1034,11 @@ class NativeShiftsView(
             isAllCaps = false
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setOnClickListener {
                 dialog.dismiss()
                 displayedMonth = YearMonth.now()
-                loadMonth(forceNetwork = true)
+                loadMonth(forceNetwork = true, fromSwipe = false)
             }
         }
         val btnCancel = Button(context).apply {
@@ -857,7 +1046,7 @@ class NativeShiftsView(
             isAllCaps = false
             setTextColor(Color.parseColor("#CBD5E1"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = roundedBg("#233040", "#37475A", 8f)
+            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setOnClickListener { dialog.dismiss() }
         }
         footer.addView(btnNow, LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(8) })
@@ -865,11 +1054,7 @@ class NativeShiftsView(
         root.addView(footer)
 
         renderMonths()
-        dialog.window?.setBackgroundDrawable(GradientDrawable().apply {
-            cornerRadius = dp(14).toFloat()
-            setColor(Color.parseColor("#182332"))
-            setStroke(dp(1), Color.parseColor("#38BDF8"))
-        })
+        dialog.window?.setBackgroundDrawable(UiStyleHelper.roundedBg(context, "#182332", "#38BDF8", 14f))
         dialog.show()
     }
 
@@ -892,28 +1077,5 @@ class NativeShiftsView(
         return if (lum > 150.0) Color.parseColor("#0F1722") else Color.WHITE
     }
 
-    private fun roundedBg(fillHex: String, strokeHex: String, radiusDp: Float): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(radiusDp.toInt()).toFloat()
-            setColor(Color.parseColor(fillHex))
-            setStroke(dp(1), Color.parseColor(strokeHex))
-        }
-    }
-
-    private fun cellBg(fillHex: String, strokeHex: String): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(Color.parseColor(fillHex))
-            setStroke(1, Color.parseColor(strokeHex))
-        }
-    }
-
-    private fun dp(value: Int): Int {
-        return TypedValue.applyDimension(
-            TypedValue.COMPLEX_UNIT_DIP,
-            value.toFloat(),
-            resources.displayMetrics
-        ).toInt()
-    }
+    private fun dp(value: Int): Int = UiStyleHelper.dp(context, value)
 }
