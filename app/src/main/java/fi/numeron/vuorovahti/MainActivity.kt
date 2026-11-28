@@ -170,8 +170,11 @@ class MainActivity : AppCompatActivity() {
 
         scope.launch(Dispatchers.IO) {
             SecureCredentialManager.getUsername(this@MainActivity)
-            ShiftReminderReceiver.ensureBackgroundSyncScheduled(this@MainActivity)
-            CalendarSyncHelper.scheduleShiftReminders(this@MainActivity)
+            kotlinx.coroutines.delay(1500L)
+            if (!isFinishing && !isDestroyed) {
+                ShiftReminderReceiver.ensureBackgroundSyncScheduled(this@MainActivity)
+                CalendarSyncHelper.scheduleShiftReminders(this@MainActivity)
+            }
         }
     }
 
@@ -320,11 +323,13 @@ class MainActivity : AppCompatActivity() {
                     } catch (_: Exception) {
                     }
                     if (token == navigationToken && isWebOverlayOpen && !isFinishing && !isDestroyed) {
+                        SessionCookieStore.syncToWebViewCookieManager(this@MainActivity, baseUrl)
                         wv.stopLoading()
                         wv.loadUrl(url)
                     }
                 }
             } else {
+                SessionCookieStore.syncToWebViewCookieManager(this, baseUrl)
                 wv.stopLoading()
                 wv.loadUrl(url)
             }
@@ -338,6 +343,9 @@ class MainActivity : AppCompatActivity() {
         isAutoSubmittingLogin = false
         endSnapshotTransition()
         webOverlayHeader.visibility = View.GONE
+        if (webView != null) {
+            SessionCookieStore.importFromWebViewCookieManager(this, getBaseUrl())
+        }
         webView?.stopLoading()
         webViewHost.visibility = View.GONE
 
@@ -755,6 +763,7 @@ class MainActivity : AppCompatActivity() {
                 pendingAction = Action.SYNC_CALENDAR
                 syncStep = 0
                 collectedCalendarHtml.clear()
+                SessionCookieStore.syncToWebViewCookieManager(this@MainActivity, baseUrl)
                 ensureWebView().loadUrl(urls[0])
             }
         }
@@ -1025,6 +1034,7 @@ class MainActivity : AppCompatActivity() {
                     dashboardRedirectCount = 0
                 }
                 if (!url.contains("/Login/", ignoreCase = true)) {
+                    SessionCookieStore.importFromWebViewCookieManager(this@MainActivity, getBaseUrl())
                     webLoginAttemptFingerprint = ""
                     getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                         .edit()
@@ -1795,6 +1805,7 @@ class MainActivity : AppCompatActivity() {
                         .putLong("last_valid_session_ms", System.currentTimeMillis())
                         .apply()
                     val targetUrl = resolveResumeUrl(baseUrl)
+                    SessionCookieStore.syncToWebViewCookieManager(this@MainActivity, baseUrl)
                     ensureWebView().loadUrl(targetUrl)
                 } else if (BackgroundAuthHelper.isCredentialBlocked(this@MainActivity)) {
                     endSnapshotTransition()
@@ -1868,11 +1879,7 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
             val baseUrl = getBaseUrl()
-            val cookies = try {
-                CookieManager.getInstance().getCookie(baseUrl)
-            } catch (_: Exception) {
-                null
-            }
+            val cookies = SessionCookieStore.getCookieHeader(this@MainActivity, baseUrl)
             val rawShifts = NumeronParser.enrichShiftsWithListComments(
                 baseUrl = baseUrl,
                 cookieHeader = cookies,

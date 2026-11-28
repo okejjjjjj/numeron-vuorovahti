@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.webkit.CookieManager
 import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
@@ -425,7 +424,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             var conn: java.net.HttpURLConnection? = null
             val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             return try {
-                val cookies = CookieManager.getInstance().getCookie(baseUrl)
+                val cookies = SessionCookieStore.getCookieHeader(context, baseUrl)
                 if (cookies.isNullOrBlank()) {
                     prefs.edit().putString("last_requests_check_status", "NO_COOKIES").apply()
                     return null
@@ -627,15 +626,16 @@ class BackgroundSyncWorker(
             if (pages == null || pages.size < 2) {
                 null
             } else {
+                pages.forEach { html ->
+                    NumeronParser.parseMonthForDisplay(html)?.let { displayData ->
+                        NumeronApiClient.saveMonthDisplayCache(appContext, displayData)
+                    }
+                }
                 val parsed = pages.map { NumeronParser.parseCalendarHtml(it) }
                 if (parsed.any { it == null }) {
                     null
                 } else {
-                    val cookies = try {
-                        CookieManager.getInstance().getCookie(baseUrl)
-                    } catch (_: Exception) {
-                        null
-                    }
+                    val cookies = SessionCookieStore.getCookieHeader(appContext, baseUrl)
                     val enriched = NumeronParser.enrichShiftsWithListComments(
                         baseUrl = baseUrl,
                         cookieHeader = cookies,

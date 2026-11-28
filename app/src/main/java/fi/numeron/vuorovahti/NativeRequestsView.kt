@@ -15,8 +15,10 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -30,6 +32,12 @@ class NativeRequestsView(
 
     private var currentFilter: String = "active"
     private var loadJob: Job? = null
+    private var lastSessionEpoch: Long = -1L
+    private var lastRenderedItems: List<PersonRequestItem>? = null
+    private var lastRenderedFilter: String? = null
+    private var lastRenderedLangEn: Boolean? = null
+    private var lastRenderedDemo: Boolean? = null
+    private val memoryByFilter = mutableMapOf<String, Pair<List<PersonRequestItem>, Long>>()
 
     private val swipeRefresh: SwipeRefreshLayout
     private val txtTitle: TextView
@@ -169,7 +177,7 @@ class NativeRequestsView(
                 if (currentFilter != filterKey) {
                     currentFilter = filterKey
                     updateFilterStyles()
-                    loadRequests(forceNetwork = true, fromSwipe = false)
+                    loadRequests(forceNetwork = false, fromSwipe = false)
                 }
             }
         }
@@ -236,12 +244,38 @@ class NativeRequestsView(
         onOpenWebUrl("$baseUrl/PersonRequests/Edit", if (en) "New request" else "Uusi toive")
     }
 
+    private fun renderRequestsIfChanged(items: List<PersonRequestItem>, forceRender: Boolean = false) {
+        val en = DemoModeHelper.isEnglish(context)
+        val isDemo = DemoModeHelper.isDemoEnabled(context)
+        if (!forceRender &&
+            items == lastRenderedItems &&
+            currentFilter == lastRenderedFilter &&
+            en == lastRenderedLangEn &&
+            isDemo == lastRenderedDemo
+        ) {
+            return
+        }
+        lastRenderedItems = items
+        lastRenderedFilter = currentFilter
+        lastRenderedLangEn = en
+        lastRenderedDemo = isDemo
+        renderRequests(items)
+    }
+
     private fun loadRequests(forceNetwork: Boolean, fromSwipe: Boolean = false) {
         val filter = currentFilter
         val en = DemoModeHelper.isEnglish(context)
+        val isDemo = DemoModeHelper.isDemoEnabled(context)
         loadJob?.cancel()
 
-        if (DemoModeHelper.isDemoEnabled(context)) {
+        val epoch = SessionCookieStore.sessionEpoch
+        if (epoch != lastSessionEpoch || lastRenderedDemo != isDemo) {
+            lastSessionEpoch = epoch
+            memoryByFilter.clear()
+            lastRenderedItems = null
+        }
+
+        if (isDemo) {
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Demo mode" else "Demotila"
@@ -276,15 +310,8 @@ class NativeRequestsView(
                     approvedDateMs = null
                 )
             )
-            renderRequests(if (filter == "removed") emptyList() else demoItems)
+            renderRequestsIfChanged(if (filter == "removed") emptyList() else demoItems)
             return
-        }
-
-        // 1. Näytetään heti paikallinen välimuisti
-        val cached = NumeronApiClient.loadCachedRequests(context, filter)
-        val cachedAtMs = NumeronApiClient.getRequestsCacheSavedAtMs(context, filter)
-        if (cached != null) {
-            renderRequests(cached)
         }
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
@@ -292,37 +319,73 @@ class NativeRequestsView(
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Set organization in Settings" else "Aseta organisaatio asetuksista"
+            renderRequestsIfChanged(emptyList())
             return
         }
 
-        if (!fromSwipe) {
-            progressBar.visibility = View.VISIBLE
-        }
-        txtStatus.text = if (cached != null && !forceNetwork) {
-            if (en) "Updating…" else "Päivitetään…"
-        } else {
-            if (en) "Loading requests…" else "Haetaan toiveita…"
+        // 1. Muistivälimuisti + 45 s tuoreusaika
+        val mem = memoryByFilter[filter]
+        if (mem != null) {
+            renderRequestsIfChanged(mem.first)
+            if (!forceNetwork && (System.currentTimeMillis() - mem.second) < 45_000L) {
+                swipeRefresh.isRefreshing = false
+                progressBar.visibility = View.GONE
+                val countPart = if (en) "${mem.first.size} requests" else "${mem.first.size} toivetta"
+                val timePart = UiStyleHelper.formatUpdatedLabel(context, mem.second, isCache = false)
+                txtStatus.text = if (timePart.isNotEmpty()) "$countPart • $timePart" else countPart
+                return
+            }
         }
 
         loadJob = scope.launch {
+            var cached: List<PersonRequestItem>? = mem?.first
+            var cachedAtMs: Long = mem?.second ?: 0L
+
+            if (cached == null) {
+                val diskRes = withContext(Dispatchers.IO) {
+                    val items = NumeronApiClient.loadCachedRequests(context, filter)
+                    val savedMs = NumeronApiClient.getRequestsCacheSavedAtMs(context, filter)
+                    items to savedMs
+                }
+                if (filter != currentFilter) return@launch
+                cached = diskRes.first
+                cachedAtMs = diskRes.second
+                if (cached != null) {
+                    renderRequestsIfChanged(cached)
+                }
+            }
+
+            if (!fromSwipe) {
+                progressBar.visibility = View.VISIBLE
+            }
+            txtStatus.text = if (cached != null && !forceNetwork) {
+                if (en) "Updating…" else "Päivitetään…"
+            } else {
+                if (en) "Loading requests…" else "Haetaan toiveita…"
+            }
+
             val result = NumeronApiClient.fetchRequests(context, filter)
             if (filter != currentFilter) return@launch
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
 
             if (result.items != null) {
-                renderRequests(result.items)
+                val nowMs = System.currentTimeMillis()
+                if (!result.fromCache) {
+                    memoryByFilter[filter] = result.items to nowMs
+                }
+                renderRequestsIfChanged(result.items)
                 val countPart = if (en) "${result.items.size} requests" else "${result.items.size} toivetta"
                 val timePart = UiStyleHelper.formatUpdatedLabel(
                     context,
-                    if (result.fromCache) cachedAtMs else System.currentTimeMillis(),
+                    if (result.fromCache) cachedAtMs else nowMs,
                     isCache = result.fromCache
                 )
                 txtStatus.text = if (timePart.isNotEmpty()) "$countPart • $timePart" else countPart
             } else {
                 txtStatus.text = result.errorMessage ?: (if (en) "Failed to load" else "Haku epäonnistui")
                 if (cached == null) {
-                    renderRequests(emptyList())
+                    renderRequestsIfChanged(emptyList())
                 }
             }
         }

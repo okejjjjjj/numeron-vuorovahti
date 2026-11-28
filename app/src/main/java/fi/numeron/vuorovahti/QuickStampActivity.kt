@@ -614,6 +614,7 @@ class QuickStampActivity : AppCompatActivity() {
         wv.resumeTimers()
         wv.onResume()
 
+        SessionCookieStore.syncToWebViewCookieManager(this, baseUrl)
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
@@ -670,6 +671,7 @@ class QuickStampActivity : AppCompatActivity() {
 
                 CookieManager.getInstance().flush()
                 if (!url.contains("/Login/", ignoreCase = true)) {
+                    SessionCookieStore.importFromWebViewCookieManager(this@QuickStampActivity, baseUrl)
                     getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                         .edit()
                         .putLong("last_valid_session_ms", System.currentTimeMillis())
@@ -923,7 +925,9 @@ class QuickStampActivity : AppCompatActivity() {
         mainHandler.removeCallbacksAndMessages(null)
         cancelTimeout()
         try {
-            CookieManager.getInstance().flush()
+            if (hiddenWebView != null) {
+                CookieManager.getInstance().flush()
+            }
         } catch (_: Exception) {
         }
         destroyHiddenWebView()

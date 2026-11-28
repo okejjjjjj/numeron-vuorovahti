@@ -9,7 +9,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.webkit.CookieManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -41,6 +40,11 @@ class NativeShiftsView(
     private var displayedMonth: YearMonth = YearMonth.now()
     private var currentData: MonthDisplayData? = null
     private var loadJob: Job? = null
+    private var prefetchJob: Job? = null
+    private var lastSessionEpoch: Long = -1L
+    private var lastRenderedRenderKey: String? = null
+    private var lastRenderedData: MonthDisplayData? = null
+    private val memoryMonths = LinkedHashMap<YearMonth, Pair<MonthDisplayData, Long>>()
 
     private var swipeDownX: Float = 0f
     private var swipeDownY: Float = 0f
@@ -98,7 +102,7 @@ class NativeShiftsView(
             setPadding(0, 0, 0, 0)
             setOnClickListener {
                 displayedMonth = displayedMonth.minusMonths(1)
-                loadMonth(forceNetwork = true, fromSwipe = false)
+                loadMonth(forceNetwork = false, fromSwipe = false)
             }
         }
         navRow.addView(btnPrev, LayoutParams(dp(44), dp(38)))
@@ -128,7 +132,7 @@ class NativeShiftsView(
             setPadding(0, 0, 0, 0)
             setOnClickListener {
                 displayedMonth = displayedMonth.plusMonths(1)
-                loadMonth(forceNetwork = true, fromSwipe = false)
+                loadMonth(forceNetwork = false, fromSwipe = false)
             }
         }
         navRow.addView(btnNext, LayoutParams(dp(44), dp(38)))
@@ -151,7 +155,7 @@ class NativeShiftsView(
             minimumHeight = dp(32)
             setOnClickListener {
                 displayedMonth = YearMonth.now()
-                loadMonth(forceNetwork = true, fromSwipe = false)
+                loadMonth(forceNetwork = false, fromSwipe = false)
             }
         }
         actionRow.addView(btnToday, LayoutParams(LayoutParams.WRAP_CONTENT, dp(32)))
@@ -250,7 +254,7 @@ class NativeShiftsView(
                     cancelEv.recycle()
 
                     displayedMonth = if (dx < 0f) displayedMonth.plusMonths(1) else displayedMonth.minusMonths(1)
-                    loadMonth(forceNetwork = true, fromSwipe = false)
+                    loadMonth(forceNetwork = false, fromSwipe = false)
                     return true
                 }
             }
@@ -276,11 +280,88 @@ class NativeShiftsView(
         btnRefresh.text = if (en) "↻ Refresh" else "↻ Päivitä"
     }
 
+    private fun buildRenderKey(): String {
+        val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+        val en = DemoModeHelper.isEnglish(context)
+        val isDemo = DemoModeHelper.isDemoEnabled(context)
+        val morningRgb = prefs.getInt("color_morning_rgb", SettingsDialogHelper.DEFAULT_MORNING_RGB)
+        val eveningRgb = prefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
+        val nightRgb = prefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
+        val showPeriods = prefs.getBoolean("show_shift_periods", true)
+        val anchor = prefs.getString("shift_period_anchor_iso", "2026-12-28").orEmpty()
+        return "$displayedMonth|$en|$isDemo|$morningRgb|$eveningRgb|$nightRgb|$showPeriods|$anchor|${LocalDate.now()}"
+    }
+
+    private fun renderCalendarGridIfChanged(forceRender: Boolean = false) {
+        val key = buildRenderKey()
+        val data = currentData
+        if (!forceRender && key == lastRenderedRenderKey && data == lastRenderedData) {
+            return
+        }
+        lastRenderedRenderKey = key
+        lastRenderedData = data
+        renderCalendarGrid()
+    }
+
+    private fun storeMemoryMonth(ym: YearMonth, data: MonthDisplayData, fetchedAtMs: Long) {
+        memoryMonths.remove(ym)
+        memoryMonths[ym] = data to fetchedAtMs
+        if (memoryMonths.size > 12) {
+            val oldest = memoryMonths.keys.firstOrNull()
+            if (oldest != null) memoryMonths.remove(oldest)
+        }
+    }
+
+    private fun scheduleNextMonthPrefetch(baseYm: YearMonth) {
+        if (DemoModeHelper.isDemoEnabled(context)) return
+        val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
+        if (baseUrl.isBlank()) return
+        val nextYm = baseYm.plusMonths(1)
+        val nowMs = System.currentTimeMillis()
+        val existingMem = memoryMonths[nextYm]
+        if (existingMem != null && (nowMs - existingMem.second) < 5L * 60_000L) return
+
+        prefetchJob?.cancel()
+        prefetchJob = scope.launch {
+            val diskAgeOk = withContext(Dispatchers.IO) {
+                val savedMs = NumeronApiClient.getMonthCacheSavedAtMs(context, nextYm.year, nextYm.monthValue)
+                if (savedMs > 0L && (System.currentTimeMillis() - savedMs) < 10L * 60_000L) {
+                    val diskData = NumeronApiClient.loadMonthDisplayCache(context, nextYm.year, nextYm.monthValue)
+                    diskData to savedMs
+                } else {
+                    null
+                }
+            }
+            if (diskAgeOk != null && diskAgeOk.first != null) {
+                storeMemoryMonth(nextYm, diskAgeOk.first!!, diskAgeOk.second)
+                return@launch
+            }
+
+            val html = NumeronApiClient.fetchMonthCalendarHtml(context, nextYm.year, nextYm.monthValue)
+                ?: return@launch
+            val parsed = withContext(Dispatchers.Default) {
+                NumeronParser.parseMonthForDisplay(html)
+            } ?: return@launch
+            withContext(Dispatchers.IO) {
+                NumeronApiClient.saveMonthDisplayCache(context, parsed)
+            }
+            storeMemoryMonth(nextYm, parsed, System.currentTimeMillis())
+        }
+    }
+
     private fun loadMonth(forceNetwork: Boolean, fromSwipe: Boolean = false) {
         val ym = displayedMonth
         val en = DemoModeHelper.isEnglish(context)
         updateLocalizedLabels()
         loadJob?.cancel()
+
+        val epoch = SessionCookieStore.sessionEpoch
+        if (epoch != lastSessionEpoch) {
+            lastSessionEpoch = epoch
+            memoryMonths.clear()
+            lastRenderedRenderKey = null
+            lastRenderedData = null
+        }
 
         if (DemoModeHelper.isDemoEnabled(context)) {
             swipeRefresh.isRefreshing = false
@@ -289,42 +370,69 @@ class NativeShiftsView(
             val demoShifts = DemoModeHelper.generateDemoWorkShifts(context)
             currentData = NumeronApiClient.buildMonthDisplayFromCachedShifts(demoShifts, ym.year, ym.monthValue)
                 ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
-            renderCalendarGrid()
+            renderCalendarGridIfChanged()
             return
         }
-
-        // 1. Näytetään heti välimuistista (0 ms viive)
-        val cachedMonth = NumeronApiClient.loadMonthDisplayCache(context, ym.year, ym.monthValue)
-        val cachedAtMs = NumeronApiClient.getMonthCacheSavedAtMs(context, ym.year, ym.monthValue)
-        val fallbackCached = if (cachedMonth == null) {
-            CalendarSyncHelper.loadCachedShifts(context)?.let {
-                NumeronApiClient.buildMonthDisplayFromCachedShifts(it, ym.year, ym.monthValue)
-            }
-        } else {
-            null
-        }
-
-        currentData = cachedMonth ?: fallbackCached ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
-        renderCalendarGrid()
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
         if (baseUrl.isBlank()) {
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = if (en) "Set organization in Settings" else "Aseta organisaatio asetuksista"
+            currentData = MonthDisplayData(ym.year, ym.monthValue, emptyMap())
+            renderCalendarGridIfChanged()
             return
         }
 
-        if (!fromSwipe) {
-            progressBar.visibility = View.VISIBLE
-        }
-        txtStatus.text = if (!forceNetwork && cachedMonth != null) {
-            if (en) "Updating…" else "Päivitetään…"
-        } else {
-            if (en) "Loading…" else "Ladataan…"
+        // 1. Muistivälimuisti + 2 min tuoreusaika (0 ms, ei verkkopyyntöä turhaan)
+        val memEntry = memoryMonths[ym]
+        if (memEntry != null) {
+            currentData = memEntry.first
+            renderCalendarGridIfChanged()
+            if (!forceNetwork && (System.currentTimeMillis() - memEntry.second) < 120_000L) {
+                swipeRefresh.isRefreshing = false
+                progressBar.visibility = View.GONE
+                txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, memEntry.second, isCache = false)
+                scheduleNextMonthPrefetch(ym)
+                return
+            }
         }
 
         loadJob = scope.launch {
+            var cachedMonth: MonthDisplayData? = memEntry?.first
+            var cachedAtMs: Long = memEntry?.second ?: 0L
+            var hasAnyCache = (cachedMonth != null)
+
+            if (cachedMonth == null) {
+                val diskRes = withContext(Dispatchers.IO) {
+                    val mCache = NumeronApiClient.loadMonthDisplayCache(context, ym.year, ym.monthValue)
+                    val mSaved = NumeronApiClient.getMonthCacheSavedAtMs(context, ym.year, ym.monthValue)
+                    val fallback = if (mCache == null) {
+                        CalendarSyncHelper.loadCachedShifts(context)?.let {
+                            NumeronApiClient.buildMonthDisplayFromCachedShifts(it, ym.year, ym.monthValue)
+                        }
+                    } else {
+                        null
+                    }
+                    Triple(mCache, mSaved, fallback)
+                }
+                if (ym != displayedMonth) return@launch
+                cachedMonth = diskRes.first ?: diskRes.third
+                cachedAtMs = diskRes.second
+                hasAnyCache = (cachedMonth != null)
+                currentData = cachedMonth ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
+                renderCalendarGridIfChanged()
+            }
+
+            if (!fromSwipe) {
+                progressBar.visibility = View.VISIBLE
+            }
+            txtStatus.text = if (!forceNetwork && hasAnyCache) {
+                if (en) "Updating…" else "Päivitetään…"
+            } else {
+                if (en) "Loading…" else "Ladataan…"
+            }
+
             val html = NumeronApiClient.fetchMonthCalendarHtml(context, ym.year, ym.monthValue)
             if (ym != displayedMonth) return@launch
 
@@ -335,17 +443,20 @@ class NativeShiftsView(
                     NumeronParser.parseMonthForDisplay(html)
                 }
                 if (parsed != null) {
+                    val fetchedAt = System.currentTimeMillis()
                     withContext(Dispatchers.IO) {
                         NumeronApiClient.saveMonthDisplayCache(context, parsed)
                     }
+                    storeMemoryMonth(ym, parsed, fetchedAt)
                     currentData = parsed
-                    txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, System.currentTimeMillis(), isCache = false)
-                    renderCalendarGrid()
+                    txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, fetchedAt, isCache = false)
+                    renderCalendarGridIfChanged()
+                    scheduleNextMonthPrefetch(ym)
                     return@launch
                 }
             }
 
-            txtStatus.text = if (cachedMonth != null || fallbackCached != null) {
+            txtStatus.text = if (hasAnyCache) {
                 UiStyleHelper.formatUpdatedLabel(context, cachedAtMs, isCache = true)
                     .ifEmpty { if (en) "Offline cache" else "Välimuisti" }
             } else {
@@ -878,11 +989,7 @@ class NativeShiftsView(
             if (dayData?.hasCommentCircle == true && baseUrl.isNotBlank()) {
                 scope.launch {
                     val comment = withContext(Dispatchers.IO) {
-                        val cookies = try {
-                            CookieManager.getInstance().getCookie(baseUrl)
-                        } catch (_: Exception) {
-                            null
-                        }
+                        val cookies = SessionCookieStore.getCookieHeader(context, baseUrl)
                         NumeronParser.fetchDayComments(baseUrl, cookies, date)
                     }
                     if (dialog.isShowing) {
@@ -986,7 +1093,7 @@ class NativeShiftsView(
                         setOnClickListener {
                             dialog.dismiss()
                             displayedMonth = YearMonth.of(selectedYear, mVal)
-                            loadMonth(forceNetwork = true, fromSwipe = false)
+                            loadMonth(forceNetwork = false, fromSwipe = false)
                         }
                     }
                     mRow.addView(
@@ -1038,7 +1145,7 @@ class NativeShiftsView(
             setOnClickListener {
                 dialog.dismiss()
                 displayedMonth = YearMonth.now()
-                loadMonth(forceNetwork = true, fromSwipe = false)
+                loadMonth(forceNetwork = false, fromSwipe = false)
             }
         }
         val btnCancel = Button(context).apply {

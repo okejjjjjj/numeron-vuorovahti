@@ -14,6 +14,8 @@ object SecureCredentialManager {
     @Volatile
     private var cachedEncryptedPrefs: SharedPreferences? = null
 
+    internal fun getSharedEncryptedPrefs(context: Context): SharedPreferences? = getEncryptedPrefs(context)
+
     private fun getEncryptedPrefs(context: Context): SharedPreferences? {
         cachedEncryptedPrefs?.let { return it }
         return synchronized(this) {

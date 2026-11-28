@@ -23,8 +23,10 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -44,6 +46,13 @@ class NativeStampView(
     private var isSubmitting: Boolean = false
     private var isOptionsExpanded: Boolean = false
     private var lastSuccessfulStampMs: Long = 0L
+    private var lastNetworkFetchMs: Long = 0L
+    private var lastSessionEpoch: Long = -1L
+    private var lastRenderedState: StampingPageState? = null
+    private var lastRenderedNextShift: String? = null
+    private var lastRenderedLangEn: Boolean? = null
+    private var lastRenderedDemo: Boolean? = null
+    private var cachedNextShiftText: String? = null
     private var loadJob: Job? = null
 
     private val tickerHandler = Handler(Looper.getMainLooper())
@@ -458,10 +467,13 @@ class NativeStampView(
             setControlsBusy(false, "")
             when (res) {
                 is StampSubmitResult.Success -> {
-                    lastSuccessfulStampMs = System.currentTimeMillis()
+                    val nowMs = System.currentTimeMillis()
+                    lastSuccessfulStampMs = nowMs
+                    lastNetworkFetchMs = nowMs
                     res.updatedState?.let {
                         currentState = it
                         selectedReasonCodeId = it.defaultReasonCode
+                        lastRenderedState = null
                         renderState(it)
                     }
                     Toast.makeText(
@@ -523,30 +535,63 @@ class NativeStampView(
         btnReasonSelector.text = "$rcLabel  ▾"
     }
 
+    private fun isSameVisualState(a: StampingPageState?, b: StampingPageState): Boolean {
+        if (a == null) return false
+        return a.shiftTimes == b.shiftTimes &&
+            a.shiftWorkplace == b.shiftWorkplace &&
+            a.shiftDetails == b.shiftDetails &&
+            a.nextDirection == b.nextDirection &&
+            a.punchButtonText == b.punchButtonText &&
+            a.defaultReasonCode == b.defaultReasonCode &&
+            a.reasonCodes == b.reasonCodes &&
+            a.latestStamps == b.latestStamps &&
+            a.hasMoreStamps == b.hasMoreStamps
+    }
+
+    private fun renderStateIfChanged(state: StampingPageState, forceRender: Boolean = false) {
+        val en = DemoModeHelper.isEnglish(context)
+        val isDemo = DemoModeHelper.isDemoEnabled(context)
+        if (!forceRender &&
+            isSameVisualState(lastRenderedState, state) &&
+            lastRenderedNextShift == cachedNextShiftText &&
+            lastRenderedLangEn == en &&
+            lastRenderedDemo == isDemo
+        ) {
+            updateWorkingStatusPill()
+            updateOptionsToggleText()
+            return
+        }
+        lastRenderedState = state
+        lastRenderedNextShift = cachedNextShiftText
+        lastRenderedLangEn = en
+        lastRenderedDemo = isDemo
+        renderState(state)
+    }
+
     private fun loadState(forceNetwork: Boolean, fromSwipe: Boolean = false) {
         val en = DemoModeHelper.isEnglish(context)
+        val isDemo = DemoModeHelper.isDemoEnabled(context)
         loadJob?.cancel()
 
-        if (DemoModeHelper.isDemoEnabled(context)) {
+        val epoch = SessionCookieStore.sessionEpoch
+        if (epoch != lastSessionEpoch || lastRenderedDemo != isDemo) {
+            lastSessionEpoch = epoch
+            currentState = null
+            lastNetworkFetchMs = 0L
+            lastRenderedState = null
+            cachedNextShiftText = null
+        }
+
+        if (isDemo) {
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             txtStatus.text = "Demo"
+            btnPunch.setOnClickListener { handlePunchClick() }
             val demoState = buildDemoState()
             currentState = demoState
             selectedReasonCodeId = demoState.defaultReasonCode
-            renderState(demoState)
+            renderStateIfChanged(demoState, forceRender = true)
             return
-        }
-
-        // 1. Näytetään heti paikallinen välimuisti (0 ms viive)
-        val cached = NumeronApiClient.loadCachedStampingState(context)
-        val cachedAtMs = NumeronApiClient.getStampingCacheSavedAtMs(context)
-        if (cached != null) {
-            if (currentState == null) {
-                currentState = cached
-                selectedReasonCodeId = cached.defaultReasonCode
-            }
-            renderState(currentState ?: cached)
         }
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
@@ -561,6 +606,7 @@ class NativeStampView(
             txtShiftWorkplace.visibility = View.VISIBLE
             txtShiftWorkplace.text = if (en) "Set organization ID in Settings" else "Aseta organisaatiotunnus asetuksista"
             txtShiftDetails.visibility = View.GONE
+            lastRenderedState = null
             btnPunch.isEnabled = true
             btnPunch.text = if (en) "Open Settings" else "Avaa asetukset"
             btnPunch.background = UiStyleHelper.rippleRoundedBg(context, "#1982C4", "#38BDF8", 10f, "#44FFFFFF")
@@ -570,37 +616,79 @@ class NativeStampView(
 
         btnPunch.setOnClickListener { handlePunchClick() }
 
-        if (BackgroundAuthHelper.isCredentialBlocked(context)) {
+        val existing = currentState
+        val nowMs = System.currentTimeMillis()
+        if (!forceNetwork && existing != null && !existing.fromCache && (nowMs - lastNetworkFetchMs) < 45_000L) {
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
-            txtStatus.text = if (en) "Check login" else "Tarkista tunnukset"
-            Toast.makeText(
-                context,
-                if (en) "Login failed – please check username and password in Settings"
-                else "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista",
-                Toast.LENGTH_LONG
-            ).show()
+            txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, lastNetworkFetchMs, isCache = false)
+            renderStateIfChanged(existing)
             return
         }
 
-        if (!fromSwipe) {
-            progressBar.visibility = View.VISIBLE
-        }
-        txtStatus.text = if (cached != null && !forceNetwork) {
-            if (en) "Updating…" else "Päivitetään…"
-        } else {
-            if (en) "Loading…" else "Ladataan…"
-        }
-
         loadJob = scope.launch {
+            var cached: StampingPageState? = existing
+            var cachedAtMs: Long = lastNetworkFetchMs
+
+            if (cached == null || cachedNextShiftText == null) {
+                val diskResult = withContext(Dispatchers.IO) {
+                    val diskState = if (cached == null) NumeronApiClient.loadCachedStampingState(context) else cached
+                    val diskMs = if (cached == null) NumeronApiClient.getStampingCacheSavedAtMs(context) else cachedAtMs
+                    val nextShift = findNextUpcomingShiftText()
+                    Triple(diskState, diskMs, nextShift)
+                }
+                cached = diskResult.first
+                cachedAtMs = diskResult.second
+                cachedNextShiftText = diskResult.third
+                if (cached != null) {
+                    if (currentState == null) {
+                        currentState = cached
+                        selectedReasonCodeId = cached.defaultReasonCode
+                    }
+                    renderStateIfChanged(currentState ?: cached)
+                }
+            } else {
+                renderStateIfChanged(cached)
+            }
+
+            val blocked = withContext(Dispatchers.IO) {
+                BackgroundAuthHelper.isCredentialBlocked(context)
+            }
+            if (blocked) {
+                swipeRefresh.isRefreshing = false
+                progressBar.visibility = View.GONE
+                txtStatus.text = if (en) "Check login" else "Tarkista tunnukset"
+                Toast.makeText(
+                    context,
+                    if (en) "Login failed – please check username and password in Settings"
+                    else "Kirjautuminen epäonnistui – tarkista käyttäjätunnus ja salasana asetuksista",
+                    Toast.LENGTH_LONG
+                ).show()
+                return@launch
+            }
+
+            if (!fromSwipe) {
+                progressBar.visibility = View.VISIBLE
+            }
+            txtStatus.text = if (cached != null && !forceNetwork) {
+                if (en) "Updating…" else "Päivitetään…"
+            } else {
+                if (en) "Loading…" else "Ladataan…"
+            }
+
             val fresh = NumeronApiClient.fetchStampingState(context, forceRefreshSession = false)
             swipeRefresh.isRefreshing = false
             progressBar.visibility = View.GONE
             if (fresh != null) {
+                val fetchedAt = System.currentTimeMillis()
+                lastNetworkFetchMs = fetchedAt
                 currentState = fresh
                 selectedReasonCodeId = fresh.defaultReasonCode
-                txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, System.currentTimeMillis(), isCache = false)
-                renderState(fresh)
+                if (fresh.shiftTimes.isEmpty() && cachedNextShiftText == null) {
+                    cachedNextShiftText = withContext(Dispatchers.IO) { findNextUpcomingShiftText() }
+                }
+                txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, fetchedAt, isCache = false)
+                renderStateIfChanged(fresh)
             } else {
                 txtStatus.text = if (cached != null) {
                     UiStyleHelper.formatUpdatedLabel(context, cachedAtMs, isCache = true)
@@ -641,9 +729,9 @@ class NativeStampView(
             txtShiftDetails.visibility = View.GONE
         }
 
-        // Vapaapäivänä näytetään seuraava tuleva vuoro kalenterivälimuistista
+        // Vapaapäivänä näytetään seuraava tuleva vuoro kalenterivälimuistista (luettu IO-säikeessä)
         if (state.shiftTimes.isEmpty()) {
-            val nextInfo = findNextUpcomingShiftText()
+            val nextInfo = cachedNextShiftText
             if (nextInfo != null) {
                 txtNextShift.text = nextInfo
                 txtNextShift.visibility = View.VISIBLE
@@ -939,6 +1027,7 @@ class NativeStampView(
             when (result) {
                 is StampSubmitResult.Success -> {
                     lastSuccessfulStampMs = System.currentTimeMillis()
+                    lastNetworkFetchMs = lastSuccessfulStampMs
                     editComment.setText("")
                     isOptionsExpanded = false
                     optionsContainer.visibility = View.GONE
@@ -951,7 +1040,7 @@ class NativeStampView(
                         currentState = it
                         selectedReasonCodeId = it.defaultReasonCode
                         txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, lastSuccessfulStampMs, isCache = false)
-                        renderState(it)
+                        renderStateIfChanged(it, forceRender = true)
                     }
                     Toast.makeText(
                         context,
@@ -998,10 +1087,14 @@ class NativeStampView(
                     hasMoreStamps = hasMore,
                     currentTake = newRows.size.coerceAtLeast(nextTake)
                 )
+                val updatedAt = System.currentTimeMillis()
+                lastNetworkFetchMs = updatedAt
                 currentState = updated
-                NumeronApiClient.saveCachedStampingState(context, updated)
-                txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, System.currentTimeMillis(), isCache = false)
-                renderState(updated)
+                withContext(Dispatchers.IO) {
+                    NumeronApiClient.saveCachedStampingState(context, updated)
+                }
+                txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, updatedAt, isCache = false)
+                renderStateIfChanged(updated, forceRender = true)
             } else {
                 txtStatus.text = ""
                 Toast.makeText(

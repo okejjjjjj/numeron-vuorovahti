@@ -1,7 +1,6 @@
 package fi.numeron.vuorovahti
 
 import android.content.Context
-import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -91,12 +90,7 @@ object BackgroundAuthHelper {
                 .remove("failed_auth_fingerprint")
                 .remove("failed_auth_message")
                 .apply()
-            try {
-                val cm = CookieManager.getInstance()
-                cm.removeAllCookies(null)
-                cm.flush()
-            } catch (_: Exception) {
-            }
+            SessionCookieStore.clear(context)
         }
     }
 
@@ -122,11 +116,7 @@ object BackgroundAuthHelper {
                 return@withLock false
             }
             val nowMs = System.currentTimeMillis()
-            val cachedCookies = try {
-                CookieManager.getInstance().getCookie(baseUrl)
-            } catch (_: Exception) {
-                null
-            }
+            val cachedCookies = SessionCookieStore.getCookieHeader(context, baseUrl)
             if (!forceRefresh &&
                 !cachedCookies.isNullOrBlank() &&
                 baseUrl == lastAuthBaseUrl &&
@@ -215,14 +205,8 @@ object BackgroundAuthHelper {
                 return@withContext false
             }
 
-            // 3. Tallenna evästeet Androidin jaettuun CookieManageriin
-            val cm = CookieManager.getInstance()
-            cm.setAcceptCookie(true)
-            val secureAttr = if (baseUrl.startsWith("https://", ignoreCase = true)) "; Secure" else ""
-            cookieStore.forEach { (name, value) ->
-                cm.setCookie(baseUrl, "$name=$value; Path=/$secureAttr")
-            }
-            cm.flush()
+            // 3. Tallenna evästeet natiiviin SessionCookieStoreen (ilman Chromiumia)
+            SessionCookieStore.replaceAll(context, baseUrl, cookieStore)
             lastAuthBaseUrl = baseUrl
             lastAuthSuccessMs = System.currentTimeMillis()
 
@@ -396,33 +380,12 @@ object BackgroundAuthHelper {
         if (baseUrl.isBlank()) return@withContext null
 
         fun readCookiesFromManager(): Map<String, String> {
-            val map = mutableMapOf<String, String>()
-            val raw = CookieManager.getInstance().getCookie(baseUrl).orEmpty()
-            raw.split(";").forEach { part ->
-                val trimmed = part.trim()
-                val eq = trimmed.indexOf('=')
-                if (eq > 0) {
-                    map[trimmed.substring(0, eq).trim()] = trimmed.substring(eq + 1).trim()
-                }
-            }
-            return map
+            return SessionCookieStore.getCookieMap(context, baseUrl)
         }
 
         fun persistUpdatedCookies(updated: Map<String, String>, original: Map<String, String>) = synchronized(cookieSyncLock) {
             if (updated == original) return
-            val cm = CookieManager.getInstance()
-            val secureAttr = if (baseUrl.startsWith("https://", ignoreCase = true)) "; Secure" else ""
-            updated.forEach { (k, v) ->
-                if (original[k] != v) {
-                    cm.setCookie(baseUrl, "$k=$v; Path=/$secureAttr")
-                }
-            }
-            original.keys.forEach { k ->
-                if (k !in updated) {
-                    cm.setCookie(baseUrl, "$k=; Max-Age=0; Path=/$secureAttr")
-                }
-            }
-            cm.flush()
+            SessionCookieStore.replaceAll(context, baseUrl, updated)
         }
 
         suspend fun fetchAllParallel(baseCookies: Map<String, String>): List<HttpResult?> = coroutineScope {

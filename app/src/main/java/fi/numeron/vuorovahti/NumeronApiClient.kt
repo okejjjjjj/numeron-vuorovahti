@@ -1,7 +1,6 @@
 package fi.numeron.vuorovahti
 
 import android.content.Context
-import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -114,11 +113,7 @@ object NumeronApiClient {
         isAutoStamping: Boolean = false
     ): Boolean {
         if (baseUrl.isBlank()) return false
-        val existingCookies = try {
-            CookieManager.getInstance().getCookie(baseUrl)
-        } catch (_: Exception) {
-            null
-        }
+        val existingCookies = SessionCookieStore.getCookieHeader(context, baseUrl)
         if (existingCookies.isNullOrBlank()) return false
 
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
@@ -149,6 +144,7 @@ object NumeronApiClient {
     }
 
     private fun executeAjaxPost(
+        context: Context,
         baseUrl: String,
         urlString: String,
         body: String,
@@ -157,7 +153,7 @@ object NumeronApiClient {
     ): SimpleHttpResponse? {
         var conn: HttpURLConnection? = null
         return try {
-            val cookies = CookieManager.getInstance().getCookie(baseUrl)
+            val cookies = SessionCookieStore.getCookieHeader(context, baseUrl)
             if (cookies.isNullOrBlank()) return null
 
             val origin = try {
@@ -193,19 +189,12 @@ object NumeronApiClient {
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
 
-            // Päivitetään mahdolliset Set-Cookie-otsikot CookieManageriin
-            val cm = CookieManager.getInstance()
-            val secureAttr = if (baseUrl.startsWith("https://", ignoreCase = true)) "; Secure" else ""
-            conn.headerFields
+            // Päivitetään mahdolliset Set-Cookie-otsikot natiiviin SessionCookieStoreen
+            val setCookies = conn.headerFields
                 .filterKeys { it != null && it.equals("Set-Cookie", ignoreCase = true) }
                 .values
                 .flatten()
-                .forEach { rawCookie ->
-                    val pair = rawCookie.substringBefore(";").trim()
-                    if (pair.contains("=")) {
-                        cm.setCookie(baseUrl, "$pair; Path=/$secureAttr")
-                    }
-                }
+            SessionCookieStore.mergeFromSetCookieHeaders(context, baseUrl, setCookies)
 
             SimpleHttpResponse(statusCode = code, body = text, location = location)
         } catch (_: Exception) {
@@ -216,13 +205,14 @@ object NumeronApiClient {
     }
 
     private fun executeAjaxGet(
+        context: Context,
         baseUrl: String,
         urlString: String,
         refererPath: String = "/WorktimeStamping"
     ): SimpleHttpResponse? {
         var conn: HttpURLConnection? = null
         return try {
-            val cookies = CookieManager.getInstance().getCookie(baseUrl)
+            val cookies = SessionCookieStore.getCookieHeader(context, baseUrl)
             if (cookies.isNullOrBlank()) return null
 
             conn = (URL(urlString).openConnection() as HttpURLConnection).apply {
@@ -293,10 +283,10 @@ object NumeronApiClient {
         if (baseUrl.isBlank()) return@withContext null
         val target = resolveAbsoluteUrl(baseUrl, getMoreStampsUrlPath) + "?take=$take"
 
-        var resp = executeAjaxGet(baseUrl, target)
+        var resp = executeAjaxGet(context, baseUrl, target)
         if (isSessionExpiredResponse(resp)) {
             if (BackgroundAuthHelper.ensureAuthenticatedSession(context, forceRefresh = true)) {
-                resp = executeAjaxGet(baseUrl, target)
+                resp = executeAjaxGet(context, baseUrl, target)
             }
         }
         if (resp == null || resp.statusCode != 200 || resp.body.isBlank()) return@withContext null
@@ -380,6 +370,7 @@ object NumeronApiClient {
                 )
             )
             val valResp = executeAjaxPost(
+                context = context,
                 baseUrl = baseUrl,
                 urlString = validateUrl,
                 body = validateBody,
@@ -425,6 +416,7 @@ object NumeronApiClient {
                 )
             )
             val saveResp = executeAjaxPost(
+                context = context,
                 baseUrl = baseUrl,
                 urlString = saveUrl,
                 body = saveBody,
@@ -467,10 +459,6 @@ object NumeronApiClient {
                     fromCache = false
                 )
                 saveCachedStampingState(context, merged)
-                try {
-                    CookieManager.getInstance().flush()
-                } catch (_: Exception) {
-                }
                 context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                     .edit()
                     .putLong("last_valid_session_ms", System.currentTimeMillis())
@@ -479,7 +467,7 @@ object NumeronApiClient {
             }
 
             // Haetaan mahdollinen palvelimen virheilmoitus (GetAlertMessages)
-            val alertMsg = fetchAlertMessageText(baseUrl)
+            val alertMsg = fetchAlertMessageText(context, baseUrl)
             if (!alertMsg.isNullOrBlank()) {
                 return StampSubmitResult.ValidationRejected(alertMsg) to false
             }
@@ -538,8 +526,8 @@ object NumeronApiClient {
         )
     }
 
-    private fun fetchAlertMessageText(baseUrl: String): String? {
-        val resp = executeAjaxGet(baseUrl, resolveAbsoluteUrl(baseUrl, "/WorktimeStamping/GetAlertMessages"))
+    private fun fetchAlertMessageText(context: Context, baseUrl: String): String? {
+        val resp = executeAjaxGet(context, baseUrl, resolveAbsoluteUrl(baseUrl, "/WorktimeStamping/GetAlertMessages"))
         if (resp == null || resp.statusCode != 200 || resp.body.isBlank()) return null
         val doc = Jsoup.parseBodyFragment(resp.body)
         val texts = doc.select(".alert").map { el ->
@@ -795,11 +783,11 @@ object NumeronApiClient {
                 BackgroundAuthHelper.ensureAuthenticatedSession(context)
             }
 
-            var json = executeRequestsPost(baseUrl, filter)
+            var json = executeRequestsPost(context, baseUrl, filter)
             if (json == null) {
                 val reauthed = BackgroundAuthHelper.ensureAuthenticatedSession(context, forceRefresh = true)
                 if (reauthed) {
-                    json = executeRequestsPost(baseUrl, filter)
+                    json = executeRequestsPost(context, baseUrl, filter)
                 }
             }
 
@@ -825,12 +813,13 @@ object NumeronApiClient {
             }
         }
 
-    private fun executeRequestsPost(baseUrl: String, filter: String): String? {
+    private fun executeRequestsPost(context: Context, baseUrl: String, filter: String): String? {
         val safeFilter = when (filter) {
             "old", "removed" -> filter
             else -> "active"
         }
         val resp = executeAjaxPost(
+            context = context,
             baseUrl = baseUrl,
             urlString = "$baseUrl/PersonRequests/Read",
             body = "sort=&page=1&pageSize=100&group=&filter=&selectedFilter=$safeFilter",
