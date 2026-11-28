@@ -93,7 +93,6 @@ class MainActivity : AppCompatActivity() {
     private var lastThemedAtMs: Long = 0L
 
     private var pendingAction: Action = Action.NONE
-    private var inFlightStampAction: Action = Action.NONE
     private var lastSessionRecoveryMs: Long = 0L
     private var currentTab: Tab = Tab.STAMP
     private var dashboardRedirectCount: Int = 0
@@ -594,19 +593,16 @@ class MainActivity : AppCompatActivity() {
     private fun setupBottomBar() {
         btnNavStamp.setOnClickListener {
             pendingAction = Action.NONE
-            inFlightStampAction = Action.NONE
             navigateToTab(Tab.STAMP)
         }
 
         btnNavRequests.setOnClickListener {
             pendingAction = Action.NONE
-            inFlightStampAction = Action.NONE
             navigateToTab(Tab.REQUESTS)
         }
 
         btnNavShifts.setOnClickListener {
             pendingAction = Action.NONE
-            inFlightStampAction = Action.NONE
             navigateToTab(Tab.SHIFTS)
         }
 
@@ -861,16 +857,6 @@ class MainActivity : AppCompatActivity() {
         wv.webChromeClient = android.webkit.WebChromeClient()
 
         wv.addJavascriptInterface(
-            DemoModeHelper.DemoJsBridge(
-                context = this,
-                onReloadNeeded = { runOnUiThread { navigateToTab(currentTab) } },
-                onSyncRequested = { runOnUiThread { startCalendarSync() } },
-                onManageChangesRequested = { runOnUiThread { CalendarChangeTracker.showManageChangesDialog(this) } }
-            ),
-            "DemoBridge"
-        )
-
-        wv.addJavascriptInterface(
             object {
                 @android.webkit.JavascriptInterface
                 fun onSessionExpired() {
@@ -904,8 +890,7 @@ class MainActivity : AppCompatActivity() {
                         null
                     }
                     val reqHost = uri.host
-                    val isInternal = reqHost.equals("demo.local", ignoreCase = true) ||
-                        (!reqHost.isNullOrBlank() && (reqHost.endsWith(".numeronwfm.com", ignoreCase = true) || reqHost.endsWith(".numeronwfm.fi", ignoreCase = true))) ||
+                    val isInternal = (!reqHost.isNullOrBlank() && (reqHost.endsWith(".numeronwfm.com", ignoreCase = true) || reqHost.endsWith(".numeronwfm.fi", ignoreCase = true))) ||
                         (!allowedHost.isNullOrBlank() && reqHost.equals(allowedHost, ignoreCase = true))
                     if (isInternal) {
                         if (request?.isForMainFrame == true &&
@@ -975,7 +960,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageCommitVisible(view: WebView?, url: String?) {
                 super.onPageCommitVisible(view, url)
-                if (url != null && !url.startsWith("https://demo.local/")) {
+                if (url != null) {
                     injectDarkTheme(view, forceDomInit = false)
                 }
             }
@@ -1019,12 +1004,6 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 if (url == null) return
-
-                if (url.startsWith("https://demo.local/")) {
-                    handleDemoAutoStamp()
-                    endSnapshotTransition()
-                    return
-                }
 
                 if (isWebOverlayOpen &&
                     pendingAction != Action.SYNC_CALENDAR &&
@@ -1081,7 +1060,7 @@ class MainActivity : AppCompatActivity() {
                             view?.postDelayed({
                                 if (action == "FORGOTTEN") {
                                     view.evaluateJavascript(
-                                        "(function(){ try { if (typeof window.reloadForgottenStampPane === 'function') window.reloadForgottenStampPane(); if (typeof window.openForgottenStampPane === 'function') window.openForgottenStampPane(); var b = document.getElementById('forgottenStampButton'); if (b) b.click(); } catch(e){} })();",
+                                        "(function(){ try { if (typeof window.reloadForgottenStampPane === 'function') window.reloadForgottenStampPane(); if (typeof window.openForgottenStampPane === 'function') window.openForgottenStampPane(); if (typeof window._vvOpenForgotPanel === 'function') window._vvOpenForgotPanel(); var b = document.getElementById('forgottenStampButton'); if (b) b.click(); } catch(e){} })();",
                                         null
                                     )
                                 } else if (action.startsWith("EDIT:")) {
@@ -1094,8 +1073,6 @@ class MainActivity : AppCompatActivity() {
                                     }
                                 }
                             }, 250L)
-                        } else {
-                            handleStampingPage()
                         }
                     }
                     url.contains("/PersonRequests", ignoreCase = true) -> {
@@ -1127,25 +1104,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleDemoAutoStamp() {
-        if (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT) {
-            val wantIn = (pendingAction == Action.STAMP_IN)
-            pendingAction = Action.NONE
-            val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            val currentlyIn = prefs.getBoolean("demo_stamped_in", false)
-            if (wantIn != currentlyIn) {
-                webView?.evaluateJavascript("DemoBridge.toggleStamp()", null)
-                webViewSlot.postDelayed({ finishAndRemoveTask() }, 1200L)
-            } else {
-                val en = DemoModeHelper.isEnglish(this)
-                val stateStr = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
-                val msg = if (en) "Demo mode: Already clocked $stateStr" else "Demotila: Olet jo leimannut tilaan $stateStr"
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
-                webViewSlot.postDelayed({ finishAndRemoveTask() }, 1200L)
-            }
-        }
-    }
-
     private fun injectDarkTheme(view: WebView?, forceDomInit: Boolean = false) {
         val currentUrl = view?.url
         val nowMs = System.currentTimeMillis()
@@ -1160,17 +1118,11 @@ class MainActivity : AppCompatActivity() {
         val eveningRgb = themePrefs.getInt("color_evening_rgb", SettingsDialogHelper.DEFAULT_EVENING_RGB)
         val nightRgb = themePrefs.getInt("color_night_rgb", SettingsDialogHelper.DEFAULT_NIGHT_RGB)
         fun rgbToHex(rgb: Int): String = String.format("#%06X", 0xFFFFFF and rgb)
-        fun contrastFg(rgb: Int): String {
-            val lum = 0.299 * Color.red(rgb) + 0.587 * Color.green(rgb) + 0.114 * Color.blue(rgb)
-            return if (lum > 150.0) "#0F1722" else "#FFFFFF"
-        }
         val morningBg = rgbToHex(morningRgb)
-        val morningFg = contrastFg(morningRgb)
         val eveningBg = rgbToHex(eveningRgb)
-        val eveningFg = contrastFg(eveningRgb)
         val nightBg = rgbToHex(nightRgb)
-        val nightFg = contrastFg(nightRgb)
         val colorCacheKey = "$morningBg|$eveningBg|$nightBg"
+
         val safeCss = cachedSafeDarkCss ?: """
             /* === 1. PERUSRUNKO JA PIILOTETTAVAT ELEMENTIT === */
             html, body {
@@ -1196,19 +1148,15 @@ class MainActivity : AppCompatActivity() {
                 margin-top: 4px !important;
                 margin-bottom: 12px !important;
             }
-            .container h1:not(#monthText), .container-fluid h1:not(#monthText),
-            .container .h1:not(#monthText), .container-fluid .h1:not(#monthText) {
+            .container h1, .container-fluid h1, .container .h1, .container-fluid .h1 {
                 display: none !important;
             }
-            label, span, p, div {
-                color: inherit;
-            }
-            a {
-                color: #38BDF8 !important;
-            }
+            label, span, p, div { color: inherit; }
+            a { color: #38BDF8 !important; }
+            hr { border-top: 1px solid #2A394A !important; }
 
-            /* === 2. KORTIT, PANEELIT JA SYÖTTÖKENTÄT === */
-            .panel, .panel-default, .whitebox, .card, .stamping-box, .box, .panel-footer, .form-actions {
+            /* === 2. KORTIT, SYÖTTÖKENTÄT, PAINIKKEET JA MODAALIT === */
+            .panel, .panel-default, .whitebox, .card, .box, .panel-footer, .form-actions {
                 background-color: #182332 !important;
                 border: 1px solid #2A394A !important;
                 border-radius: 12px !important;
@@ -1216,9 +1164,7 @@ class MainActivity : AppCompatActivity() {
                 box-shadow: none !important;
                 margin-bottom: 14px !important;
             }
-            .panel-body {
-                padding: 14px !important;
-            }
+            .panel-body { padding: 14px !important; }
             .panel-heading, .modal-header, .modal-footer {
                 background-color: #1E293B !important;
                 border-color: #2A394A !important;
@@ -1241,11 +1187,7 @@ class MainActivity : AppCompatActivity() {
                 width: 18px !important;
                 height: 18px !important;
             }
-            input::placeholder, textarea::placeholder {
-                color: #64748B !important;
-            }
-
-            /* === 3. PAINIKKEET JA PUDOTUSVALIKOT === */
+            input::placeholder, textarea::placeholder { color: #64748B !important; }
             .btn, .btn-default {
                 background-color: #233040 !important;
                 color: #F1F5F9 !important;
@@ -1279,168 +1221,48 @@ class MainActivity : AppCompatActivity() {
                 background-color: #2A394A !important;
                 color: #FFFFFF !important;
             }
-            .dropdown-header {
-                color: #94A3B8 !important;
+            .dropdown-header { color: #94A3B8 !important; }
+            .alert-danger { background-color: #3F1D24 !important; border-color: #DC2626 !important; color: #FEE2E2 !important; }
+            .alert-warning { background-color: #3B2810 !important; border-color: #F59E0B !important; color: #FEF3C7 !important; }
+            .alert-success { background-color: #0F2E26 !important; border-color: #10B981 !important; color: #D1FAE5 !important; }
+            .alert-info { background-color: #1E3A5F !important; border-color: #38BDF8 !important; color: #E0F2FE !important; }
+            .modal-header .close, .alert .close, button.close {
+                color: #F1F5F9 !important;
+                text-shadow: none !important;
+                opacity: 0.85 !important;
             }
 
-            /* === 4. KIRJAUTUMISSIVU === */
-            .content {
-                padding: 16px !important;
-                float: none !important;
-                margin: 0 auto !important;
-            }
+            /* === 3. KIRJAUTUMISSIVU (/Login/Login) === */
+            .content { padding: 16px !important; float: none !important; margin: 0 auto !important; }
             .blurbox h1 {
+                display: block !important;
                 text-align: center !important;
                 font-size: 28px !important;
                 font-weight: 700 !important;
                 margin: 28px 0 20px 0 !important;
                 color: #F1F5F9 !important;
             }
-            .whitebox {
-                padding: 20px !important;
-                margin: 0 auto !important;
-            }
-            .whitebox img, .whitebox hr {
-                display: none !important;
-            }
-            #LoginForm .form-group {
-                margin-bottom: 14px !important;
-            }
-            #LoginForm .pull-left, #LoginForm .pull-right {
-                margin-bottom: 12px !important;
-                font-size: 13px !important;
-            }
-            #LoginForm input[type="submit"] {
-                margin-top: 8px !important;
-                padding: 12px !important;
-                font-size: 16px !important;
-            }
+            .whitebox { padding: 20px !important; margin: 0 auto !important; }
+            .whitebox img, .whitebox hr { display: none !important; }
+            #LoginForm .form-group { margin-bottom: 14px !important; }
+            #LoginForm .pull-left, #LoginForm .pull-right { margin-bottom: 12px !important; font-size: 13px !important; }
+            #LoginForm input[type="submit"] { margin-top: 8px !important; padding: 12px !important; font-size: 16px !important; }
 
-            /* === 5. TYÖAIKALEIMAUS === */
-            .punching-balance-overview-container {
-                display: none !important;
-            }
-            .punching-shift-caption, .previous-stamps-caption, .punching-caption {
-                display: block !important;
-                font-size: 12px !important;
-                text-transform: uppercase !important;
-                letter-spacing: 0.05em !important;
-                color: #94A3B8 !important;
-                margin-bottom: 6px !important;
-                font-weight: 600 !important;
-            }
-            .punching-shift-times {
-                display: block !important;
-                font-size: 24px !important;
-                font-weight: 700 !important;
-                color: #FFFFFF !important;
-                line-height: 1.25 !important;
-                margin-bottom: 6px !important;
-            }
-            .punching-shift-name {
-                display: block !important;
-                font-size: 16px !important;
-                font-weight: 600 !important;
-                color: #38BDF8 !important;
-                line-height: 1.3 !important;
-            }
-            .punching-shift-workplace {
-                display: block !important;
-                font-size: 16px !important;
-                font-weight: 600 !important;
-                color: #38BDF8 !important;
-                line-height: 1.3 !important;
-                margin-bottom: 2px !important;
-            }
-            .punching-shift-role {
-                display: block !important;
-                font-size: 14px !important;
-                font-weight: 500 !important;
-                color: #CBD5E1 !important;
-                line-height: 1.3 !important;
-            }
-            .punching-reason-code-label, .punching-stamp-comment-label, .forgotten-stamp-labels {
+            /* === 4. PUUTTUVA / MUOKATTAVA LEIMAUS (#forgotStampPanel & KENDO PICKER) === */
+            .forgotten-stamp-labels {
                 color: #CBD5E1 !important;
                 font-size: 13px !important;
                 margin-top: 10px !important;
                 margin-bottom: 4px !important;
             }
-            .punch-reason-code-selector .btn, #dropdownMenu1, #dropdownMenu2, #dropdownMenuStampDirection {
+            #dropdownMenu2, #dropdownMenuStampDirection {
                 width: 100% !important;
                 display: flex !important;
                 justify-content: space-between !important;
                 align-items: center !important;
                 background-color: #111923 !important;
             }
-            #punchButton {
-                background-color: #2E7D32 !important;
-                border-color: #2E7D32 !important;
-                color: #FFFFFF !important;
-                border-radius: 10px !important;
-                padding: 12px !important;
-                margin-top: 16px !important;
-                font-weight: 700 !important;
-            }
-            #punchButton.vv-punch-in {
-                background-color: #15803D !important;
-                border-color: #22C55E !important;
-                color: #FFFFFF !important;
-            }
-            #punchButton.vv-punch-out {
-                background-color: #B91C1C !important;
-                border-color: #F87171 !important;
-                color: #FFFFFF !important;
-            }
-            .vv-stamp-badge {
-                display: inline-block !important;
-                padding: 2px 10px !important;
-                border-radius: 999px !important;
-                font-size: 12px !important;
-                font-weight: 700 !important;
-                letter-spacing: 0.02em !important;
-            }
-            .vv-stamp-badge.vv-stamp-in {
-                background-color: rgba(22, 163, 74, 0.22) !important;
-                border: 1px solid rgba(74, 222, 128, 0.45) !important;
-                color: #4ADE80 !important;
-            }
-            .vv-stamp-badge.vv-stamp-out {
-                background-color: rgba(220, 38, 38, 0.22) !important;
-                border: 1px solid rgba(248, 113, 113, 0.45) !important;
-                color: #F87171 !important;
-            }
-            .nav-tabs-wts {
-                list-style: none !important;
-                padding: 0 !important;
-                margin: 0 0 10px 0 !important;
-                border-bottom: 1px solid #2A394A !important;
-                display: flex !important;
-            }
-            .nav-tabs-wts > li > a {
-                display: inline-block !important;
-                padding: 8px 14px !important;
-                color: #F1F5F9 !important;
-                border-bottom: 2px solid #2196F3 !important;
-                text-decoration: none !important;
-                font-weight: 600 !important;
-            }
-            #table-latest-stamps, .table {
-                background-color: transparent !important;
-                color: #F1F5F9 !important;
-                margin-bottom: 8px !important;
-            }
-            #table-latest-stamps td, .table td, .table th {
-                background-color: transparent !important;
-                border-top: 1px solid #2A394A !important;
-                color: #F1F5F9 !important;
-                padding: 10px 6px !important;
-            }
-            #table-latest-stamps tr:hover td {
-                background-color: #233040 !important;
-            }
-            #forgotStampPanel:not(.force-open) {
-                display: none !important;
-            }
+            #forgotStampPanel:not(.force-open) { display: none !important; }
             #forgotStampPanel.force-open {
                 display: block !important;
                 position: fixed !important;
@@ -1461,118 +1283,23 @@ class MainActivity : AppCompatActivity() {
             .drw-fog-of-war.showing {
                 display: block !important;
                 position: fixed !important;
-                top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
-                bottom: 0 !important;
+                inset: 0 !important;
                 background-color: rgba(0, 0, 0, 0.65) !important;
                 z-index: 1040 !important;
             }
-            #waitPunch, .fog-of-war-punch, #wait, .container .fog-of-war {
-                display: none !important;
-            }
-            
-            /* === 6. TOIVEET & KENDO UI === */
-            label[for="filterOptions"] {
-                color: #F1F5F9 !important;
-                margin-right: 6px !important;
-            }
-            .fixed-menu-bar {
-                display: flex !important;
-                flex-wrap: wrap !important;
-                gap: 8px !important;
-                align-items: center !important;
-            }
-            .k-grid, .k-grid-header, .k-grid-content, .k-pager-wrap {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                border-color: #2A394A !important;
-            }
-            .k-grid {
-                overflow-x: auto !important;
-            }
-            .k-grid-content {
-                overflow-x: auto !important;
-                -webkit-overflow-scrolling: touch !important;
-            }
-            .k-grid-header th.k-header,
-            .k-grid-header th.k-header .k-link,
-            .k-grid-header th.k-header .k-column-title,
-            .k-grid-header th.k-header .k-grid-header-menu,
-            .k-grid-header th.k-header .k-icon {
-                background-color: #233040 !important;
-                color: #F1F5F9 !important;
-                border-color: #2A394A !important;
-            }
-            .k-grid-header th.k-header {
-                padding: 10px 8px !important;
-            }
-            .k-checkbox,
-            .k-grid input[type="checkbox"] {
-                background-color: #111923 !important;
-                border: 1px solid #38BDF8 !important;
-                border-radius: 4px !important;
-                width: 18px !important;
-                height: 18px !important;
-                appearance: auto !important;
-                -webkit-appearance: checkbox !important;
-            }
-            .k-checkbox:checked {
-                background-color: #1982C4 !important;
-                border-color: #38BDF8 !important;
-            }
-            .k-grid tr {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-            }
-            .k-grid tr.k-alt {
-                background-color: #131C28 !important;
-            }
-            .k-grid td {
-                border-color: #2A394A !important;
-                color: #F1F5F9 !important;
-                padding: 10px 8px !important;
-            }
-            .k-grid tr:hover td {
-                background-color: #233040 !important;
-                color: #FFFFFF !important;
-            }
-            .k-grid tr.k-state-selected td {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
+            #waitPunch, .fog-of-war-punch, #wait, .container .fog-of-war { display: none !important; }
             .k-widget, .k-dropdown-wrap, .k-picker-wrap, .k-numeric-wrap, .k-select, .k-input,
-            .k-picker, .k-dropdownlist, .k-input-inner, .k-input-value-text,
-            .k-pager-wrap .k-link, .k-pager-info {
+            .k-picker, .k-dropdownlist, .k-input-inner, .k-input-value-text {
                 background-color: #111923 !important;
                 color: #F1F5F9 !important;
                 border-color: #37475A !important;
-            }
-            .k-pager-wrap .k-picker,
-            .k-pager-wrap .k-dropdownlist {
-                min-width: 68px !important;
-                height: 34px !important;
-                display: inline-flex !important;
-                align-items: center !important;
-            }
-            .k-pager-wrap .k-input-inner {
-                padding: 4px 8px !important;
-                display: flex !important;
-                align-items: center !important;
-            }
-            .k-pager-wrap .k-input-value-text {
-                color: #F1F5F9 !important;
-                font-size: 13px !important;
-                visibility: visible !important;
-                opacity: 1 !important;
             }
             .k-input-button {
                 background-color: #233040 !important;
                 color: #F1F5F9 !important;
                 border-left: 1px solid #37475A !important;
             }
-            .k-list-container, .k-list, .k-dropdown, .k-dropdown-wrap, .k-picker-wrap,
-            select, .k-animation-container, .k-popup, .k-list-ul, .k-calendar, .k-time-list-wrapper {
+            .k-list-container, .k-list, .k-animation-container, .k-popup, .k-list-ul, .k-calendar, .k-time-list-wrapper {
                 background-color: #182332 !important;
                 color: #F1F5F9 !important;
                 border: 1px solid #2A394A !important;
@@ -1597,10 +1324,8 @@ class MainActivity : AppCompatActivity() {
                 color: #FFFFFF !important;
             }
 
-            /* === SELECT2 & TOIVEEN MUOKKAUS (/PersonRequests/Edit) === */
-            .select2-container {
-                width: 100% !important;
-            }
+            /* === 5. TOIVEEN LISÄYS JA MUOKKAUS (/PersonRequests/Edit) === */
+            .select2-container { width: 100% !important; }
             .select2-container--default .select2-selection--single {
                 background-color: #111923 !important;
                 border: 1px solid #37475A !important;
@@ -1615,16 +1340,9 @@ class MainActivity : AppCompatActivity() {
                 padding-left: 12px !important;
                 padding-right: 30px !important;
             }
-            .select2-container--default .select2-selection--single .select2-selection__placeholder {
-                color: #64748B !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__arrow {
-                height: 38px !important;
-                right: 8px !important;
-            }
-            .select2-container--default .select2-selection--single .select2-selection__arrow b {
-                border-color: #94A3B8 transparent transparent transparent !important;
-            }
+            .select2-container--default .select2-selection--single .select2-selection__placeholder { color: #64748B !important; }
+            .select2-container--default .select2-selection--single .select2-selection__arrow { height: 38px !important; right: 8px !important; }
+            .select2-container--default .select2-selection--single .select2-selection__arrow b { border-color: #94A3B8 transparent transparent transparent !important; }
             .select2-dropdown {
                 background-color: #182332 !important;
                 border: 1px solid #37475A !important;
@@ -1637,39 +1355,19 @@ class MainActivity : AppCompatActivity() {
                 border: 1px solid #37475A !important;
                 border-radius: 6px !important;
             }
-            .select2-results__option {
-                background-color: #182332 !important;
-                color: #F1F5F9 !important;
-                padding: 10px 12px !important;
-            }
+            .select2-results__option { background-color: #182332 !important; color: #F1F5F9 !important; padding: 10px 12px !important; }
             .select2-container--default .select2-results__option--highlighted[aria-selected],
-            .select2-container--default .select2-results__option--highlighted {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
-            .select2-container--default .select2-results__option[aria-selected="true"] {
-                background-color: #233040 !important;
-                color: #38BDF8 !important;
-            }
-            #FullDaySwitch,
-            #SeriesRequestSwitch {
+            .select2-container--default .select2-results__option--highlighted { background-color: #1982C4 !important; color: #FFFFFF !important; }
+            .select2-container--default .select2-results__option[aria-selected="true"] { background-color: #233040 !important; color: #38BDF8 !important; }
+            #FullDaySwitch, #SeriesRequestSwitch {
                 min-width: 54px !important;
                 height: 28px !important;
                 border-radius: 14px !important;
                 position: relative !important;
             }
-            #FullDaySwitch:not(.active),
-            #SeriesRequestSwitch:not(.active) {
-                background-color: #233040 !important;
-                border-color: #475569 !important;
-            }
-            #FullDaySwitch.active,
-            #SeriesRequestSwitch.active {
-                background-color: #1982C4 !important;
-                border-color: #38BDF8 !important;
-            }
-            #FullDaySwitch::after,
-            #SeriesRequestSwitch::after {
+            #FullDaySwitch:not(.active), #SeriesRequestSwitch:not(.active) { background-color: #233040 !important; border-color: #475569 !important; }
+            #FullDaySwitch.active, #SeriesRequestSwitch.active { background-color: #1982C4 !important; border-color: #38BDF8 !important; }
+            #FullDaySwitch::after, #SeriesRequestSwitch::after {
                 content: "" !important;
                 position: absolute !important;
                 top: 3px !important;
@@ -1680,419 +1378,50 @@ class MainActivity : AppCompatActivity() {
                 background-color: #F1F5F9 !important;
                 transition: left 0.15s ease !important;
             }
-            #FullDaySwitch.active::after,
-            #SeriesRequestSwitch.active::after {
-                left: 28px !important;
-            }
-            .bootstrap-datetimepicker-widget,
-            .bootstrap-datetimepicker-widget.dropdown-menu {
+            #FullDaySwitch.active::after, #SeriesRequestSwitch.active::after { left: 28px !important; }
+            .bootstrap-datetimepicker-widget, .bootstrap-datetimepicker-widget.dropdown-menu {
                 background-color: #182332 !important;
                 color: #F1F5F9 !important;
                 border: 1px solid #37475A !important;
             }
-            .bootstrap-datetimepicker-widget table td,
-            .bootstrap-datetimepicker-widget table th {
+            .bootstrap-datetimepicker-widget table td, .bootstrap-datetimepicker-widget table th {
                 color: #F1F5F9 !important;
                 background-color: transparent !important;
             }
             .bootstrap-datetimepicker-widget table td.day:hover,
             .bootstrap-datetimepicker-widget table td.hour:hover,
             .bootstrap-datetimepicker-widget table td.minute:hover,
-            .bootstrap-datetimepicker-widget table th:hover {
-                background-color: #2A394A !important;
-                color: #FFFFFF !important;
-            }
+            .bootstrap-datetimepicker-widget table th:hover { background-color: #2A394A !important; color: #FFFFFF !important; }
             .bootstrap-datetimepicker-widget table td.active,
-            .bootstrap-datetimepicker-widget table td.active:hover {
-                background-color: #1982C4 !important;
-                color: #FFFFFF !important;
-            }
+            .bootstrap-datetimepicker-widget table td.active:hover { background-color: #1982C4 !important; color: #FFFFFF !important; }
             .bootstrap-datetimepicker-widget table td.old,
-            .bootstrap-datetimepicker-widget table td.new {
-                color: #64748B !important;
-            }
-            .alert-danger {
-                background-color: #3F1D24 !important;
-                border-color: #DC2626 !important;
-                color: #FEE2E2 !important;
-            }
-            .alert-warning {
-                background-color: #3B2810 !important;
-                border-color: #F59E0B !important;
-                color: #FEF3C7 !important;
-            }
-            .alert-success {
-                background-color: #0F2E26 !important;
-                border-color: #10B981 !important;
-                color: #D1FAE5 !important;
-            }
-            .alert-info {
-                background-color: #1E3A5F !important;
-                border-color: #38BDF8 !important;
-                color: #E0F2FE !important;
-            }
-            .modal-header .close,
-            .alert .close,
-            button.close {
-                color: #F1F5F9 !important;
-                text-shadow: none !important;
-                opacity: 0.85 !important;
-            }
+            .bootstrap-datetimepicker-widget table td.new { color: #64748B !important; }
             .input-group-addon {
                 background-color: #233040 !important;
                 border: 1px solid #37475A !important;
                 color: #38BDF8 !important;
                 border-radius: 0 8px 8px 0 !important;
             }
-            .vismaicon-datepicker::before {
-                content: "📅" !important;
-                font-style: normal !important;
-            }
-            .vismaicon-time::before {
-                content: "🕒" !important;
-                font-style: normal !important;
-            }
-            hr {
-                border-top: 1px solid #2A394A !important;
-            }
-            .editPageContainer table {
-                width: 100% !important;
-            }
-            .editPageContainer td {
-                padding-right: 6px !important;
-            }
-            #InfoTextArea {
-                width: 100% !important;
-            }
-            .FooterPanel {
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 8px !important;
-            }
-            .FooterPanel .SubmitButton:not(.hidden) {
-                width: 100% !important;
-                margin: 0 !important;
-                padding: 12px !important;
-            }
+            .vismaicon-datepicker::before { content: "📅" !important; font-style: normal !important; }
+            .vismaicon-time::before { content: "🕒" !important; font-style: normal !important; }
+            .editPageContainer table { width: 100% !important; }
+            .editPageContainer td { padding-right: 6px !important; }
+            #InfoTextArea { width: 100% !important; }
+            .FooterPanel { display: flex !important; flex-direction: column !important; gap: 8px !important; }
+            .FooterPanel .SubmitButton:not(.hidden) { width: 100% !important; margin: 0 !important; padding: 12px !important; }
 
-            /* === 7. KALENTERI: YLÄPALKKI JA KUUKAUSINÄKYMÄ === */
-            .calendar-heading {
-                box-shadow: none !important;
-                display: flex !important;
-                flex-direction: column !important;
-                justify-content: center !important;
-                align-items: center !important;
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 12px !important;
-                padding: 10px 12px !important;
-                margin-bottom: 12px !important;
-            }
-            .monthSelector {
-                width: 100% !important;
-                display: flex !important;
-                flex-direction: column !important;
-                align-items: center !important;
-                justify-content: center !important;
-                gap: 8px !important;
-            }
-            .monthSelector .panel-body {
-                width: 100% !important;
-                padding: 2px !important;
-                margin: 0 !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                gap: 12px !important;
-            }
-            #pcTodayButton {
-                display: flex !important;
-                justify-content: center !important;
-                width: 100% !important;
-                margin: 0 !important;
-            }
-            #todayButt {
-                padding: 5px 16px !important;
-                font-size: 12.5px !important;
-                min-width: auto !important;
-                max-width: none !important;
-                border-radius: 8px !important;
-            }
-            #monthText {
-                color: #F1F5F9 !important;
-                font-size: 18px !important;
-                font-weight: 700 !important;
-                margin: 0 !important;
-                text-align: center !important;
-                line-height: 1.25 !important;
-            }
-            #monthText.vv-month-jumpable {
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                gap: 6px !important;
-                background-color: #111923 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 10px !important;
-                padding: 6px 14px !important;
-                cursor: pointer !important;
-                user-select: none !important;
-            }
-            #monthText.vv-month-jumpable:active {
-                background-color: #233040 !important;
-                border-color: #38BDF8 !important;
-            }
-            #monthText.vv-month-jumpable::after {
-                content: "▾" !important;
-                color: #38BDF8 !important;
-                font-size: 14px !important;
-                font-weight: 700 !important;
-            }
-            .prevButton, .nextButton {
-                display: inline-flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                width: 42px !important;
-                height: 38px !important;
-                background-color: #233040 !important;
-                border: 1px solid #37475A !important;
-                border-radius: 10px !important;
-                text-decoration: none !important;
-                flex-shrink: 0 !important;
-            }
-            .prevButton:active, .nextButton:active {
-                background-color: #2A394A !important;
-                border-color: #38BDF8 !important;
-            }
-            .prevButton::before {
-                content: "◀" !important;
-                color: #38BDF8 !important;
-                font-size: 18px !important;
-                line-height: 1 !important;
-                text-decoration: none !important;
-            }
-            .nextButton::before {
-                content: "▶" !important;
-                color: #38BDF8 !important;
-                font-size: 18px !important;
-                line-height: 1 !important;
-                text-decoration: none !important;
-            }
-            .month-table {
-                width: 100% !important;
-                table-layout: fixed !important;
-                border-collapse: collapse !important;
-                background-color: #182332 !important;
-            }
-            .month-week-days td {
-                background-color: #233040 !important;
-                color: #CBD5E1 !important;
-                font-weight: 600 !important;
-                font-size: 12px !important;
-                padding: 6px 2px !important;
-                border: 1px solid #2A394A !important;
-                text-align: center !important;
-            }
-            .month-week-days td:first-child {
-                width: 24px !important;
-                padding-left: 1px !important;
-                padding-right: 1px !important;
-                font-size: 10px !important;
-                white-space: nowrap !important;
-            }
-            .month-week-number {
-                width: 24px !important;
-                background-color: #131C28 !important;
-                color: #64748B !important;
-                font-size: 10px !important;
-                text-align: center !important;
-                vertical-align: top !important;
-                padding: 6px 1px 0 1px !important;
-                border: 1px solid #2A394A !important;
-            }
-            td.month-day {
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                vertical-align: top !important;
-                height: 68px !important;
-                padding: 2px !important;
-            }
-            td.month-day.past-day, td.month-day.day-different-month {
-                background-color: #121A24 !important;
-            }
-            td.month-day.todayTd {
-                background-color: #1E3A5F !important;
-                border: 1px solid #38BDF8 !important;
-            }
-            .month-day-header {
-                margin-bottom: 2px !important;
-            }
-            .dayNum {
-                color: #F1F5F9 !important;
-                font-size: 12px !important;
-                font-weight: 600 !important;
-                padding-left: 3px !important;
-            }
-            td.day-different-month .dayNum {
-                color: #64748B !important;
-            }
-            .month-item.work {
-                background-color: #0284C7 !important;
-                color: #FFFFFF !important;
-                border-radius: 4px !important;
-                padding: 2px 3px !important;
-                margin-bottom: 2px !important;
-                font-size: 11px !important;
-                line-height: 1.2 !important;
-            }
-            .month-item.work .itemTimes {
-                display: block !important;
-                color: #FFFFFF !important;
-                font-weight: 600 !important;
-            }
-            .month-item.work .itemName {
-                display: none !important;
-            }
-            td.month-day.has-spanning-absence {
-                overflow: visible !important;
-            }
-            td.month-day:not(.has-spanning-absence) {
-                overflow: hidden !important;
-            }
-            .month-item.absence, .month-item.dummy-item {
-                display: none !important;
-            }
-            .month-item.absence.vuorovahti-visible {
-                display: block !important;
-                position: relative !important;
-                z-index: 5 !important;
-                box-sizing: border-box !important;
-                border-radius: 5px !important;
-                padding: 3px 6px !important;
-                margin-bottom: 2px !important;
-                font-size: 11px !important;
-                font-weight: 600 !important;
-                line-height: 1.25 !important;
-                white-space: nowrap !important;
-                overflow: hidden !important;
-                text-overflow: ellipsis !important;
-                color: #FFFFFF !important;
-            }
-            .month-item.absence.vuorovahti-visible .itemName {
-                display: inline !important;
-                color: inherit !important;
-                white-space: nowrap !important;
-            }
-            .month-item.absence.vuorovahti-visible .itemTimes {
-                display: none !important;
-            }
-            .month-item.absence.vuorovahti-vacation {
-                background-color: #15803D !important;
-                border: 1px solid #22C55E !important;
-                color: #FFFFFF !important;
-            }
-            .month-item.absence.vuorovahti-sick {
-                background-color: #B91C1C !important;
-                border: 1px solid #F87171 !important;
-                color: #FFFFFF !important;
-            }
-            .month-item.absence.vuorovahti-other {
-                background-color: #334155 !important;
-                border: 1px solid #64748B !important;
-                color: #F1F5F9 !important;
-            }
-            .month-item.request {
-                display: flex !important;
-                align-items: center !important;
-                gap: 4px !important;
-                background-color: #2E1F47 !important;
-                border: 1px solid #8B5CF6 !important;
-                border-left: 3px solid #A78BFA !important;
-                border-radius: 5px !important;
-                padding: 2px 5px !important;
-                margin-bottom: 2px !important;
-                color: #EDE9FE !important;
-                font-size: 10.5px !important;
-                font-weight: 600 !important;
-                line-height: 1.2 !important;
-                white-space: nowrap !important;
-                overflow: hidden !important;
-                text-overflow: ellipsis !important;
-            }
-            .vv-request-badge {
-                display: inline-block !important;
-                flex-shrink: 0 !important;
-                padding: 1px 4px !important;
-                border-radius: 4px !important;
-                background-color: rgba(167, 139, 250, 0.22) !important;
-                color: #DDD6FE !important;
-                font-size: 9px !important;
-                font-weight: 700 !important;
-                letter-spacing: 0.02em !important;
-            }
-            .month-day-header {
-                display: flex !important;
-                align-items: center !important;
-                justify-content: space-between !important;
-            }
-            .month-day-header .hidden {
-                display: none !important;
-            }
-            .month-day-header .circle {
-                display: inline-block !important;
-                width: 6px !important;
-                height: 6px !important;
-                min-width: 6px !important;
-                border-radius: 50% !important;
-                background-color: #F59E0B !important;
-                box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35) !important;
-                margin-right: 4px !important;
-                flex-shrink: 0 !important;
-            }
-
-            /* === 8. KALENTERI: LUETTELONÄKYMÄ (/Calendar/List) === */
+            /* === 6. KALENTERIN PÄIVÄLUETTELO (/Calendar/List) === */
             .schedule-content #calendar-content {
                 height: calc(100vh - 115px) !important;
                 overflow-y: auto !important;
                 -webkit-overflow-scrolling: touch !important;
             }
-            .schedule-week-separator {
-                margin: 14px 0 8px 0 !important;
-                padding: 4px 2px !important;
-                border-bottom: 1px solid #2A394A !important;
-            }
-            .schedule-week-separator-text {
-                color: #38BDF8 !important;
-                font-size: 13px !important;
-                font-weight: 700 !important;
-                text-transform: uppercase !important;
-                letter-spacing: 0.05em !important;
-            }
-            .schedule-day-container {
-                background-color: #182332 !important;
-                border: 1px solid #2A394A !important;
-                border-radius: 12px !important;
-                padding: 12px !important;
-                margin-bottom: 10px !important;
-            }
-            .schedule-day-information {
-                display: flex !important;
-                align-items: center !important;
-                margin-bottom: 8px !important;
-                padding-bottom: 6px !important;
-                border-bottom: 1px solid #233040 !important;
-            }
-            .schedule-day {
-                color: #94A3B8 !important;
-                font-size: 12px !important;
-                font-weight: 700 !important;
-                letter-spacing: 0.04em !important;
-            }
-            .schedule-day-date {
-                color: #F1F5F9 !important;
-                font-size: 14px !important;
-                font-weight: 700 !important;
-            }
+            .schedule-week-separator { margin: 14px 0 8px 0 !important; padding: 4px 2px !important; border-bottom: 1px solid #2A394A !important; }
+            .schedule-week-separator-text { color: #38BDF8 !important; font-size: 13px !important; font-weight: 700 !important; text-transform: uppercase !important; letter-spacing: 0.05em !important; }
+            .schedule-day-container { background-color: #182332 !important; border: 1px solid #2A394A !important; border-radius: 12px !important; padding: 12px !important; margin-bottom: 10px !important; }
+            .schedule-day-information { display: flex !important; align-items: center !important; margin-bottom: 8px !important; padding-bottom: 6px !important; border-bottom: 1px solid #233040 !important; }
+            .schedule-day { color: #94A3B8 !important; font-size: 12px !important; font-weight: 700 !important; letter-spacing: 0.04em !important; }
+            .schedule-day-date { color: #F1F5F9 !important; font-size: 14px !important; font-weight: 700 !important; }
             .schedule-item-container {
                 display: flex !important;
                 align-items: stretch !important;
@@ -2103,76 +1432,21 @@ class MainActivity : AppCompatActivity() {
                 padding: 10px !important;
                 margin-bottom: 8px !important;
             }
-            .schedule-item-container.schedule-item-absence {
-                border-left-color: #F59E0B !important;
-            }
-            .schedule-item-container.schedule-item-request {
-                border-left-color: #8B5CF6 !important;
-            }
-            .schedule-item-container.schedule-item-opportunity {
-                border-left-color: #10B981 !important;
-            }
-            .schedule-item-color-bar, .schedule-item-icon-td, .clear-float {
-                display: none !important;
-            }
-            .schedule-item-content {
-                width: 100% !important;
-            }
-            .schedule-item-body {
-                display: flex !important;
-                flex-direction: column !important;
-                gap: 4px !important;
-            }
-            .schedule-item-times {
-                color: #38BDF8 !important;
-                font-size: 15px !important;
-                font-weight: 700 !important;
-            }
-            .schedule-item-description-table {
-                width: 100% !important;
-            }
-            .schedule-item-description-heading {
-                color: #F1F5F9 !important;
-                font-size: 14px !important;
-                font-weight: 600 !important;
-            }
-            .schedule-item-description-subheading {
-                color: #94A3B8 !important;
-                font-size: 12px !important;
-                margin-top: 2px !important;
-            }
-            .schedule-day-content > div[style*="max-height"] {
-                max-height: none !important;
-                margin-top: 6px !important;
-            }
-            .schedule-add-button {
-                display: inline-block !important;
-                color: #38BDF8 !important;
-                font-size: 13px !important;
-                font-weight: 600 !important;
-                padding: 4px 0 !important;
-                cursor: pointer !important;
-            }
-            .schedule-add-options {
-                margin-top: 6px !important;
-                display: flex !important;
-                gap: 8px !important;
-            }
-            .schedule-option-link {
-                background-color: #233040 !important;
-                border: 1px solid #37475A !important;
-                border-radius: 6px !important;
-                padding: 6px 10px !important;
-                font-size: 13px !important;
-                text-decoration: none !important;
-            }
-            .mobileAddDiv {
-                display: flex !important;
-                justify-content: space-between !important;
-                align-items: center !important;
-                margin-top: 10px !important;
-                padding: 4px 0 !important;
-            }
+            .schedule-item-container.schedule-item-absence { border-left-color: #F59E0B !important; }
+            .schedule-item-container.schedule-item-request { border-left-color: #8B5CF6 !important; }
+            .schedule-item-container.schedule-item-opportunity { border-left-color: #10B981 !important; }
+            .schedule-item-color-bar, .schedule-item-icon-td, .clear-float { display: none !important; }
+            .schedule-item-content { width: 100% !important; }
+            .schedule-item-body { display: flex !important; flex-direction: column !important; gap: 4px !important; }
+            .schedule-item-times { color: #38BDF8 !important; font-size: 15px !important; font-weight: 700 !important; }
+            .schedule-item-description-table { width: 100% !important; }
+            .schedule-item-description-heading { color: #F1F5F9 !important; font-size: 14px !important; font-weight: 600 !important; }
+            .schedule-item-description-subheading { color: #94A3B8 !important; font-size: 12px !important; margin-top: 2px !important; }
+            .schedule-day-content > div[style*="max-height"] { max-height: none !important; margin-top: 6px !important; }
+            .schedule-add-button { display: inline-block !important; color: #38BDF8 !important; font-size: 13px !important; font-weight: 600 !important; padding: 4px 0 !important; cursor: pointer !important; }
+            .schedule-add-options { margin-top: 6px !important; display: flex !important; gap: 8px !important; }
+            .schedule-option-link { background-color: #233040 !important; border: 1px solid #37475A !important; border-radius: 6px !important; padding: 6px 10px !important; font-size: 13px !important; text-decoration: none !important; }
+            .mobileAddDiv { display: flex !important; justify-content: space-between !important; align-items: center !important; margin-top: 10px !important; padding: 4px 0 !important; }
             .mobileAddButton, .filterButton {
                 background-color: #233040 !important;
                 color: #F1F5F9 !important;
@@ -2182,15 +1456,14 @@ class MainActivity : AppCompatActivity() {
                 text-decoration: none !important;
                 display: inline-block !important;
             }
-            #mobileViewDropdown {
-                margin-top: 8px !important;
-            }
+            #mobileViewDropdown { margin-top: 8px !important; }
         """.trimIndent()
             .replace("\r", " ")
             .replace("\n", " ")
             .replace("\\", "\\\\")
             .replace("'", "\\'")
             .also { cachedSafeDarkCss = it }
+
         val js = """
             (function() {
                 var style = document.getElementById('custom-dark-theme');
@@ -2207,195 +1480,7 @@ class MainActivity : AppCompatActivity() {
                     style.textContent = '$safeCss';
                 }
 
-                // === TÄNÄÄN-OSION MUOTOILU KOLMELLE RIVILLE ===
-                (function formatTodayShiftBox() {
-                    function capFirst(str) {
-                        if (!str) return '';
-                        return str.charAt(0).toUpperCase() + str.slice(1);
-                    }
-
-                    function parseShiftText(rawName) {
-                        var cleaned = (rawName || '').trim().replace(/^\d+\s*/, '').trim();
-                        if (!cleaned) return { location: '', shiftName: '', role: '' };
-
-                        // Vapaapäivät / poissaolot jätetään yhdelle riville
-                        if (/^(ei\s+suunniteltuja\s+töitä|ei\s+(työ)?vuoroa|vapaa|vapaapäivä|arkipyhävapaa|arkipyhä|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|vuosiloma|sairaus|hoitovapaa|poissaolo)(?=$|[\s,.:;!?()\-–—])/i.test(cleaned)) {
-                            return { location: capFirst(cleaned), shiftName: '', role: '' };
-                        }
-
-                        var tokens = cleaned.split(/\s+/).filter(function(t) { return t.length > 0; });
-                        if (tokens.length === 0) return { location: '', shiftName: '', role: '' };
-
-                        var kShiftIdx = -1;
-                        for (var k = 0; k < tokens.length; k++) {
-                            if (tokens[k].toLowerCase() === 'k-vuoro') {
-                                kShiftIdx = k;
-                                break;
-                            }
-                        }
-                        if (kShiftIdx !== -1) {
-                            var kLoc = tokens.filter(function(_, idx) { return idx !== kShiftIdx; }).join(' ');
-                            return { location: kLoc, shiftName: '', role: 'K-vuoro' };
-                        }
-
-                        var shiftKeywords = {
-                            'aamu': true, 'aamuvuoro': true,
-                            'ilta': true, 'iltavuoro': true,
-                            'yö': true, 'yövuoro': true,
-                            'päivä': true, 'päivävuoro': true,
-                            'väli': true, 'välivuoro': true
-                        };
-
-                        var firstKwIdx = -1;
-                        for (var i = 0; i < tokens.length; i++) {
-                            if (shiftKeywords[tokens[i].toLowerCase()]) {
-                                firstKwIdx = i;
-                                break;
-                            }
-                        }
-
-                        if (firstKwIdx !== -1) {
-                            var location = tokens.slice(0, firstKwIdx).join(' ');
-                            var remainder = tokens.slice(firstKwIdx);
-                            var lastKwOffset = -1;
-                            for (var j = remainder.length - 1; j >= 0; j--) {
-                                if (shiftKeywords[remainder[j].toLowerCase()]) {
-                                    lastKwOffset = j;
-                                    break;
-                                }
-                            }
-                            var shiftName = capFirst(remainder.slice(0, lastKwOffset + 1).join(' '));
-                            var role = capFirst(remainder.slice(lastKwOffset + 1).join(' '));
-                            return { location: location, shiftName: shiftName, role: role };
-                        } else if (tokens.length >= 2) {
-                            var roleOnly = capFirst(tokens[tokens.length - 1]);
-                            var locOnly = tokens.slice(0, tokens.length - 1).join(' ');
-                            return { location: locOnly, shiftName: '', role: roleOnly };
-                        } else {
-                            return { location: cleaned, shiftName: '', role: '' };
-                        }
-                    }
-
-                    function applyShiftFormat() {
-                        var container = document.querySelector('.punching-shift-container');
-                        if (!container) return;
-                        var nameEl = container.querySelector('.punching-shift-name');
-                        if (!nameEl) return;
-
-                        var existingWp = nameEl.querySelector('.punching-shift-workplace');
-                        var rawText = existingWp
-                            ? (nameEl.getAttribute('data-raw-shift') || '')
-                            : (nameEl.textContent || '').replace(/\s+/g, ' ').trim();
-                        if (!rawText) return;
-
-                        if (existingWp && nameEl.getAttribute('data-formatted-for') === 'v3:' + rawText) {
-                            return;
-                        }
-                        nameEl.setAttribute('data-raw-shift', rawText);
-                        nameEl.setAttribute('data-formatted-for', 'v3:' + rawText);
-
-                        var parsed = parseShiftText(rawText);
-                        var thirdLine = [parsed.shiftName, parsed.role]
-                            .filter(function(s) { return s && s.length > 0; })
-                            .join(' • ');
-
-                        nameEl.textContent = '';
-                        if (parsed.location) {
-                            var wpSpan = document.createElement('span');
-                            wpSpan.className = 'punching-shift-workplace';
-                            wpSpan.textContent = parsed.location;
-                            nameEl.appendChild(wpSpan);
-                        }
-
-                        if (thirdLine) {
-                            var roleSpan = document.createElement('span');
-                            roleSpan.className = 'punching-shift-role';
-                            roleSpan.textContent = thirdLine;
-                            nameEl.appendChild(roleSpan);
-                        }
-                    }
-
-                    applyShiftFormat();
-                    if (typeof MutationObserver !== 'undefined') {
-                        var shiftTarget = document.querySelector('.punching-shift-container');
-                        if (shiftTarget && !shiftTarget._vvShiftObs) {
-                            shiftTarget._vvShiftObs = true;
-                            new MutationObserver(function() {
-                                applyShiftFormat();
-                            }).observe(shiftTarget, { childList: true, subtree: true, characterData: true });
-                        }
-                    }
-                })();
-
-                // === SISÄÄN / ULOS -LEIMAUKSEN VÄRIKOODAUS ===
-                try {
-                    (function setupStampingColorCoding() {
-                        function applyStampingColors() {
-                            var btn = document.getElementById('punchButton');
-                            if (btn) {
-                                var btnTxt = (btn.innerText || btn.textContent || '').toLowerCase();
-                                if (btnTxt.indexOf('ulos') !== -1 || btnTxt.indexOf('out') !== -1) {
-                                    btn.classList.remove('vv-punch-in');
-                                    btn.classList.add('vv-punch-out');
-                                } else if (btnTxt.indexOf('sisään') !== -1 || btnTxt.indexOf('in') !== -1) {
-                                    btn.classList.remove('vv-punch-out');
-                                    btn.classList.add('vv-punch-in');
-                                }
-                            }
-
-                            var rows = document.querySelectorAll('#table-latest-stamps tr');
-                            for (var i = 0; i < rows.length; i++) {
-                                var cells = rows[i].querySelectorAll('td');
-                                if (!cells || cells.length === 0) continue;
-                                for (var j = 0; j < cells.length; j++) {
-                                    var cell = cells[j];
-                                    var raw = (cell.textContent || '').replace(/\s+/g, ' ').trim();
-                                    var lower = raw.toLowerCase();
-                                    if (lower === 'sisään' || lower === 'in' || lower === 'ulos' || lower === 'out') {
-                                        var isIn = (lower === 'sisään' || lower === 'in');
-                                        var badge = cell.querySelector('.vv-stamp-badge');
-                                        if (!badge) {
-                                            cell.textContent = '';
-                                            badge = document.createElement('span');
-                                            badge.className = 'vv-stamp-badge';
-                                            cell.appendChild(badge);
-                                        }
-                                        badge.textContent = raw;
-                                        badge.classList.toggle('vv-stamp-in', isIn);
-                                        badge.classList.toggle('vv-stamp-out', !isIn);
-                                    }
-                                }
-                            }
-                        }
-
-                        window.vvApplyStampingColors = applyStampingColors;
-                        applyStampingColors();
-                        if (typeof MutationObserver !== 'undefined') {
-                            var colorContainers = [
-                                document.getElementById('bottomContainer'),
-                                document.getElementById('latestStampsContainer'),
-                                document.getElementById('table-latest-stamps')
-                            ];
-                            var colorScheduled = false;
-                            var scheduleColor = function() {
-                                if (colorScheduled) return;
-                                colorScheduled = true;
-                                setTimeout(function() {
-                                    colorScheduled = false;
-                                    applyStampingColors();
-                                }, 80);
-                            };
-                            for (var ci = 0; ci < colorContainers.length; ci++) {
-                                var containerEl = colorContainers[ci];
-                                if (containerEl && !containerEl._colorObsInstalled) {
-                                    containerEl._colorObsInstalled = true;
-                                    new MutationObserver(scheduleColor).observe(containerEl, { childList: true, subtree: true });
-                                }
-                            }
-                        }
-                    })();
-                } catch (_e) {}
-
+                // === ISTUNNON VANHENEMISEN VALVONTA ===
                 if (!window._sessionWatchInstalled) {
                     window._sessionWatchInstalled = true;
                     function checkSessionModal() {
@@ -2405,9 +1490,9 @@ class MainActivity : AppCompatActivity() {
                         var candidates = document.querySelectorAll('#session-expired-modal, #sessionExpiredModal, #SessionExpiredModal, #session-expiring-soon-modal, .modal, [role="dialog"]');
                         for (var i = 0; i < candidates.length; i++) {
                             var m = candidates[i];
-                            var style = window.getComputedStyle(m);
-                            var isVisible = (m.offsetParent !== null) || (style && style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity || '1') > 0);
-                            if (!isVisible) continue;
+                            var st = window.getComputedStyle(m);
+                            var vis = (m.offsetParent !== null) || (st && st.display !== 'none' && st.visibility !== 'hidden' && parseFloat(st.opacity || '1') > 0);
+                            if (!vis) continue;
                             var txt = (m.innerText || m.textContent || '').toLowerCase();
                             if (m.id === 'session-expired-modal' || m.id === 'sessionExpiredModal' || txt.indexOf('istunto vanhentunut') !== -1 || txt.indexOf('session expired') !== -1) {
                                 expired = true;
@@ -2448,13 +1533,13 @@ class MainActivity : AppCompatActivity() {
                     document.body._vvSessionObs = true;
                     new MutationObserver(window._vvCheckSessionModal).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] });
                 }
+
+                // === PUUTTUVAN / MUOKATTAVAN LEIMAUKSEN PANEELIN TUKI ===
                 if (!window._forgotStampHelperInstalled) {
                     window._forgotStampHelperInstalled = true;
-
                     function getForgotPanel() {
                         return document.getElementById('forgotStampPanel') || document.querySelector('[id*="forgotStampPanel" i], [id*="ForgotStampPanel" i]');
                     }
-
                     function openForgotPanel() {
                         var panel = getForgotPanel();
                         if (panel) {
@@ -2469,7 +1554,6 @@ class MainActivity : AppCompatActivity() {
                             fog.style.display = 'block';
                         }
                     }
-
                     function closeForgotPanel() {
                         var panel = getForgotPanel();
                         if (panel) {
@@ -2484,91 +1568,23 @@ class MainActivity : AppCompatActivity() {
                             fog.style.display = 'none';
                         }
                     }
-
-                    function isForgotOpenTrigger(el) {
-                        if (!el) return false;
-                        if (el.closest('#forgotStampPanel')) return false;
-                        if (el.closest('#forgottenStampButton, #punchForgottenButton, [id*="forgotten" i], [id*="ForgotStamp" i]')) return true;
-                        var clickable = el.closest('button, a, [role="button"]');
-                        if (!clickable) return false;
-                        var txt = (clickable.innerText || clickable.textContent || '').toLowerCase();
-                        return txt.indexOf('unohtunut leimaus') !== -1 || txt.indexOf('forgotten stamp') !== -1;
-                    }
-
-                    function revealHiddenStampRows() {
-                        var hiddenRows = document.querySelectorAll('#table-latest-stamps tr.hidden, #table-latest-stamps tr.hide, #table-latest-stamps tr[style*="display: none"], #table-latest-stamps tr[style*="display:none"]');
-                        for (var i = 0; i < hiddenRows.length; i++) {
-                            hiddenRows[i].classList.remove('hidden', 'hide');
-                            hiddenRows[i].style.display = 'table-row';
-                        }
-                        if (typeof window.vvApplyStampingColors === 'function') {
-                            window.vvApplyStampingColors();
-                        }
-                    }
-
-                    function isShowMoreTrigger(el) {
-                        if (!el) return false;
-                        var clickable = el.closest('button, a, [role="button"]');
-                        if (!clickable) return false;
-                        var id = (clickable.id || '').toLowerCase();
-                        if (id.indexOf('more') !== -1 || id.indexOf('lisaa') !== -1) return true;
-                        var txt = (clickable.innerText || clickable.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-                        return txt === 'näytä lisää' || txt === 'show more' || txt.indexOf('näytä lisää') !== -1 || txt.indexOf('show more') !== -1;
-                    }
-
                     document.addEventListener('click', function(e) {
-                        var editRow = e.target && e.target.closest('#table-latest-stamps tbody tr');
-                        if (isForgotOpenTrigger(e.target) || editRow) {
+                        var openBtn = e.target && e.target.closest('#forgottenStampButton, #table-latest-stamps tbody tr');
+                        if (openBtn && !e.target.closest('#forgotStampPanel')) {
                             openForgotPanel();
-                            setTimeout(openForgotPanel, 60);
+                            setTimeout(openForgotPanel, 80);
                             setTimeout(openForgotPanel, 250);
                             return;
                         }
                         var cancelBtn = e.target && e.target.closest('#cancelPunchForgottenButton, #cancelPunchForgottenButtonHeader, .drw-fog-of-war');
                         if (cancelBtn) {
                             closeForgotPanel();
-                            return;
-                        }
-                        if (isShowMoreTrigger(e.target)) {
-                            revealHiddenStampRows();
-                            setTimeout(revealHiddenStampRows, 150);
-                            setTimeout(revealHiddenStampRows, 500);
-                            setTimeout(revealHiddenStampRows, 1100);
                         }
                     }, true);
-
-                    function watchStampPageDom() {
-                        var stampHost = document.getElementById('latestStampsContainer') || document.getElementById('table-latest-stamps');
-                        if (stampHost && !stampHost._vvWatched && typeof MutationObserver !== 'undefined') {
-                            stampHost._vvWatched = true;
-                            var rowsScheduled = false;
-                            new MutationObserver(function() {
-                                if (rowsScheduled) return;
-                                rowsScheduled = true;
-                                setTimeout(function() {
-                                    rowsScheduled = false;
-                                    revealHiddenStampRows();
-                                }, 80);
-                            }).observe(stampHost, { childList: true, subtree: true });
-                        }
-                        var forgotPanel = getForgotPanel();
-                        if (forgotPanel && !forgotPanel._vvCloseWatched && typeof MutationObserver !== 'undefined') {
-                            forgotPanel._vvCloseWatched = true;
-                            new MutationObserver(function() {
-                                if (forgotPanel.classList.contains('minimized') && forgotPanel.classList.contains('force-open')) {
-                                    closeForgotPanel();
-                                }
-                            }).observe(forgotPanel, { attributes: true, attributeFilter: ['class'] });
-                        }
-                    }
-                    window._vvWatchStampPageDom = watchStampPageDom;
-                    watchStampPageDom();
-                }
-                if (typeof window._vvWatchStampPageDom === 'function') {
-                    window._vvWatchStampPageDom();
+                    window._vvOpenForgotPanel = openForgotPanel;
                 }
 
-                // === AJAX- JA FETCH-ISTUNTOVALVONTA LEIMAUSSIVUN HAUILLE ("NÄYTÄ LISÄÄ" YM.) ===
+                // === AJAX- JA FETCH-ISTUNTOVALVONTA ===
                 if (!window._ajaxSessionGuardInstalled) {
                     window._ajaxSessionGuardInstalled = true;
                     function triggerSessionRefreshOnce() {
@@ -2579,19 +1595,13 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     if (window.XMLHttpRequest) {
-                        var origOpen = XMLHttpRequest.prototype.open;
                         var origSend = XMLHttpRequest.prototype.send;
-                        XMLHttpRequest.prototype.open = function(method, url) {
-                            this._vvUrl = url ? String(url) : '';
-                            return origOpen.apply(this, arguments);
-                        };
                         XMLHttpRequest.prototype.send = function() {
                             this.addEventListener('load', function() {
                                 try {
                                     var respUrl = (this.responseURL || '').toLowerCase();
                                     var bodyText = (typeof this.responseText === 'string') ? this.responseText : '';
-                                    var redirectedToLogin = respUrl.indexOf('/login') !== -1 || bodyText.indexOf('id="LoginForm"') !== -1;
-                                    if (this.status === 401 || this.status === 403 || redirectedToLogin) {
+                                    if (this.status === 401 || this.status === 403 || respUrl.indexOf('/login') !== -1 || bodyText.indexOf('id="LoginForm"') !== -1) {
                                         triggerSessionRefreshOnce();
                                     }
                                 } catch (_err) {}
@@ -2615,437 +1625,39 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // === KALENTERIN POISSAOLOJEN SIISTINTÄ JA LOMAPALKKIEN YHDISTÄMINEN ===
-                (function setupCalendarCleanup() {
+                // === PÄIVÄLUETTELON (/Calendar/List) SIISTINTÄ JA VÄRIKOODAUS ===
+                if (window.location.pathname.toLowerCase().indexOf('/calendar/list') !== -1) {
                     var ignoreRegex = /^(vapaa|vapaapäivä|arkipyhä|arkipyhävapaa|viikkolepo|viikkovapaa|tasausvapaa|saldovapaa|pekkanen|pekkaspäivä|ei\s+(suunniteltuja\s+töitä|(työ)?vuoroa))(?=$|[\s,.:;!?()\-–—])/i;
-                    var sickRegex = /sairaus|hoitovapaa/i;
-                    var vacationRegex = /loma|säästövapaa|lomarahavapaa/i;
-
-                    function classifyAbsence(title) {
-                        var t = (title || '').replace(/\s+/g, ' ').trim();
-                        if (!t || ignoreRegex.test(t)) return 'ignore';
-                        if (sickRegex.test(t)) return 'sick';
-                        if (vacationRegex.test(t)) return 'vacation';
-                        return 'other';
-                    }
-
-                    function getAbsenceTitle(el) {
-                        var nameEl = el.querySelector('.itemName');
-                        var raw = nameEl ? (nameEl.textContent || '') : (el.textContent || '');
-                        return raw.replace(/\s+/g, ' ').trim();
-                    }
-
-                    function parseDeclaredSpan(el) {
-                        var styleAttr = el.getAttribute('style') || '';
-                        var m = styleAttr.match(/width\s*:\s*(\d+(?:\.\d+)?)%/i);
-                        if (!m) return 1;
-                        var pct = parseFloat(m[1]);
-                        if (isNaN(pct) || pct <= 120) return 1;
-                        return Math.max(1, Math.round(pct / 100));
-                    }
-
-                    function cleanMonthTable() {
-                        var rows = document.querySelectorAll('table.month-table tr');
-                        if (!rows || rows.length === 0) return;
-
-                        for (var r = 0; r < rows.length; r++) {
-                            var cells = rows[r].querySelectorAll('td.month-day');
-                            if (!cells || cells.length === 0) continue;
-
-                            var hasUnprocessed = false;
-                            for (var c0 = 0; c0 < cells.length; c0++) {
-                                if (cells[c0].querySelector('.month-item.absence:not([data-vv-done])')) {
-                                    hasUnprocessed = true;
-                                    break;
-                                }
-                            }
-                            if (!hasUnprocessed) continue;
-
-                            var cellEntries = [];
-                            for (var c = 0; c < cells.length; c++) {
-                                cells[c].classList.remove('has-spanning-absence');
-                                var dummies = cells[c].querySelectorAll('.month-item.dummy-item');
-                                for (var d = 0; d < dummies.length; d++) {
-                                    dummies[d].style.display = 'none';
-                                }
-                                var items = cells[c].querySelectorAll('.month-item.absence');
-                                var visibleList = [];
-                                for (var i = 0; i < items.length; i++) {
-                                    var el = items[i];
-                                    el.setAttribute('data-vv-done', '1');
-                                    var title = getAbsenceTitle(el);
-                                    var kind = classifyAbsence(title);
-                                    if (kind === 'ignore') {
-                                        el.classList.remove('vuorovahti-visible', 'vuorovahti-vacation', 'vuorovahti-sick', 'vuorovahti-other');
-                                        el.style.display = 'none';
-                                    } else {
-                                        visibleList.push({
-                                            el: el,
-                                            title: title,
-                                            kind: kind,
-                                            declaredSpan: parseDeclaredSpan(el),
-                                            consumed: false
-                                        });
-                                    }
-                                }
-                                cellEntries.push(visibleList);
-                            }
-
-                            for (var col = 0; col < cells.length; col++) {
-                                var list = cellEntries[col];
-                                for (var idx = 0; idx < list.length; idx++) {
-                                    var entry = list[idx];
-                                    if (entry.consumed) continue;
-                                    entry.consumed = true;
-
-                                    var maxPossible = cells.length - col;
-                                    var span = Math.min(maxPossible, entry.declaredSpan);
-
-                                    var nextCol = col + 1;
-                                    while (nextCol < cells.length) {
-                                        var nextList = cellEntries[nextCol];
-                                        var matchIdx = -1;
-                                        for (var n = 0; n < nextList.length; n++) {
-                                            if (!nextList[n].consumed && nextList[n].title.toLowerCase() === entry.title.toLowerCase()) {
-                                                matchIdx = n;
-                                                break;
-                                            }
-                                        }
-                                        if (matchIdx !== -1) {
-                                            nextList[matchIdx].consumed = true;
-                                            nextList[matchIdx].el.classList.remove('vuorovahti-visible', 'vuorovahti-vacation', 'vuorovahti-sick', 'vuorovahti-other');
-                                            nextList[matchIdx].el.style.display = 'none';
-                                            if ((nextCol - col + 1) > span) {
-                                                span = nextCol - col + 1;
-                                            }
-                                            nextCol++;
-                                        } else {
-                                            break;
-                                        }
-                                    }
-
-                                    for (var k = col + 1; k < col + span; k++) {
-                                        var kList = cellEntries[k];
-                                        for (var m = 0; m < kList.length; m++) {
-                                            if (!kList[m].consumed && kList[m].title.toLowerCase() === entry.title.toLowerCase()) {
-                                                kList[m].consumed = true;
-                                                kList[m].el.classList.remove('vuorovahti-visible', 'vuorovahti-vacation', 'vuorovahti-sick', 'vuorovahti-other');
-                                                kList[m].el.style.display = 'none';
-                                            }
-                                        }
-                                        var firstWork = cells[k].querySelector('.month-item.work');
-                                        if (firstWork) {
-                                            firstWork.style.marginTop = '23px';
-                                        }
-                                    }
-
-                                    var targetEl = entry.el;
-                                    targetEl.classList.add('vuorovahti-visible');
-                                    targetEl.classList.remove('vuorovahti-vacation', 'vuorovahti-sick', 'vuorovahti-other');
-                                    if (entry.kind === 'sick') {
-                                        targetEl.classList.add('vuorovahti-sick');
-                                    } else if (entry.kind === 'vacation') {
-                                        targetEl.classList.add('vuorovahti-vacation');
-                                    } else {
-                                        targetEl.classList.add('vuorovahti-other');
-                                    }
-                                    targetEl.setAttribute('title', entry.title);
-
-                                    if (span > 1) {
-                                        cells[col].classList.add('has-spanning-absence');
-                                        targetEl.style.width = 'calc(' + (span * 100) + '% + ' + ((span - 1) * 5) + 'px)';
-                                    } else {
-                                        targetEl.style.width = '100%';
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    function cleanListView() {
-                        var containers = document.querySelectorAll('.schedule-item-container.schedule-item-absence:not([data-vv-done])');
-                        for (var i = 0; i < containers.length; i++) {
-                            var box = containers[i];
+                    function styleListView() {
+                        var absBoxes = document.querySelectorAll('.schedule-item-container.schedule-item-absence:not([data-vv-done])');
+                        for (var i = 0; i < absBoxes.length; i++) {
+                            var box = absBoxes[i];
                             box.setAttribute('data-vv-done', '1');
                             var heading = box.querySelector('.schedule-item-description-heading');
                             var title = heading ? (heading.textContent || '').replace(/\s+/g, ' ').trim() : '';
-                            var kind = classifyAbsence(title);
-                            if (kind === 'ignore') {
+                            if (!title || ignoreRegex.test(title)) {
                                 box.style.display = 'none';
-                            } else if (kind === 'sick') {
+                            } else if (/sairaus|hoitovapaa/i.test(title)) {
                                 box.style.setProperty('background-color', '#3F1D24', 'important');
                                 box.style.setProperty('border-left-color', '#EF4444', 'important');
-                            } else if (kind === 'vacation') {
+                            } else if (/loma|säästövapaa|lomarahavapaa/i.test(title)) {
                                 box.style.setProperty('background-color', '#122B22', 'important');
                                 box.style.setProperty('border-left-color', '#22C55E', 'important');
                             }
                         }
-                    }
-
-                    function pickShiftColor(timesText) {
-                        var m = (timesText || '').match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
-                        if (!m) return null;
-                        var sMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-                        var eMin = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
-                        var crossesMidnight = eMin < sMin;
-                        if (crossesMidnight || sMin >= 20 * 60 || sMin < 4 * 60) {
-                            return { bg: '$nightBg', fg: '$nightFg' };
-                        }
-                        if (sMin >= 11 * 60 + 30) {
-                            return { bg: '$eveningBg', fg: '$eveningFg' };
-                        }
-                        return { bg: '$morningBg', fg: '$morningFg' };
-                    }
-
-                    function colorWorkShifts() {
-                        var monthItems = document.querySelectorAll('.month-item.work');
-                        for (var i = 0; i < monthItems.length; i++) {
-                            var item = monthItems[i];
-                            var timesEl = item.querySelector('.itemTimes');
-                            var rawTimes = timesEl ? (timesEl.textContent || '') : (item.textContent || '');
-                            var col = pickShiftColor(rawTimes);
-                            if (col) {
-                                item.style.setProperty('background-color', col.bg, 'important');
-                                item.style.setProperty('color', col.fg, 'important');
-                                if (timesEl) {
-                                    timesEl.style.setProperty('color', col.fg, 'important');
-                                }
-                            }
-                        }
-
-                        var listItems = document.querySelectorAll('.schedule-item-container.schedule-item-work');
-                        for (var j = 0; j < listItems.length; j++) {
-                            var box = listItems[j];
-                            var ltEl = box.querySelector('.schedule-item-times');
-                            var lCol = pickShiftColor(ltEl ? (ltEl.textContent || '') : '');
-                            if (lCol) {
-                                box.style.setProperty('border-left-color', lCol.bg, 'important');
+                        var workBoxes = document.querySelectorAll('.schedule-item-container.schedule-item-work');
+                        for (var j = 0; j < workBoxes.length; j++) {
+                            var ltEl = workBoxes[j].querySelector('.schedule-item-times');
+                            var m = (ltEl ? (ltEl.textContent || '') : '').match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
+                            if (m) {
+                                var sMin = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+                                var eMin = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+                                var col = (eMin < sMin || sMin >= 20 * 60 || sMin < 4 * 60) ? '$nightBg' : (sMin >= 11 * 60 + 30 ? '$eveningBg' : '$morningBg');
+                                workBoxes[j].style.setProperty('border-left-color', col, 'important');
                             }
                         }
                     }
-
-                    function runCalendarCleanup() {
-                        cleanMonthTable();
-                        cleanListView();
-                        colorWorkShifts();
-                    }
-
-                    if (window.location.pathname.toLowerCase().indexOf('/calendar') !== -1) {
-                        runCalendarCleanup();
-                        if (!window._calendarCleanupObserver && typeof MutationObserver !== 'undefined') {
-                            var calObsRoot = document.getElementById('calendar-content') || document.body;
-                            if (calObsRoot) {
-                                window._calendarCleanupObserver = true;
-                                var calCleanupTimer = null;
-                                var calObs = new MutationObserver(function() {
-                                    if (calCleanupTimer) clearTimeout(calCleanupTimer);
-                                    calCleanupTimer = setTimeout(function() { runCalendarCleanup(); }, 80);
-                                });
-                                calObs.observe(calObsRoot, { childList: true, subtree: true });
-                            }
-                        }
-                    }
-                })();
-
-                // === KUUKAUSI- JA VUOSIHYPPYVALITSIN (/Calendar/Month) ===
-                if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1) {
-                    var monthLabelEl = document.getElementById('monthText');
-                    if (monthLabelEl && !monthLabelEl._vvJumpInstalled) {
-                        monthLabelEl._vvJumpInstalled = true;
-                        monthLabelEl.classList.add('vv-month-jumpable');
-
-                        var jumpMonthMap = {
-                            'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
-                            'toukokuu': 5, 'kesäkuu': 6, 'heinäkuu': 7, 'elokuu': 8,
-                            'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12,
-                            'january': 1, 'february': 2, 'march': 3, 'april': 4,
-                            'may': 5, 'june': 6, 'july': 7, 'august': 8,
-                            'september': 9, 'october': 10, 'november': 11, 'december': 12,
-                            'januari': 1, 'februari': 2, 'mars': 3, 'maj': 5,
-                            'juni': 6, 'juli': 7, 'augusti': 8, 'oktober': 10
-                        };
-
-                        monthLabelEl.addEventListener('click', function(ev) {
-                            ev.preventDefault();
-                            ev.stopPropagation();
-
-                            var existingModal = document.getElementById('vv-month-jump-modal');
-                            if (existingModal) existingModal.remove();
-
-                            var nowDate = new Date();
-                            var curRealMonth = nowDate.getMonth() + 1;
-                            var curRealYear = nowDate.getFullYear();
-
-                            var rawTxt = (monthLabelEl.textContent || '').trim().toLowerCase();
-                            var txtParts = rawTxt.split(/\s+/);
-                            var activeMonth = (txtParts.length >= 2 && jumpMonthMap[txtParts[0]]) ? jumpMonthMap[txtParts[0]] : curRealMonth;
-                            var activeYear = (txtParts.length >= 2 && parseInt(txtParts[1], 10)) ? parseInt(txtParts[1], 10) : curRealYear;
-                            var selectedYear = activeYear;
-
-                            var isEn = /^(january|february|march|april|may|june|july|august|september|october|november|december)/.test(rawTxt);
-                            var shortMonths = isEn
-                                ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                                : ['Tammi', 'Helmi', 'Maalis', 'Huhti', 'Touko', 'Kesä', 'Heinä', 'Elo', 'Syys', 'Loka', 'Marras', 'Joulu'];
-
-                            var backdrop = document.createElement('div');
-                            backdrop.id = 'vv-month-jump-modal';
-                            backdrop.style.cssText = 'position:fixed;inset:0;z-index:1250;background:rgba(6,11,19,0.78);display:flex;align-items:center;justify-content:center;padding:16px;';
-
-                            var card = document.createElement('div');
-                            card.style.cssText = 'width:100%;max-width:340px;background:#182332;border:1px solid #38BDF8;border-radius:14px;padding:16px;box-shadow:0 16px 36px rgba(0,0,0,0.65);color:#F1F5F9;';
-
-                            var titleRow = document.createElement('div');
-                            titleRow.style.cssText = 'font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#38BDF8;margin-bottom:10px;text-align:center;';
-                            titleRow.textContent = isEn ? 'Jump to month & year' : 'Siirry kuukauteen ja vuoteen';
-                            card.appendChild(titleRow);
-
-                            var yearRow = document.createElement('div');
-                            yearRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;background:#111923;border:1px solid #2A394A;border-radius:10px;padding:6px 10px;margin-bottom:12px;';
-
-                            var btnPrevYear = document.createElement('button');
-                            btnPrevYear.type = 'button';
-                            btnPrevYear.textContent = '◀';
-                            btnPrevYear.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
-
-                            var yearLabel = document.createElement('span');
-                            yearLabel.style.cssText = 'font-size:18px;font-weight:700;color:#F1F5F9;';
-                            yearLabel.textContent = String(selectedYear);
-
-                            var btnNextYear = document.createElement('button');
-                            btnNextYear.type = 'button';
-                            btnNextYear.textContent = '▶';
-                            btnNextYear.style.cssText = 'width:38px;height:34px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:16px;font-weight:700;';
-
-                            yearRow.appendChild(btnPrevYear);
-                            yearRow.appendChild(yearLabel);
-                            yearRow.appendChild(btnNextYear);
-                            card.appendChild(yearRow);
-
-                            var grid = document.createElement('div');
-                            grid.style.cssText = 'display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;';
-                            card.appendChild(grid);
-
-                            function renderMonthButtons() {
-                                yearLabel.textContent = String(selectedYear);
-                                grid.innerHTML = '';
-                                for (var idx = 0; idx < 12; idx++) {
-                                    (function(mVal, mName) {
-                                        var btn = document.createElement('button');
-                                        btn.type = 'button';
-                                        btn.textContent = mName;
-                                        var isSelected = (selectedYear === activeYear && mVal === activeMonth);
-                                        var isCurrentReal = (selectedYear === curRealYear && mVal === curRealMonth);
-                                        var bg = isSelected ? '#1982C4' : '#111923';
-                                        var border = isSelected ? '#38BDF8' : (isCurrentReal ? '#38BDF8' : '#2A394A');
-                                        var fg = isSelected ? '#FFFFFF' : '#E2E8F0';
-                                        btn.style.cssText = 'padding:10px 4px;border-radius:8px;font-size:13px;font-weight:600;background:' + bg + ';border:1px solid ' + border + ';color:' + fg + ';';
-                                        btn.onclick = function() {
-                                            backdrop.remove();
-                                            window.location.href = '/Calendar/Month?month=' + mVal + '&year=' + selectedYear;
-                                        };
-                                        grid.appendChild(btn);
-                                    })(idx + 1, shortMonths[idx]);
-                                }
-                            }
-
-                            btnPrevYear.onclick = function() {
-                                selectedYear -= 1;
-                                renderMonthButtons();
-                            };
-                            btnNextYear.onclick = function() {
-                                selectedYear += 1;
-                                renderMonthButtons();
-                            };
-
-                            var footerRow = document.createElement('div');
-                            footerRow.style.cssText = 'display:flex;gap:8px;';
-
-                            var btnTodayJump = document.createElement('button');
-                            btnTodayJump.type = 'button';
-                            btnTodayJump.textContent = isEn ? 'Current month' : 'Nykyinen kuukausi';
-                            btnTodayJump.style.cssText = 'flex:1;padding:10px;background:#233040;color:#38BDF8;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
-                            btnTodayJump.onclick = function() {
-                                backdrop.remove();
-                                window.location.href = '/Calendar/Month?month=' + curRealMonth + '&year=' + curRealYear;
-                            };
-
-                            var btnCancelJump = document.createElement('button');
-                            btnCancelJump.type = 'button';
-                            btnCancelJump.textContent = isEn ? 'Cancel' : 'Peruuta';
-                            btnCancelJump.style.cssText = 'flex:1;padding:10px;background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;font-size:13px;font-weight:600;';
-                            btnCancelJump.onclick = function() {
-                                backdrop.remove();
-                            };
-
-                            footerRow.appendChild(btnTodayJump);
-                            footerRow.appendChild(btnCancelJump);
-                            card.appendChild(footerRow);
-
-                            backdrop.appendChild(card);
-                            backdrop.addEventListener('click', function(bgEv) {
-                                if (bgEv.target === backdrop) backdrop.remove();
-                            });
-                            document.body.appendChild(backdrop);
-                            renderMonthButtons();
-                        });
-                    }
-                }
-
-                // === SUORA "LISÄÄ TOIVE TÄLLE PÄIVÄLLE" -OIKOPOLKU KALENTERIPÄIVÄSTÄ ===
-                if (window.location.pathname.toLowerCase().indexOf('/calendar/month') !== -1 && !window._quickRequestInstalled) {
-                    window._quickRequestInstalled = true;
-                    var monthsFi = {
-                        'tammikuu': 1, 'helmikuu': 2, 'maaliskuu': 3, 'huhtikuu': 4,
-                        'toukokuu': 5, 'kesäkuu': 6, 'heinäkuu': 7, 'elokuu': 8,
-                        'syyskuu': 9, 'lokakuu': 10, 'marraskuu': 11, 'joulukuu': 12,
-                        'january': 1, 'february': 2, 'march': 3, 'april': 4,
-                        'may': 5, 'june': 6, 'july': 7, 'august': 8,
-                        'september': 9, 'october': 10, 'november': 11, 'december': 12,
-                        'januari': 1, 'februari': 2, 'mars': 3, 'maj': 5,
-                        'juni': 6, 'juli': 7, 'augusti': 8, 'oktober': 10
-                    };
-                    document.addEventListener('click', function(e) {
-                        if (e.target && e.target.closest('a, button, #numeron-quick-req-bar')) return;
-                        var cell = e.target && e.target.closest('table.month-table td.month-day');
-                        if (!cell || cell.classList.contains('day-different-month')) return;
-
-                        var dayEl = cell.querySelector('.dayNum');
-                        var monthHeader = document.getElementById('monthText');
-                        if (!dayEl || !monthHeader) return;
-
-                        var dayNum = parseInt((dayEl.textContent || '').trim(), 10);
-                        var parts = (monthHeader.textContent || '').trim().toLowerCase().split(/\s+/);
-                        if (!dayNum || parts.length < 2) return;
-
-                        var mNum = monthsFi[parts[0]];
-                        var yNum = parseInt(parts[1], 10);
-                        if (!mNum || !yNum) return;
-
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (typeof e.stopImmediatePropagation === 'function') {
-                            e.stopImmediatePropagation();
-                        }
-
-                        var isoDate = yNum + '-' + String(mNum).padStart(2, '0') + '-' + String(dayNum).padStart(2, '0');
-                        var fiDate = String(dayNum).padStart(2, '0') + '.' + String(mNum).padStart(2, '0') + '.' + yNum;
-                        var listDate = encodeURIComponent(mNum + '/' + dayNum + '/' + yNum + ' 00:00:00');
-
-                        var existing = document.getElementById('numeron-quick-req-bar');
-                        if (existing) existing.remove();
-
-                        var bar = document.createElement('div');
-                        bar.id = 'numeron-quick-req-bar';
-                        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:14px;z-index:1100;background:#182332;border:1px solid #38BDF8;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center;gap:8px;box-shadow:0 8px 24px rgba(0,0,0,0.6);';
-                        bar.innerHTML = '<span style="color:#F1F5F9;font-size:14px;font-weight:600;">' + fiDate + '</span>' +
-                            '<div style="display:flex;gap:6px;align-items:center;">' +
-                            '<a href="/Calendar/List?date=' + listDate + '" style="background:#233040;color:#E2E8F0 !important;border:1px solid #37475A;border-radius:8px;padding:8px 10px;font-size:13px;font-weight:600;text-decoration:none;">Avaa päivä</a>' +
-                            '<a href="/PersonRequests/Edit?calendarView=Month&returnValue=' + isoDate + '" style="background:#1982C4;color:#FFFFFF !important;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;text-decoration:none;">+ Toive</a>' +
-                            '<button id="numeron-qr-close" type="button" style="background:#233040;color:#CBD5E1;border:1px solid #37475A;border-radius:8px;padding:8px 10px;font-size:13px;">✕</button>' +
-                            '</div>';
-                        document.body.appendChild(bar);
-                        document.getElementById('numeron-qr-close').onclick = function() { bar.remove(); };
-                    }, true);
+                    styleListView();
                 }
             })();
         """.trimIndent()
@@ -3159,12 +1771,6 @@ class MainActivity : AppCompatActivity() {
         if (now - lastSessionRecoveryMs < 3000L) return
         lastSessionRecoveryMs = now
 
-        if (inFlightStampAction == Action.STAMP_IN || inFlightStampAction == Action.STAMP_OUT) {
-            pendingAction = inFlightStampAction
-            inFlightStampAction = Action.NONE
-            Toast.makeText(this, if (DemoModeHelper.isEnglish(this)) "Session expired – re-authenticating and stamping..." else "Istunto vanhentunut – kirjaudutaan uudelleen ja leimataan...", Toast.LENGTH_SHORT).show()
-        }
-
         getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
             .edit()
             .putLong("last_valid_session_ms", 0L)
@@ -3206,100 +1812,6 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-    }
-
-    private fun handleStampingPage(attempt: Int = 0) {
-        if (pendingAction != Action.STAMP_IN && pendingAction != Action.STAMP_OUT) return
-
-        val wantIn = (pendingAction == Action.STAMP_IN)
-        val targetText = if (wantIn) "Sisään" else "Ulos"
-
-        val wv = webView ?: return
-        wv.evaluateJavascript(StampingWebHelper.buildClickStampJs(wantIn)) { rawResult ->
-            val obj = StampingWebHelper.parseJsonResult(rawResult)
-            val status = obj?.optString("status", "") ?: ""
-
-            when {
-                status == "CLICKED" -> {
-                    inFlightStampAction = pendingAction
-                    pendingAction = Action.NONE
-                    val beforeDir = obj?.optString("dir", "") ?: ""
-                    val beforeBtn = obj?.optString("btn", "") ?: ""
-                    val beforeRow = obj?.optString("row", "") ?: ""
-                    val beforeRowId = obj?.optString("rowId", "") ?: ""
-                    val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (wantIn) "In" else "Out") else targetText
-                    Toast.makeText(this, if (en) "Stamping ($dirLabel)..." else "Leimataan ($targetText)...", Toast.LENGTH_SHORT).show()
-                    verifyStampAndClose(wantIn, beforeDir, beforeBtn, beforeRow, beforeRowId, 0)
-                }
-                status == "WRONG_DIRECTION" -> {
-                    pendingAction = Action.NONE
-                    inFlightStampAction = Action.NONE
-                    val en = DemoModeHelper.isEnglish(this)
-                    val dirLabel = if (en) (if (wantIn) "In" else "Out") else targetText
-                    Toast.makeText(this, if (en) "Already clocked $dirLabel" else "Olet jo leimannut tilaan: $targetText", Toast.LENGTH_LONG).show()
-                    wv.postDelayed({ finishAndRemoveTask() }, 1500L)
-                }
-                status == "NO_BUTTON" && attempt < 10 -> {
-                    wv.postDelayed({ handleStampingPage(attempt + 1) }, 300L)
-                }
-                else -> {
-                    pendingAction = Action.NONE
-                }
-            }
-        }
-    }
-
-    private fun verifyStampAndClose(
-        wantIn: Boolean,
-        beforeDir: String,
-        beforeBtn: String,
-        beforeRow: String,
-        beforeRowId: String,
-        checkAttempt: Int
-    ) {
-        val wv = webView ?: return
-        wv.postDelayed({
-            if (isFinishing || isDestroyed) return@postDelayed
-            wv.evaluateJavascript(StampingWebHelper.buildVerifyStampJs()) { rawResult ->
-                val obj = StampingWebHelper.parseJsonResult(rawResult)
-                val nowDir = obj?.optString("dir", "") ?: ""
-                val nowBtn = obj?.optString("btn", "") ?: ""
-                val nowRow = obj?.optString("row", "") ?: ""
-                val nowRowId = obj?.optString("rowId", "") ?: ""
-                val sessionExpired = obj?.optBoolean("expired", false) ?: false
-
-                if (sessionExpired) {
-                    handleWebSessionExpired()
-                    return@evaluateJavascript
-                }
-
-                if (StampingWebHelper.isStampConfirmed(
-                        wantIn = wantIn,
-                        beforeDir = beforeDir,
-                        beforeBtn = beforeBtn,
-                        beforeRow = beforeRow,
-                        beforeRowId = beforeRowId,
-                        nowDir = nowDir,
-                        nowBtn = nowBtn,
-                        nowRow = nowRow,
-                        nowRowId = nowRowId
-                    )
-                ) {
-                    inFlightStampAction = Action.NONE
-                    CookieManager.getInstance().flush()
-                    wv.postDelayed({ finishAndRemoveTask() }, 1500L)
-                } else if (checkAttempt < 25) {
-                    verifyStampAndClose(wantIn, beforeDir, beforeBtn, beforeRow, beforeRowId, checkAttempt + 1)
-                } else {
-                    Toast.makeText(
-                        this,
-                        if (DemoModeHelper.isEnglish(this)) "Could not verify stamp automatically – please check status on screen" else "Leimausta ei voitu vahvistaa automaattisesti – tarkista tila ruudulta",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }, 300L)
     }
 
     private fun handleCalendarPage() {

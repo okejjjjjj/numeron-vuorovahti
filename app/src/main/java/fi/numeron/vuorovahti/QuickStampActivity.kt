@@ -34,7 +34,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import org.json.JSONTokener
 import java.io.ByteArrayInputStream
 import java.time.LocalDate
 import java.time.LocalTime
@@ -903,19 +902,6 @@ class QuickStampActivity : AppCompatActivity() {
                 }
             }
         }, 280L)
-    }
-
-    private fun parseJsonResult(rawResult: String?): JSONObject? {
-        return try {
-            if (rawResult != null && rawResult != "null") {
-                val unescaped = JSONTokener(rawResult).nextValue() as? String
-                if (unescaped != null) JSONObject(unescaped) else null
-            } else {
-                null
-            }
-        } catch (_: Exception) {
-            null
-        }
     }
 
     private fun destroyHiddenWebView() {
