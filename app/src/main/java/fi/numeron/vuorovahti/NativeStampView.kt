@@ -55,7 +55,9 @@ class NativeStampView(
     private var lastRenderedLangEn: Boolean? = null
     private var lastRenderedDemo: Boolean? = null
     private var lastRenderedAmoled: Boolean? = null
+    private var lastRenderedBalanceKey: String? = null
     private var cachedNextShiftText: String? = null
+    private var cachedPeriodBalance: PeriodBalanceResult? = null
     private var loadJob: Job? = null
 
     private val tickerHandler = Handler(Looper.getMainLooper())
@@ -84,6 +86,7 @@ class NativeStampView(
     private val shiftProgressTrack: LinearLayout
     private val shiftProgressFill: View
     private val shiftProgressRest: View
+    private val txtPeriodBalance: TextView
     private val txtNextShift: TextView
 
     private val txtStampCaption: TextView
@@ -223,6 +226,19 @@ class NativeStampView(
         shiftProgressTrack.addView(shiftProgressRest, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
         shiftProgressContainer.addView(shiftProgressTrack, LayoutParams(LayoutParams.MATCH_PARENT, dp(5)))
         todayCard.addView(shiftProgressContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        txtPeriodBalance = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTypeface(null, Typeface.BOLD)
+            setPadding(dp(10), dp(7), dp(10), dp(7))
+            visibility = View.GONE
+        }
+        todayCard.addView(
+            txtPeriodBalance,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(10)
+            }
+        )
 
         txtNextShift = TextView(context).apply {
             setTextColor(Color.parseColor("#E2E8F0"))
@@ -612,16 +628,53 @@ class NativeStampView(
             a.hasMoreStamps == b.hasMoreStamps
     }
 
+    private fun buildBalanceRenderKey(): String {
+        val enabled = PeriodBalanceManager.isEnabled(context)
+        val b = cachedPeriodBalance
+        return "$enabled|${PeriodBalanceManager.version}|${b?.periodStart}|${b?.diffMinutes}|${b?.plannedMinutes}|${b?.effectiveMinutes}"
+    }
+
+    private fun updatePeriodBalanceBanner() {
+        val en = DemoModeHelper.isEnglish(context)
+        val bal = cachedPeriodBalance
+        if (!PeriodBalanceManager.isEnabled(context) ||
+            DemoModeHelper.isDemoEnabled(context) ||
+            bal == null ||
+            bal.diffMinutes == 0
+        ) {
+            txtPeriodBalance.visibility = View.GONE
+            return
+        }
+        val shortFmt = DateTimeFormatter.ofPattern("d.M.")
+        val rangeStr = "${bal.periodStart.format(shortFmt)}–${bal.periodEnd.format(shortFmt)}"
+        val diffStr = PeriodBalanceManager.formatSignedExact(bal.diffMinutes, en)
+        val planH = PeriodBalanceManager.formatHoursDecimal(bal.plannedMinutes, en)
+        val effH = PeriodBalanceManager.formatHoursDecimal(bal.effectiveMinutes, en)
+        val prefix = if (en) "Period balance" else "Jakson saldo"
+        txtPeriodBalance.text = "$prefix ($rangeStr): $diffStr  ($planH → $effH h)"
+
+        if (bal.diffMinutes > 0) {
+            txtPeriodBalance.setTextColor(Color.parseColor("#4ADE80"))
+            txtPeriodBalance.background = UiStyleHelper.roundedBg(context, "#0F2E26", "#22C55E", 8f)
+        } else {
+            txtPeriodBalance.setTextColor(Color.parseColor("#FCA5A5"))
+            txtPeriodBalance.background = UiStyleHelper.roundedBg(context, "#3F1D24", "#F87171", 8f)
+        }
+        txtPeriodBalance.visibility = View.VISIBLE
+    }
+
     private fun renderStateIfChanged(state: StampingPageState, forceRender: Boolean = false) {
         val en = DemoModeHelper.isEnglish(context)
         val isDemo = DemoModeHelper.isDemoEnabled(context)
         val amoled = UiStyleHelper.isAmoled(context)
+        val balKey = buildBalanceRenderKey()
         if (!forceRender &&
             isSameVisualState(lastRenderedState, state) &&
             lastRenderedNextShift == cachedNextShiftText &&
             lastRenderedLangEn == en &&
             lastRenderedDemo == isDemo &&
-            lastRenderedAmoled == amoled
+            lastRenderedAmoled == amoled &&
+            lastRenderedBalanceKey == balKey
         ) {
             updateWorkingStatusPill()
             updateOptionsToggleText()
@@ -632,6 +685,7 @@ class NativeStampView(
         lastRenderedLangEn = en
         lastRenderedDemo = isDemo
         lastRenderedAmoled = amoled
+        lastRenderedBalanceKey = balKey
         renderState(state)
     }
 
@@ -647,6 +701,7 @@ class NativeStampView(
             lastNetworkFetchMs = 0L
             lastRenderedState = null
             cachedNextShiftText = null
+            cachedPeriodBalance = null
         }
 
         if (isDemo) {
@@ -668,6 +723,7 @@ class NativeStampView(
             txtStatus.text = ""
             txtWorkingPill.visibility = View.GONE
             shiftProgressContainer.visibility = View.GONE
+            txtPeriodBalance.visibility = View.GONE
             txtNextShift.visibility = View.GONE
             txtShiftTimes.visibility = View.VISIBLE
             txtShiftTimes.text = if (en) "Welcome" else "Tervetuloa"
@@ -691,6 +747,11 @@ class NativeStampView(
             progressBar.visibility = View.GONE
             txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, lastNetworkFetchMs, isCache = false)
             renderStateIfChanged(existing)
+            loadJob = scope.launch {
+                val bal = withContext(Dispatchers.IO) { PeriodBalanceManager.computeCurrentPeriodBalance(context) }
+                cachedPeriodBalance = bal
+                renderStateIfChanged(existing)
+            }
             return
         }
 
@@ -698,25 +759,23 @@ class NativeStampView(
             var cached: StampingPageState? = existing
             var cachedAtMs: Long = lastNetworkFetchMs
 
-            if (cached == null || cachedNextShiftText == null) {
-                val diskResult = withContext(Dispatchers.IO) {
-                    val diskState = if (cached == null) NumeronApiClient.loadCachedStampingState(context) else cached
-                    val diskMs = if (cached == null) NumeronApiClient.getStampingCacheSavedAtMs(context) else cachedAtMs
-                    val nextShift = findNextUpcomingShiftText()
-                    Triple(diskState, diskMs, nextShift)
+            val diskResult = withContext(Dispatchers.IO) {
+                val diskState = if (cached == null) NumeronApiClient.loadCachedStampingState(context) else cached
+                val diskMs = if (cached == null) NumeronApiClient.getStampingCacheSavedAtMs(context) else cachedAtMs
+                val nextShift = if (cachedNextShiftText == null) findNextUpcomingShiftText() else cachedNextShiftText
+                val bal = PeriodBalanceManager.computeCurrentPeriodBalance(context)
+                arrayOf<Any?>(diskState, diskMs, nextShift, bal)
+            }
+            cached = diskResult[0] as? StampingPageState
+            cachedAtMs = (diskResult[1] as? Long) ?: 0L
+            cachedNextShiftText = diskResult[2] as? String
+            cachedPeriodBalance = diskResult[3] as? PeriodBalanceResult
+            if (cached != null) {
+                if (currentState == null) {
+                    currentState = cached
+                    selectedReasonCodeId = cached.defaultReasonCode
                 }
-                cached = diskResult.first
-                cachedAtMs = diskResult.second
-                cachedNextShiftText = diskResult.third
-                if (cached != null) {
-                    if (currentState == null) {
-                        currentState = cached
-                        selectedReasonCodeId = cached.defaultReasonCode
-                    }
-                    renderStateIfChanged(currentState ?: cached)
-                }
-            } else {
-                renderStateIfChanged(cached)
+                renderStateIfChanged(currentState ?: cached)
             }
 
             val blocked = withContext(Dispatchers.IO) {
@@ -774,6 +833,7 @@ class NativeStampView(
         val en = DemoModeHelper.isEnglish(context)
 
         updateWorkingStatusPill()
+        updatePeriodBalanceBanner()
 
         if (state.shiftTimes.isNotEmpty()) {
             txtShiftTimes.visibility = View.VISIBLE

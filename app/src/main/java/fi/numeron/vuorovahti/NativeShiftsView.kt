@@ -6,7 +6,11 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.provider.AlarmClock
+import android.text.SpannableStringBuilder
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -46,6 +50,8 @@ class NativeShiftsView(
     private var displayedMonth: YearMonth = YearMonth.now()
     private var currentData: MonthDisplayData? = null
     private var adjacentDayMap: Map<LocalDate, CalendarDisplayDay> = emptyMap()
+    private var adjacentLoadedMonths: Set<String> = emptySet()
+    private var currentMonthLoaded: Boolean = false
     private var loadJob: Job? = null
     private var prefetchJob: Job? = null
     private var lastSessionEpoch: Long = -1L
@@ -345,26 +351,31 @@ class NativeShiftsView(
         return combined
     }
 
-    private fun loadAdjacentMonthsCacheSync(ym: YearMonth): Map<LocalDate, CalendarDisplayDay> {
+    private fun loadAdjacentMonthsCacheSync(ym: YearMonth): Pair<Map<LocalDate, CalendarDisplayDay>, Set<String>> {
         val map = LinkedHashMap<LocalDate, CalendarDisplayDay>()
+        val loadedKeys = LinkedHashSet<String>()
         val prevYm = ym.minusMonths(1)
         val nextYm = ym.plusMonths(1)
         if (DemoModeHelper.isDemoEnabled(context)) {
             val demoShifts = DemoModeHelper.generateDemoWorkShifts(context)
             NumeronApiClient.buildMonthDisplayFromCachedShifts(demoShifts, prevYm.year, prevYm.monthValue)?.days?.let { map.putAll(it) }
             NumeronApiClient.buildMonthDisplayFromCachedShifts(demoShifts, nextYm.year, nextYm.monthValue)?.days?.let { map.putAll(it) }
-            return map
+            return map to loadedKeys
         }
         val cachedShifts = CalendarSyncHelper.loadCachedShifts(context)
         for (adjYm in listOf(prevYm, nextYm)) {
             val mem = memoryMonths[adjYm]?.first
             val disk = mem ?: NumeronApiClient.loadMonthDisplayCache(context, adjYm.year, adjYm.monthValue)
-            val data = disk ?: cachedShifts?.let {
-                NumeronApiClient.buildMonthDisplayFromCachedShifts(it, adjYm.year, adjYm.monthValue)
+            if (disk != null) {
+                loadedKeys.add(adjYm.toString())
+                map.putAll(disk.days)
+            } else {
+                cachedShifts?.let {
+                    NumeronApiClient.buildMonthDisplayFromCachedShifts(it, adjYm.year, adjYm.monthValue)
+                }?.days?.let { map.putAll(it) }
             }
-            data?.days?.let { map.putAll(it) }
         }
-        return map
+        return map to loadedKeys
     }
 
     private fun buildRenderKey(): String {
@@ -378,8 +389,10 @@ class NativeShiftsView(
         val showPeriods = prefs.getBoolean("show_shift_periods", true)
         val showHolidays = prefs.getBoolean("show_finnish_holidays", true)
         val showShortRest = prefs.getBoolean("show_short_rest_warning", true)
+        val balanceEnabled = PeriodBalanceManager.isEnabled(context)
+        val balVer = PeriodBalanceManager.version
         val anchor = prefs.getString("shift_period_anchor_iso", "2026-12-28").orEmpty()
-        return "$displayedMonth|$en|$isDemo|$amoled|$morningRgb|$eveningRgb|$nightRgb|$showPeriods|$showHolidays|$showShortRest|$anchor|${LocalDate.now()}"
+        return "$displayedMonth|$en|$isDemo|$amoled|$morningRgb|$eveningRgb|$nightRgb|$showPeriods|$showHolidays|$showShortRest|$balanceEnabled|$balVer|$currentMonthLoaded|${adjacentLoadedMonths.size}|$anchor|${LocalDate.now()}"
     }
 
     private fun renderCalendarGridIfChanged(forceRender: Boolean = false) {
@@ -427,7 +440,9 @@ class NativeShiftsView(
             if (diskAgeOk != null && diskAgeOk.first != null) {
                 storeMemoryMonth(nextYm, diskAgeOk.first!!, diskAgeOk.second)
                 if (displayedMonth == baseYm) {
-                    adjacentDayMap = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
+                    val adjPair = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
+                    adjacentDayMap = adjPair.first
+                    adjacentLoadedMonths = adjPair.second
                     renderCalendarGridIfChanged()
                 }
                 return@launch
@@ -440,10 +455,13 @@ class NativeShiftsView(
             } ?: return@launch
             withContext(Dispatchers.IO) {
                 NumeronApiClient.saveMonthDisplayCache(context, parsed)
+                PeriodBalanceManager.recordMonthSnapshot(context, parsed)
             }
             storeMemoryMonth(nextYm, parsed, System.currentTimeMillis())
             if (displayedMonth == baseYm) {
-                adjacentDayMap = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
+                val adjPair = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
+                adjacentDayMap = adjPair.first
+                adjacentLoadedMonths = adjPair.second
                 renderCalendarGridIfChanged()
             }
         }
@@ -460,6 +478,8 @@ class NativeShiftsView(
             lastSessionEpoch = epoch
             memoryMonths.clear()
             adjacentDayMap = emptyMap()
+            adjacentLoadedMonths = emptySet()
+            currentMonthLoaded = false
             lastRenderedRenderKey = null
             lastRenderedData = null
         }
@@ -471,7 +491,10 @@ class NativeShiftsView(
             val demoShifts = DemoModeHelper.generateDemoWorkShifts(context)
             currentData = NumeronApiClient.buildMonthDisplayFromCachedShifts(demoShifts, ym.year, ym.monthValue)
                 ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
-            adjacentDayMap = loadAdjacentMonthsCacheSync(ym)
+            val adjPair = loadAdjacentMonthsCacheSync(ym)
+            adjacentDayMap = adjPair.first
+            adjacentLoadedMonths = adjPair.second
+            currentMonthLoaded = false
             renderCalendarGridIfChanged()
             return
         }
@@ -483,6 +506,8 @@ class NativeShiftsView(
             txtStatus.text = if (en) "Set organization in Settings" else "Aseta organisaatio asetuksista"
             currentData = MonthDisplayData(ym.year, ym.monthValue, emptyMap())
             adjacentDayMap = emptyMap()
+            adjacentLoadedMonths = emptySet()
+            currentMonthLoaded = false
             renderCalendarGridIfChanged()
             return
         }
@@ -491,13 +516,16 @@ class NativeShiftsView(
         val memEntry = memoryMonths[ym]
         if (memEntry != null) {
             currentData = memEntry.first
+            currentMonthLoaded = true
             if (!forceNetwork && (System.currentTimeMillis() - memEntry.second) < 120_000L) {
                 swipeRefresh.isRefreshing = false
                 progressBar.visibility = View.GONE
                 txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, memEntry.second, isCache = false)
                 loadJob = scope.launch {
-                    adjacentDayMap = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(ym) }
+                    val adjPair = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(ym) }
                     if (ym == displayedMonth) {
+                        adjacentDayMap = adjPair.first
+                        adjacentLoadedMonths = adjPair.second
                         renderCalendarGridIfChanged()
                         scheduleNextMonthPrefetch(ym)
                     }
@@ -513,7 +541,7 @@ class NativeShiftsView(
             var hasAnyCache = (cachedMonth != null)
 
             val diskLoad = withContext(Dispatchers.IO) {
-                val adj = loadAdjacentMonthsCacheSync(ym)
+                val adjPair = loadAdjacentMonthsCacheSync(ym)
                 if (cachedMonth == null) {
                     val mCache = NumeronApiClient.loadMonthDisplayCache(context, ym.year, ym.monthValue)
                     val mSaved = NumeronApiClient.getMonthCacheSavedAtMs(context, ym.year, ym.monthValue)
@@ -524,17 +552,21 @@ class NativeShiftsView(
                     } else {
                         null
                     }
-                    Triple(mCache ?: fallback, mSaved, adj)
+                    arrayOf<Any?>(mCache ?: fallback, mSaved, adjPair, mCache != null)
                 } else {
-                    Triple(cachedMonth, cachedAtMs, adj)
+                    arrayOf<Any?>(cachedMonth, cachedAtMs, adjPair, true)
                 }
             }
             if (ym != displayedMonth) return@launch
 
-            adjacentDayMap = diskLoad.third
+            @Suppress("UNCHECKED_CAST")
+            val adjPair = diskLoad[2] as Pair<Map<LocalDate, CalendarDisplayDay>, Set<String>>
+            adjacentDayMap = adjPair.first
+            adjacentLoadedMonths = adjPair.second
+            currentMonthLoaded = (diskLoad[3] as? Boolean) == true
             if (cachedMonth == null) {
-                cachedMonth = diskLoad.first
-                cachedAtMs = diskLoad.second
+                cachedMonth = diskLoad[0] as? MonthDisplayData
+                cachedAtMs = (diskLoad[1] as? Long) ?: 0L
                 hasAnyCache = (cachedMonth != null)
                 currentData = cachedMonth ?: MonthDisplayData(ym.year, ym.monthValue, emptyMap())
             }
@@ -562,9 +594,11 @@ class NativeShiftsView(
                     val fetchedAt = System.currentTimeMillis()
                     withContext(Dispatchers.IO) {
                         NumeronApiClient.saveMonthDisplayCache(context, parsed)
+                        PeriodBalanceManager.recordMonthSnapshot(context, parsed)
                     }
                     storeMemoryMonth(ym, parsed, fetchedAt)
                     currentData = parsed
+                    currentMonthLoaded = true
                     txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, fetchedAt, isCache = false)
                     renderCalendarGridIfChanged()
                     scheduleNextMonthPrefetch(ym)
@@ -692,6 +726,7 @@ class NativeShiftsView(
         periodStart: LocalDate,
         periodEnd: LocalDate,
         stats: PeriodStats,
+        periodBalance: PeriodBalanceResult?,
         combinedMap: Map<LocalDate, CalendarDisplayDay>
     ) {
         val en = DemoModeHelper.isEnglish(context)
@@ -773,13 +808,162 @@ class NativeShiftsView(
         root.addView(
             summaryBox,
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = dp(12)
+                bottomMargin = dp(10)
             }
         )
 
         val dialog = AlertDialog.Builder(context)
             .setView(root)
             .create()
+
+        // Saldoseuranta-osio (näytetään kun ominaisuus on päällä asetuksissa eikä olla demotilassa)
+        if (PeriodBalanceManager.isEnabled(context) && !DemoModeHelper.isDemoEnabled(context)) {
+            val balBox = LinearLayout(context).apply {
+                orientation = VERTICAL
+                background = UiStyleHelper.roundedBg(context, altBg, border, 10f)
+                setPadding(dp(12), dp(10), dp(12), dp(10))
+            }
+
+            if (periodBalance != null) {
+                val planH = PeriodBalanceManager.formatHoursDecimal(periodBalance.plannedMinutes, en)
+                val effH = PeriodBalanceManager.formatHoursDecimal(periodBalance.effectiveMinutes, en)
+                val diffExact = PeriodBalanceManager.formatSignedExact(periodBalance.diffMinutes, en)
+                val diffColor = when {
+                    periodBalance.diffMinutes > 0 -> "#4ADE80"
+                    periodBalance.diffMinutes < 0 -> "#F87171"
+                    else -> "#CBD5E1"
+                }
+
+                balBox.addView(
+                    TextView(context).apply {
+                        text = if (en) "Period balance: $diffExact" else "Jakson saldo: $diffExact"
+                        setTextColor(Color.parseColor(diffColor))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+                        setTypeface(null, Typeface.BOLD)
+                    }
+                )
+                val sickNote = if (periodBalance.creditedSickDays > 0) {
+                    val sickH = PeriodBalanceManager.formatHoursDecimal(periodBalance.creditedSickMinutes, en)
+                    if (en) " (incl. ${periodBalance.creditedSickDays} sick leave credited: $sickH h)"
+                    else " (sis. ${periodBalance.creditedSickDays} hyvitetty SL: $sickH h)"
+                } else {
+                    ""
+                }
+                balBox.addView(
+                    TextView(context).apply {
+                        text = if (en) {
+                            "Published plan: $planH h  •  Credited total: $effH h$sickNote"
+                        } else {
+                            "Julkaistu lista: $planH h  •  Hyväksiluettu: $effH h$sickNote"
+                        }
+                        setTextColor(Color.parseColor("#CBD5E1"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                        setPadding(0, dp(4), 0, 0)
+                    }
+                )
+
+                val balActions = LinearLayout(context).apply {
+                    orientation = HORIZONTAL
+                    setPadding(0, dp(8), 0, 0)
+                }
+                val btnResetBase = Button(context).apply {
+                    text = if (en) "Set current as plan" else "Aseta nykyinen pohjaksi"
+                    isAllCaps = false
+                    setTextColor(Color.parseColor("#38BDF8"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    background = UiStyleHelper.rippleRoundedBg(context, btnBg, borderStrong, 7f)
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                    minHeight = 0
+                    minimumHeight = dp(32)
+                    setOnClickListener {
+                        if (PeriodBalanceManager.saveManualBaseline(context, periodStart, periodEnd, combinedMap)) {
+                            dialog.dismiss()
+                            renderCalendarGridIfChanged(forceRender = true)
+                            Toast.makeText(
+                                context,
+                                if (en) "Period baseline updated" else "Jakson pohjasuunnitelma päivitetty",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }
+                val btnClearBase = Button(context).apply {
+                    text = if (en) "Clear" else "Poista pohja"
+                    isAllCaps = false
+                    setTextColor(Color.parseColor("#FCA5A5"))
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+                    background = UiStyleHelper.rippleRoundedBg(context, "#3F1D24", "#DC2626", 7f)
+                    setPadding(dp(8), dp(4), dp(8), dp(4))
+                    minHeight = 0
+                    minimumHeight = dp(32)
+                    setOnClickListener {
+                        PeriodBalanceManager.removeBaseline(context, periodStart)
+                        dialog.dismiss()
+                        renderCalendarGridIfChanged(forceRender = true)
+                        Toast.makeText(
+                            context,
+                            if (en) "Period balance cleared" else "Jakson saldoseuranta poistettu",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+                balActions.addView(btnResetBase, LayoutParams(0, dp(32), 1.3f).apply { marginEnd = dp(6) })
+                balActions.addView(btnClearBase, LayoutParams(0, dp(32), 1f))
+                balBox.addView(balActions, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+            } else {
+                val isFuture = periodStart.isAfter(LocalDate.now())
+                balBox.addView(
+                    TextView(context).apply {
+                        text = if (isFuture) {
+                            if (en) "Baseline will be saved automatically once all shifts of this period are loaded."
+                            else "Pohjasuunnitelma tallentuu automaattisesti, kun listan vuorot on ladattu."
+                        } else {
+                            if (en) "Automatic balance tracking starts from the next not-yet-started shift period."
+                            else "Automaattinen saldoseuranta alkaa seuraavasta vielä alkamattomasta listasta."
+                        }
+                        setTextColor(Color.parseColor("#94A3B8"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                    }
+                )
+                if (stats.shiftCount > 0) {
+                    val btnStartNow = Button(context).apply {
+                        text = if (en) "Track this period from current shifts" else "Aseta nykyinen lista pohjaksi"
+                        isAllCaps = false
+                        setTextColor(Color.parseColor("#38BDF8"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                        setTypeface(null, Typeface.BOLD)
+                        background = UiStyleHelper.rippleRoundedBg(context, btnBg, borderStrong, 8f)
+                        setPadding(dp(10), dp(6), dp(10), dp(6))
+                        minHeight = 0
+                        minimumHeight = dp(34)
+                        setOnClickListener {
+                            if (PeriodBalanceManager.saveManualBaseline(context, periodStart, periodEnd, combinedMap)) {
+                                dialog.dismiss()
+                                renderCalendarGridIfChanged(forceRender = true)
+                                Toast.makeText(
+                                    context,
+                                    if (en) "Baseline saved for this period" else "Pohjasuunnitelma tallennettu tälle jaksolle",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    }
+                    balBox.addView(
+                        btnStartNow,
+                        LayoutParams(LayoutParams.MATCH_PARENT, dp(34)).apply {
+                            topMargin = dp(8)
+                        }
+                    )
+                }
+            }
+
+            root.addView(
+                balBox,
+                LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = dp(12)
+                }
+            )
+        }
 
         val shareRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
@@ -887,12 +1071,21 @@ class NativeShiftsView(
         var weekStart = startMonday
         val weekFields = WeekFields.ISO
 
+        val availableMonths = LinkedHashSet<String>().apply {
+            if (currentMonthLoaded) add(ym.toString())
+            addAll(adjacentLoadedMonths)
+        }
+        val balanceEnabled = PeriodBalanceManager.isEnabled(context) && !DemoModeHelper.isDemoEnabled(context)
+        val periodBalanceCache = HashMap<LocalDate, PeriodBalanceResult?>()
+
         // Kuukausikoosteen laskurit
         var shiftCount = 0
         var totalMinutes = 0
         var morningCount = 0
         var eveningCount = 0
         var nightCount = 0
+        var monthBalanceDiff = 0
+        var monthHasTrackedBalance = false
 
         while (!weekStart.isAfter(endSunday)) {
             val daysFromAnchor = ChronoUnit.DAYS.between(anchorMonday, weekStart)
@@ -902,12 +1095,25 @@ class NativeShiftsView(
             val isPeriodStartRow = (weekStart == periodStart)
             val periodAccentHex = if (abs(periodIdx) % 2L == 0L) "#38BDF8" else "#F59E0B"
 
-            // 3 viikon työvuorolistajakson raja + tuntisaldo oikeaan reunaan (napautettava!)
+            val periodBalance = if (balanceEnabled) {
+                periodBalanceCache.getOrPut(periodStart) {
+                    PeriodBalanceManager.computePeriodBalance(
+                        context = context,
+                        periodStart = periodStart,
+                        periodEnd = periodEnd,
+                        combinedDayMap = combinedMap,
+                        availableMonths = availableMonths
+                    )
+                }
+            } else {
+                null
+            }
+
+            // 3 viikon työvuorolistajakson raja: vuorot • tunnit • aamu/ilta/yö (+ saldorivi jos pohja tallennettu)
             if (showShiftPeriods && (isPeriodStartRow || weekStart == startMonday)) {
                 val pStats = computePeriodStats(periodStart, periodEnd, combinedMap)
                 val periodBar = LinearLayout(context).apply {
-                    orientation = HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
+                    orientation = VERTICAL
                     background = UiStyleHelper.cellBg(
                         context = context,
                         fillHex = if (isPeriodStartRow) UiStyleHelper.periodBarStartHex(context) else UiStyleHelper.periodBarMidHex(context),
@@ -916,8 +1122,13 @@ class NativeShiftsView(
                     )
                     setPadding(dp(8), dp(4), dp(8), dp(4))
                     setOnClickListener {
-                        showPeriodSummaryDialog(periodStart, periodEnd, pStats, combinedMap)
+                        showPeriodSummaryDialog(periodStart, periodEnd, pStats, periodBalance, combinedMap)
                     }
+                }
+
+                val topLine = LinearLayout(context).apply {
+                    orientation = HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
                 }
                 val labelPrefix = if (en) "Period" else "Työvuorolista"
                 val rangeText = "${periodStart.format(shortDateFmt)}–${periodEnd.format(shortDateFmt)}"
@@ -927,7 +1138,7 @@ class NativeShiftsView(
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                     setTypeface(null, if (isPeriodStartRow) Typeface.BOLD else Typeface.NORMAL)
                 }
-                periodBar.addView(pTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                topLine.addView(pTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
 
                 if (pStats.shiftCount > 0) {
                     val pHours = ScheduleShareHelper.formatHours(pStats.totalMinutes, en)
@@ -945,13 +1156,50 @@ class NativeShiftsView(
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                         setTypeface(null, Typeface.BOLD)
                     }
-                    periodBar.addView(
+                    topLine.addView(
                         hTv,
                         LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
                             marginStart = dp(6)
                         }
                     )
                 }
+                periodBar.addView(topLine, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+                if (periodBalance != null) {
+                    val balRow = LinearLayout(context).apply {
+                        orientation = HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(0, dp(2), 0, 0)
+                    }
+                    val planH = PeriodBalanceManager.formatHoursDecimal(periodBalance.plannedMinutes, en)
+                    val sickTag = if (periodBalance.creditedSickDays > 0) {
+                        if (en) " • ${periodBalance.creditedSickDays} SL credited" else " • ${periodBalance.creditedSickDays} SL hyvitetty"
+                    } else {
+                        ""
+                    }
+                    val origTv = TextView(context).apply {
+                        text = (if (en) "Plan $planH h" else "Alkup. $planH h") + sickTag
+                        setTextColor(Color.parseColor("#94A3B8"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                    }
+                    balRow.addView(origTv, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+
+                    val signedStr = PeriodBalanceManager.formatSignedHours(periodBalance.diffMinutes, en)
+                    val balColorHex = when {
+                        periodBalance.diffMinutes > 0 -> "#4ADE80"
+                        periodBalance.diffMinutes < 0 -> "#F87171"
+                        else -> "#94A3B8"
+                    }
+                    val balTv = TextView(context).apply {
+                        text = if (en) "Bal $signedStr" else "Saldo $signedStr"
+                        setTextColor(Color.parseColor(balColorHex))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                        setTypeface(null, Typeface.BOLD)
+                    }
+                    balRow.addView(balTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                    periodBar.addView(balRow, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+                }
+
                 gridContainer.addView(periodBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             }
 
@@ -985,6 +1233,13 @@ class NativeShiftsView(
                 val isWeekend = (offset == 5 || offset == 6)
                 val holidayName = if (showHolidays && isCurrentMonth) FinnishHolidays.getHolidayName(date, en) else null
                 val dayData = dayMap[date]
+                val dayBalance = if (isCurrentMonth) periodBalance?.dayDetails?.get(date) else null
+                if (isCurrentMonth && periodBalance != null) {
+                    monthHasTrackedBalance = true
+                    if (dayBalance != null) {
+                        monthBalanceDiff += dayBalance.diffMinutes
+                    }
+                }
                 val shortRestMins = if (showShortRest && isCurrentMonth) computeShortRestMinutes(date, combinedMap) else null
 
                 if (isCurrentMonth && dayData != null) {
@@ -1025,7 +1280,7 @@ class NativeShiftsView(
                     setPadding(dp(2), dp(2), dp(2), dp(3))
                     minimumHeight = dp(72)
                     if (isCurrentMonth) {
-                        setOnClickListener { showDayDetailsDialog(date, dayData, holidayName, shortRestMins) }
+                        setOnClickListener { showDayDetailsDialog(date, dayData, holidayName, shortRestMins, dayBalance) }
                     }
                 }
 
@@ -1098,36 +1353,77 @@ class NativeShiftsView(
                 val nextAbsences = if (offset < 6) dayMap[nextDate]?.absences.orEmpty() else emptyList()
 
                 dayData?.absences?.forEach { absItem ->
-                    val connectedLeft = prevAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
-                    val connectedRight = nextAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
-                    val (bgHex, fgHex) = when (absItem.kind) {
-                        "vacation" -> "#15803D" to "#FFFFFF"
-                        "sick" -> "#B91C1C" to "#FFFFFF"
-                        else -> "#334155" to "#F1F5F9"
-                    }
-                    val r = dp(4).toFloat()
-                    val rL = if (connectedLeft) 0f else r
-                    val rR = if (connectedRight) 0f else r
-                    val badge = TextView(context).apply {
-                        text = if (connectedLeft) " " else absItem.title
-                        setTextColor(Color.parseColor(fgHex))
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
-                        setTypeface(null, Typeface.BOLD)
-                        maxLines = 1
-                        ellipsize = TextUtils.TruncateAt.END
-                        background = GradientDrawable().apply {
-                            shape = GradientDrawable.RECTANGLE
-                            setColor(Color.parseColor(bgHex))
-                            cornerRadii = floatArrayOf(rL, rL, rR, rR, rR, rR, rL, rL)
+                    if (absItem.kind == "sick" &&
+                        dayBalance?.isCreditedSick == true &&
+                        dayBalance.plannedStartText.isNotEmpty() &&
+                        dayData.shifts.isEmpty()
+                    ) {
+                        val sickBox = LinearLayout(context).apply {
+                            orientation = VERTICAL
+                            gravity = Gravity.CENTER
+                            background = UiStyleHelper.roundedBg(context, "#991B1B", "#F87171", 4f)
+                            setPadding(dp(2), dp(2), dp(2), dp(2))
                         }
-                        setPadding(if (connectedLeft) 0 else dp(3), dp(1), if (connectedRight) 0 else dp(3), dp(1))
-                    }
-                    cell.addView(
-                        badge,
-                        LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = dp(2)
+                        sickBox.addView(
+                            TextView(context).apply {
+                                text = "${dayBalance.plannedStartText}\n${dayBalance.plannedEndText}"
+                                setTextColor(Color.WHITE)
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                                setTypeface(null, Typeface.BOLD)
+                                gravity = Gravity.CENTER
+                                maxLines = 2
+                            },
+                            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+                        )
+                        sickBox.addView(
+                            TextView(context).apply {
+                                text = if (en) "SL cred." else "SL hyv."
+                                setTextColor(Color.parseColor("#FECACA"))
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
+                                setTypeface(null, Typeface.BOLD)
+                                gravity = Gravity.CENTER
+                                maxLines = 1
+                            },
+                            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+                        )
+                        cell.addView(
+                            sickBox,
+                            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                                bottomMargin = dp(2)
+                            }
+                        )
+                    } else {
+                        val connectedLeft = prevAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
+                        val connectedRight = nextAbsences.any { it.title.equals(absItem.title, ignoreCase = true) }
+                        val (bgHex, fgHex) = when (absItem.kind) {
+                            "vacation" -> "#15803D" to "#FFFFFF"
+                            "sick" -> "#B91C1C" to "#FFFFFF"
+                            else -> "#334155" to "#F1F5F9"
                         }
-                    )
+                        val r = dp(4).toFloat()
+                        val rL = if (connectedLeft) 0f else r
+                        val rR = if (connectedRight) 0f else r
+                        val badge = TextView(context).apply {
+                            text = if (connectedLeft) " " else absItem.title
+                            setTextColor(Color.parseColor(fgHex))
+                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                            setTypeface(null, Typeface.BOLD)
+                            maxLines = 1
+                            ellipsize = TextUtils.TruncateAt.END
+                            background = GradientDrawable().apply {
+                                shape = GradientDrawable.RECTANGLE
+                                setColor(Color.parseColor(bgHex))
+                                cornerRadii = floatArrayOf(rL, rL, rR, rR, rR, rR, rL, rL)
+                            }
+                            setPadding(if (connectedLeft) 0 else dp(3), dp(1), if (connectedRight) 0 else dp(3), dp(1))
+                        }
+                        cell.addView(
+                            badge,
+                            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                                bottomMargin = dp(2)
+                            }
+                        )
+                    }
                 }
 
                 // Työvuorot asetusten värikoodeilla
@@ -1198,7 +1494,25 @@ class NativeShiftsView(
                 if (shiftCount == 1) "vuoro" else "vuoroa"
             }
             val breakdownSuffix = if (breakdownParts.isNotEmpty()) "  •  ${breakdownParts.joinToString(" / ")}" else ""
-            txtMonthSummary.text = "$shiftCount $shiftWord • $hoursStr h$breakdownSuffix"
+            val baseText = "$shiftCount $shiftWord • $hoursStr h$breakdownSuffix"
+            if (balanceEnabled && monthHasTrackedBalance) {
+                val sb = SpannableStringBuilder(baseText)
+                sb.append("  •  ")
+                val balStart = sb.length
+                val signedStr = PeriodBalanceManager.formatSignedHours(monthBalanceDiff, en)
+                val balWord = if (en) "bal" else "saldo"
+                sb.append("$balWord $signedStr")
+                val balColor = when {
+                    monthBalanceDiff > 0 -> Color.parseColor("#4ADE80")
+                    monthBalanceDiff < 0 -> Color.parseColor("#F87171")
+                    else -> Color.parseColor("#94A3B8")
+                }
+                sb.setSpan(ForegroundColorSpan(balColor), balStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                sb.setSpan(StyleSpan(Typeface.BOLD), balStart, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                txtMonthSummary.text = sb
+            } else {
+                txtMonthSummary.text = baseText
+            }
             txtMonthSummary.visibility = View.VISIBLE
         } else {
             txtMonthSummary.visibility = View.GONE
@@ -1240,7 +1554,8 @@ class NativeShiftsView(
         date: LocalDate,
         dayData: CalendarDisplayDay?,
         holidayName: String?,
-        shortRestMins: Long?
+        shortRestMins: Long?,
+        dayBalance: DayBalanceInfo?
     ) {
         val en = DemoModeHelper.isEnglish(context)
         val fiWeekdays = arrayOf("Ma", "Ti", "Ke", "To", "Pe", "La", "Su")
@@ -1314,6 +1629,64 @@ class NativeShiftsView(
                     bottomMargin = dp(8)
                 }
             )
+        }
+
+        if (dayBalance != null) {
+            if (dayBalance.isCreditedSick) {
+                val credMin = (dayBalance.plannedMinutes - dayBalance.actualMinutes).coerceAtLeast(0)
+                val credH = PeriodBalanceManager.formatHoursDecimal(credMin, en)
+                val timesPart = if (dayBalance.plannedStartText.isNotEmpty()) {
+                    " ${dayBalance.plannedStartText}–${dayBalance.plannedEndText}"
+                } else {
+                    ""
+                }
+                contentBox.addView(
+                    TextView(context).apply {
+                        text = if (en) {
+                            "Credited sick leave:$timesPart ($credH h) — no negative balance"
+                        } else {
+                            "Hyvitetty sairausloma:$timesPart ($credH h) — ei kerrytä miinussaldoa"
+                        }
+                        setTextColor(Color.parseColor("#FECACA"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                        setTypeface(null, Typeface.BOLD)
+                        background = UiStyleHelper.roundedBg(context, "#3F1D24", "#EF4444", 8f)
+                        setPadding(dp(10), dp(7), dp(10), dp(7))
+                    },
+                    LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(8)
+                    }
+                )
+            } else if (dayBalance.diffMinutes != 0) {
+                val diffStr = PeriodBalanceManager.formatSignedExact(dayBalance.diffMinutes, en)
+                val planInfo = if (dayBalance.plannedMinutes > 0 && dayBalance.plannedStartText.isNotEmpty()) {
+                    if (en) " (plan ${dayBalance.plannedStartText}–${dayBalance.plannedEndText})"
+                    else " (alkup. ${dayBalance.plannedStartText}–${dayBalance.plannedEndText})"
+                } else if (dayBalance.plannedMinutes == 0) {
+                    if (en) " (added shift)" else " (lisävuoro)"
+                } else {
+                    ""
+                }
+                val isPos = dayBalance.diffMinutes > 0
+                contentBox.addView(
+                    TextView(context).apply {
+                        text = (if (en) "Balance impact: " else "Saldovaikutus: ") + diffStr + planInfo
+                        setTextColor(Color.parseColor(if (isPos) "#4ADE80" else "#FCA5A5"))
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                        setTypeface(null, Typeface.BOLD)
+                        background = UiStyleHelper.roundedBg(
+                            context,
+                            if (isPos) "#0F2E26" else "#3F1D24",
+                            if (isPos) "#22C55E" else "#F87171",
+                            8f
+                        )
+                        setPadding(dp(10), dp(7), dp(10), dp(7))
+                    },
+                    LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                        bottomMargin = dp(8)
+                    }
+                )
+            }
         }
 
         var hasAny = false

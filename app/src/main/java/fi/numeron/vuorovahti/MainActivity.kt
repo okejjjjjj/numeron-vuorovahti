@@ -1914,6 +1914,7 @@ class MainActivity : AppCompatActivity() {
                 val displayData = NumeronParser.parseMonthForDisplayDoc(doc)
                 if (displayData != null) {
                     NumeronApiClient.saveMonthDisplayCache(this@MainActivity, displayData)
+                    PeriodBalanceManager.recordMonthSnapshot(this@MainActivity, displayData)
                     displayData.days.values.forEach { day ->
                         if (day.hasCommentCircle) circleDates.add(day.date)
                     }

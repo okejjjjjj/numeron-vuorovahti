@@ -873,6 +873,18 @@ object SettingsDialogHelper {
         periodDetailsContainer.addView(editPeriodAnchor)
         calCard.addView(periodDetailsContainer)
 
+        val initialPeriodBalance = prefs.getBoolean(PeriodBalanceManager.PREF_ENABLED, true)
+        val switchPeriodBalance = createToggleRow(
+            parent = calCard,
+            title = if (en) "Track 3-week period hour balance" else "Seuraa työvuorolistan tuntisaldoa",
+            subtitle = if (en) {
+                "Compares worked hours against the published schedule (sick leaves are credited). Automatic tracking starts from the next not-yet-started period."
+            } else {
+                "Vertaa toteutuneita tunteja julkaistuun listaan (sairauslomat hyvitetään). Laskenta alkaa vasta seuraavasta vielä alkamattomasta listasta."
+            },
+            initialChecked = initialPeriodBalance
+        )
+
         val initialShowHolidays = prefs.getBoolean("show_finnish_holidays", true)
         val switchShowHolidays = createToggleRow(
             parent = calCard,
@@ -1271,6 +1283,7 @@ object SettingsDialogHelper {
             val newShiftReminders = switchShiftReminders.isChecked
             val newTrackRequests = switchTrackRequests.isChecked
             val newShowShiftPeriods = switchShowShiftPeriods.isChecked
+            val newPeriodBalance = switchPeriodBalance.isChecked
             val newShowHolidays = switchShowHolidays.isChecked
             val newShortRest = switchShortRest.isChecked
             val newAmoledTheme = switchAmoledTheme.isChecked
@@ -1310,6 +1323,7 @@ object SettingsDialogHelper {
                 .putBoolean("track_requests", newTrackRequests)
                 .putBoolean("show_shift_periods", newShowShiftPeriods)
                 .putString("shift_period_anchor_iso", parsedAnchorIso)
+                .putBoolean(PeriodBalanceManager.PREF_ENABLED, newPeriodBalance)
                 .putBoolean("show_finnish_holidays", newShowHolidays)
                 .putBoolean("show_short_rest_warning", newShortRest)
                 .putBoolean("amoled_black_theme", newAmoledTheme)

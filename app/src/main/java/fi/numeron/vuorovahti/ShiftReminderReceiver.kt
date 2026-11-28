@@ -665,6 +665,7 @@ class BackgroundSyncWorker(
                     val displayData = NumeronParser.parseMonthForDisplayDoc(doc)
                     if (displayData != null) {
                         NumeronApiClient.saveMonthDisplayCache(appContext, displayData)
+                        PeriodBalanceManager.recordMonthSnapshot(appContext, displayData)
                         displayData.days.values.forEach { day ->
                             if (day.hasCommentCircle) circleDates.add(day.date)
                         }
