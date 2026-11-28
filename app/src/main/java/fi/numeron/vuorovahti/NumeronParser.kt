@@ -154,8 +154,9 @@ object NumeronParser {
         return nameText.contains("koulutus", ignoreCase = true)
     }
 
-    fun parseCalendarHtml(html: String): List<WorkShift>? {
-        val doc = Jsoup.parse(html)
+    fun parseCalendarHtml(html: String): List<WorkShift>? = parseCalendarDoc(Jsoup.parse(html))
+
+    fun parseCalendarDoc(doc: org.jsoup.nodes.Document): List<WorkShift>? {
         val shifts = mutableListOf<WorkShift>()
 
         val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return null
@@ -411,9 +412,17 @@ object NumeronParser {
         shifts: List<WorkShift>
     ): List<WorkShift> {
         if (baseUrl.isBlank() || shifts.isEmpty()) return shifts
-
         val circleDates = htmlPages.flatMapTo(mutableSetOf()) { extractCircleDates(it) }
-        if (circleDates.isEmpty()) return shifts
+        return enrichShiftsWithListCommentsFromCircleDates(baseUrl, cookieHeader, circleDates, shifts)
+    }
+
+    fun enrichShiftsWithListCommentsFromCircleDates(
+        baseUrl: String,
+        cookieHeader: String?,
+        circleDates: Set<LocalDate>,
+        shifts: List<WorkShift>
+    ): List<WorkShift> {
+        if (baseUrl.isBlank() || shifts.isEmpty() || circleDates.isEmpty()) return shifts
 
         val relevantDates = shifts
             .filter { !it.isAllDayLeave && it.start.toLocalDate() in circleDates }
@@ -525,8 +534,9 @@ object NumeronParser {
         }
     }
 
-    fun parseMonthForDisplay(html: String): MonthDisplayData? {
-        val doc = Jsoup.parse(html)
+    fun parseMonthForDisplay(html: String): MonthDisplayData? = parseMonthForDisplayDoc(Jsoup.parse(html))
+
+    fun parseMonthForDisplayDoc(doc: org.jsoup.nodes.Document): MonthDisplayData? {
         val monthHeader = doc.selectFirst("#monthText")?.text()?.trim()?.lowercase() ?: return null
         val parts = monthHeader.split(Regex("\\s+"))
         if (parts.size < 2) return null

@@ -23,7 +23,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 import java.time.LocalDate
 import java.util.concurrent.TimeUnit
 
@@ -414,132 +413,50 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             nm.notify(notifId, notif)
         }
 
-        fun syncRequestsAndNotify(context: Context, baseUrl: String): Int {
+        suspend fun syncRequestsAndNotify(context: Context, baseUrl: String): Int {
             if (baseUrl.isBlank()) return 0
-            val jsonStr = fetchRequestsJson(context, baseUrl) ?: return 0
-            return checkRequestUpdates(context, jsonStr)
-        }
-
-        private fun fetchRequestsJson(context: Context, baseUrl: String): String? {
-            var conn: java.net.HttpURLConnection? = null
             val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-            return try {
-                val cookies = SessionCookieStore.getCookieHeader(context, baseUrl)
-                if (cookies.isNullOrBlank()) {
-                    prefs.edit().putString("last_requests_check_status", "NO_COOKIES").apply()
-                    return null
-                }
-                conn = (java.net.URL("$baseUrl/PersonRequests/Read").openConnection() as java.net.HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    instanceFollowRedirects = false
-                    setRequestProperty("Cookie", cookies)
-                    setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                    setRequestProperty("Accept", "application/json, text/javascript, */*; q=0.01")
-                    setRequestProperty("X-Requested-With", "XMLHttpRequest")
-                    setRequestProperty(
-                        "User-Agent",
-                        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
-                    )
-                    doOutput = true
-                    connectTimeout = 15000
-                    readTimeout = 15000
-                }
-                java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                    writer.write("sort=&page=1&pageSize=100&group=&filter=&selectedFilter=active")
-                    writer.flush()
-                }
-                val code = conn.responseCode
-                val text = if (code == 200) {
-                    conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                } else {
-                    null
-                }
-                if (text != null && text.trim().startsWith("{")) {
-                    text
-                } else {
-                    prefs.edit().putString("last_requests_check_status", "HTTP_$code").apply()
-                    null
-                }
-            } catch (e: Exception) {
-                prefs.edit().putString("last_requests_check_status", "ERR:${e.javaClass.simpleName}").apply()
-                null
-            } finally {
-                conn?.disconnect()
+            val result = NumeronApiClient.fetchRequests(context, "active")
+            val items = result.items
+            if (items == null || result.fromCache) {
+                prefs.edit()
+                    .putString("last_requests_check_status", if (result.fromCache) "CACHE_ONLY" else "FETCH_FAILED")
+                    .apply()
+                return 0
             }
+            return checkRequestUpdates(context, items)
         }
 
-        private fun parseStatusCode(item: JSONObject): Int {
-            val fromStr = item.optString("Status", "").trim().toIntOrNull()
-                ?: item.optString("StatusId", "").trim().toIntOrNull()
-            if (fromStr != null) return fromStr
-            val fromInt = item.optInt("Status", -1)
-            return if (fromInt > 0) fromInt else item.optInt("StatusId", -1)
-        }
-
-        private fun resolveRequestStatusCode(rawStatus: Int, statusDesc: String): Int {
-            if (rawStatus == 40 || rawStatus == 50 || rawStatus == 80) return rawStatus
-            val lower = statusDesc.trim().lowercase()
-            if (lower.isEmpty()) return rawStatus
-            return when {
-                lower.contains("odottaa") || lower.contains("pending") || lower.contains("waiting") || lower.contains("väntar") -> 10
-                lower.contains("osittain") || lower.contains("partial") || lower.contains("delvis") -> 40
-                lower.contains("hylätty") || lower.contains("reject") || lower.contains("denied") || lower.contains("avslag") -> 80
-                lower.contains("hyväksytty") || lower.contains("approved") || lower.contains("godkänd") -> 50
-                else -> rawStatus
-            }
-        }
-
-        private fun fallbackStatusLabel(statusId: Int, en: Boolean): String = when (statusId) {
-            40 -> if (en) "Partially approved" else "Osittain hyväksytty"
-            50 -> if (en) "Approved" else "Hyväksytty"
-            80 -> if (en) "Rejected" else "Hylätty"
-            else -> ""
-        }
-
-        private fun parseDotNetDateMs(raw: String): Long? {
-            val match = Regex("/Date\\((-?\\d+)\\)/").find(raw.trim()) ?: return null
-            return match.groupValues[1].toLongOrNull()
-        }
-
-        private fun checkRequestUpdates(context: Context, jsonStr: String): Int {
+        private fun checkRequestUpdates(context: Context, items: List<PersonRequestItem>): Int {
             var sentCount = 0
             try {
                 val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
                 val notifiedIds = prefs.getStringSet("notified_request_ids", emptySet())?.toMutableSet() ?: mutableSetOf()
                 val baselineInitialized = prefs.getBoolean("requests_baseline_initialized", false) || notifiedIds.isNotEmpty()
                 val nowMs = System.currentTimeMillis()
+                val dateFmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
+                val en = DemoModeHelper.isEnglish(context)
                 var changed = false
                 var processedFound = 0
 
-                val root = JSONObject(jsonStr)
-                val dataArray = root.optJSONArray("data") ?: root.optJSONArray("Data") ?: return 0
-                val en = DemoModeHelper.isEnglish(context)
-
-                for (i in 0 until dataArray.length()) {
-                    val item = dataArray.optJSONObject(i) ?: continue
-                    val id = item.optInt("Id", -1).let { if (it > 0) it else item.optInt("RowId", -1) }
-                    val rawStatus = parseStatusCode(item)
-                    val typeName = item.optString("Type", if (en) "Request" else "Toive")
-                    val rawDesc = item.optString("StatusDescription", "").trim()
-                    val statusId = resolveRequestStatusCode(rawStatus, rawDesc)
-                    val statusDesc = rawDesc.ifEmpty { fallbackStatusLabel(statusId, en) }
-                    val dateStr = formatRequestDate(item.optString("DateFrom", ""))
-                    val bodyText = if (dateStr.isNotEmpty()) "$typeName ($dateStr)" else typeName
-                    val approvedMs = parseDotNetDateMs(item.optString("ApprovedDate", ""))
-                    val approvedRecently = approvedMs != null && (nowMs - approvedMs) in 0L..(24L * 60L * 60L * 1000L)
-
-                    if (id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
+                for (item in items) {
+                    val statusId = item.statusCode
+                    if (item.id > 0 && (statusId == 50 || statusId == 80 || statusId == 40)) {
                         processedFound++
-                        val key = "${id}_$statusId"
+                        val key = "${item.id}_$statusId"
                         if (!notifiedIds.contains(key)) {
                             notifiedIds.add(key)
                             changed = true
+                            val approvedMs = item.approvedDateMs
+                            val approvedRecently = approvedMs != null && (nowMs - approvedMs) in 0L..(24L * 60L * 60L * 1000L)
                             if (baselineInitialized || approvedRecently) {
+                                val dateStr = item.dateFrom?.format(dateFmt).orEmpty()
+                                val bodyText = if (dateStr.isNotEmpty()) "${item.type} ($dateStr)" else item.type
                                 showRequestDecisionNotification(
                                     context,
-                                    if (en) "Request processed: $statusDesc" else "Toive käsitelty: $statusDesc",
+                                    if (en) "Request processed: ${item.statusDescription}" else "Toive käsitelty: ${item.statusDescription}",
                                     bodyText,
-                                    id
+                                    item.id
                                 )
                                 sentCount++
                             }
@@ -547,7 +464,7 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                     }
                 }
                 prefs.edit().apply {
-                    putString("last_requests_check_status", "OK:${dataArray.length()}/$processedFound")
+                    putString("last_requests_check_status", "OK:${items.size}/$processedFound")
                     if (changed || !baselineInitialized) {
                         putStringSet("notified_request_ids", notifiedIds)
                         putBoolean("requests_baseline_initialized", true)
@@ -556,29 +473,6 @@ class ShiftReminderReceiver : BroadcastReceiver() {
             } catch (_: Exception) {
             }
             return sentCount
-        }
-
-        private fun formatRequestDate(raw: String): String {
-            val trimmed = raw.trim()
-            if (trimmed.isEmpty() || trimmed.equals("null", ignoreCase = true)) return ""
-            val fmt = java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")
-            val ms = parseDotNetDateMs(trimmed)
-            if (ms != null) {
-                return java.time.Instant.ofEpochMilli(ms)
-                    .atZone(java.time.ZoneId.systemDefault())
-                    .toLocalDate()
-                    .format(fmt)
-            }
-            val isoMatch = Regex("^(\\d{4}-\\d{2}-\\d{2})").find(trimmed)
-            if (isoMatch != null) {
-                return try {
-                    LocalDate.parse(isoMatch.groupValues[1]).format(fmt)
-                } catch (_: Exception) {
-                    ""
-                }
-            }
-            val fiMatch = Regex("^\\d{1,2}\\.\\d{1,2}\\.\\d{4}").find(trimmed)
-            return fiMatch?.value ?: ""
         }
     }
 }
@@ -626,20 +520,28 @@ class BackgroundSyncWorker(
             if (pages == null || pages.size < 2) {
                 null
             } else {
-                pages.forEach { html ->
-                    NumeronParser.parseMonthForDisplay(html)?.let { displayData ->
+                val docs = pages.map { org.jsoup.Jsoup.parse(it) }
+                val circleDates = mutableSetOf<LocalDate>()
+                docs.forEach { doc ->
+                    val displayData = NumeronParser.parseMonthForDisplayDoc(doc)
+                    if (displayData != null) {
                         NumeronApiClient.saveMonthDisplayCache(appContext, displayData)
+                        displayData.days.values.forEach { day ->
+                            if (day.hasCommentCircle) circleDates.add(day.date)
+                        }
+                    } else {
+                        circleDates.addAll(NumeronParser.extractCircleDatesFromDoc(doc))
                     }
                 }
-                val parsed = pages.map { NumeronParser.parseCalendarHtml(it) }
+                val parsed = docs.map { NumeronParser.parseCalendarDoc(it) }
                 if (parsed.any { it == null }) {
                     null
                 } else {
                     val cookies = SessionCookieStore.getCookieHeader(appContext, baseUrl)
-                    val enriched = NumeronParser.enrichShiftsWithListComments(
+                    val enriched = NumeronParser.enrichShiftsWithListCommentsFromCircleDates(
                         baseUrl = baseUrl,
                         cookieHeader = cookies,
-                        htmlPages = pages,
+                        circleDates = circleDates,
                         shifts = parsed.filterNotNull().flatten()
                     )
                     NumeronParser.mergeConsecutiveLeaves(enriched)

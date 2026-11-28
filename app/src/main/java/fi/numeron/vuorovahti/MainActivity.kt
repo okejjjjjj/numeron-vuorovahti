@@ -1862,12 +1862,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun processSyncedCalendarPages(pagesToParse: List<String>) {
         scope.launch(Dispatchers.IO) {
-            pagesToParse.forEach { html ->
-                NumeronParser.parseMonthForDisplay(html)?.let { displayData ->
+            val parsedDocs = pagesToParse.map { org.jsoup.Jsoup.parse(it) }
+            val circleDates = mutableSetOf<LocalDate>()
+            parsedDocs.forEach { doc ->
+                val displayData = NumeronParser.parseMonthForDisplayDoc(doc)
+                if (displayData != null) {
                     NumeronApiClient.saveMonthDisplayCache(this@MainActivity, displayData)
+                    displayData.days.values.forEach { day ->
+                        if (day.hasCommentCircle) circleDates.add(day.date)
+                    }
+                } else {
+                    circleDates.addAll(NumeronParser.extractCircleDatesFromDoc(doc))
                 }
             }
-            val parsedPages = pagesToParse.map { NumeronParser.parseCalendarHtml(it) }
+            val parsedPages = parsedDocs.map { NumeronParser.parseCalendarDoc(it) }
             if (parsedPages.any { it == null }) {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
@@ -1880,10 +1888,10 @@ class MainActivity : AppCompatActivity() {
             }
             val baseUrl = getBaseUrl()
             val cookies = SessionCookieStore.getCookieHeader(this@MainActivity, baseUrl)
-            val rawShifts = NumeronParser.enrichShiftsWithListComments(
+            val rawShifts = NumeronParser.enrichShiftsWithListCommentsFromCircleDates(
                 baseUrl = baseUrl,
                 cookieHeader = cookies,
-                htmlPages = pagesToParse,
+                circleDates = circleDates,
                 shifts = parsedPages.filterNotNull().flatten()
             )
             val prefs = getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)

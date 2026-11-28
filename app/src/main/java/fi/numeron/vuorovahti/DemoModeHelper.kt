@@ -22,16 +22,21 @@ object DemoModeHelper {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
         val org = (prefs.getString("org_raw_input", "") ?: "").trim()
         val serverUrl = (prefs.getString("server_url", "") ?: "").trim()
-        val user = (SecureCredentialManager.getUsername(context) ?: "").trim()
-        val pass = SecureCredentialManager.getPassword(context) ?: ""
 
-        if (user.isEmpty() || pass.isEmpty() || (org.isEmpty() && serverUrl.isEmpty())) {
+        if (org.isEmpty() && serverUrl.isEmpty()) {
             return true
         }
         if (UrlNormalizer.isDemoInput(org) || UrlNormalizer.isDemoInput(serverUrl)) {
             return true
         }
-        return isDemoCredentials(org.ifEmpty { serverUrl }, user, pass)
+        if (prefs.contains("demo_mode")) {
+            return prefs.getBoolean("demo_mode", true)
+        }
+        val user = (SecureCredentialManager.getUsername(context) ?: "").trim()
+        val pass = SecureCredentialManager.getPassword(context) ?: ""
+        val demo = user.isEmpty() || pass.isEmpty() || isDemoCredentials(org.ifEmpty { serverUrl }, user, pass)
+        prefs.edit().putBoolean("demo_mode", demo).apply()
+        return demo
     }
 
     fun isEnglish(context: Context): Boolean {

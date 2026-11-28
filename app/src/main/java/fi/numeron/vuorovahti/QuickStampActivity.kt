@@ -33,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.time.LocalDate
@@ -455,13 +456,10 @@ class QuickStampActivity : AppCompatActivity() {
         }
 
         val baseUrl = UrlNormalizer.getSavedBaseUrl(this)
-        val user = SecureCredentialManager.getUsername(this).orEmpty()
-        val pass = SecureCredentialManager.getPassword(this).orEmpty()
-
-        if (baseUrl.isEmpty() || user.isEmpty() || pass.isEmpty()) {
+        if (baseUrl.isEmpty()) {
             showFinalState(
-                title = "Tunnukset puuttuvat",
-                subtitle = "Tarkista kirjautuminen sovelluksesta",
+                title = if (en) "Credentials missing" else "Tunnukset puuttuvat",
+                subtitle = if (en) "Check login in the app" else "Tarkista kirjautuminen sovelluksesta",
                 badgeText = "!",
                 badgeFillHex = "#3B2810",
                 badgeStrokeHex = "#F59E0B",
@@ -473,20 +471,45 @@ class QuickStampActivity : AppCompatActivity() {
 
         scheduleTimeout(22_000L)
 
-        if (BackgroundAuthHelper.isCredentialBlocked(this)) {
-            showFinalState(
-                title = if (en) "Login failed" else "Kirjautuminen epäonnistui",
-                subtitle = if (en) "Check username and password in Settings" else "Tarkista käyttäjätunnus ja salasana asetuksista",
-                badgeText = "!",
-                badgeFillHex = "#3B181E",
-                badgeStrokeHex = "#EF4444",
-                badgeTextHex = "#F87171",
-                closeDelayMs = 1700L
-            )
-            return
-        }
-
         activeJob = scope.launch {
+            val (hasCredentials, isBlocked) = withContext(Dispatchers.IO) {
+                val u = SecureCredentialManager.getUsername(this@QuickStampActivity).orEmpty()
+                val p = SecureCredentialManager.getPassword(this@QuickStampActivity).orEmpty()
+                val blocked = if (u.isNotEmpty() && p.isNotEmpty()) {
+                    BackgroundAuthHelper.isCredentialBlocked(this@QuickStampActivity)
+                } else {
+                    false
+                }
+                (u.isNotEmpty() && p.isNotEmpty()) to blocked
+            }
+            if (isCompleted) return@launch
+
+            if (!hasCredentials) {
+                showFinalState(
+                    title = if (en) "Credentials missing" else "Tunnukset puuttuvat",
+                    subtitle = if (en) "Check login in the app" else "Tarkista kirjautuminen sovelluksesta",
+                    badgeText = "!",
+                    badgeFillHex = "#3B2810",
+                    badgeStrokeHex = "#F59E0B",
+                    badgeTextHex = "#FBBF24",
+                    closeDelayMs = 1700L
+                )
+                return@launch
+            }
+
+            if (isBlocked) {
+                showFinalState(
+                    title = if (en) "Login failed" else "Kirjautuminen epäonnistui",
+                    subtitle = if (en) "Check username and password in Settings" else "Tarkista käyttäjätunnus ja salasana asetuksista",
+                    badgeText = "!",
+                    badgeFillHex = "#3B181E",
+                    badgeStrokeHex = "#EF4444",
+                    badgeTextHex = "#F87171",
+                    closeDelayMs = 1700L
+                )
+                return@launch
+            }
+
             val wantIn = !isEnding
             val result = NumeronApiClient.performQuickStamp(
                 context = this@QuickStampActivity,
@@ -535,7 +558,8 @@ class QuickStampActivity : AppCompatActivity() {
                     )
                 }
                 is StampSubmitResult.Failed -> {
-                    if (result.fallbackToWebView && !BackgroundAuthHelper.isCredentialBlocked(this@QuickStampActivity)) {
+                    val blockedNow = if (result.fallbackToWebView) withContext(Dispatchers.IO) { BackgroundAuthHelper.isCredentialBlocked(this@QuickStampActivity) } else true
+                    if (result.fallbackToWebView && !blockedNow) {
                         statusText.text = if (en) "Opening time stamping…" else "Avataan työaikaleimaus…"
                         startHiddenStampingWebView(baseUrl, wantIn = wantIn, targetText = targetText)
                     } else {

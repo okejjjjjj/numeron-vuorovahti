@@ -13,6 +13,12 @@ object SecureCredentialManager {
 
     @Volatile
     private var cachedEncryptedPrefs: SharedPreferences? = null
+    @Volatile
+    private var credentialsLoaded: Boolean = false
+    @Volatile
+    private var cachedUsername: String? = null
+    @Volatile
+    private var cachedPassword: String? = null
 
     internal fun getSharedEncryptedPrefs(context: Context): SharedPreferences? = getEncryptedPrefs(context)
 
@@ -72,7 +78,29 @@ object SecureCredentialManager {
         }
     }
 
+    private fun ensureCredentialsLoaded(context: Context) {
+        if (credentialsLoaded) return
+        synchronized(this) {
+            if (credentialsLoaded) return
+            migrateLegacyIfNeeded(context)
+            val enc = getEncryptedPrefs(context)
+            val legacyPrefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            val u = enc?.getString(KEY_USERNAME, null)?.takeIf { it.isNotEmpty() }
+                ?: legacyPrefs.getString("username", null)?.takeIf { it.isNotEmpty() }
+            val p = enc?.getString(KEY_PASSWORD, null)?.takeIf { it.isNotEmpty() }
+                ?: legacyPrefs.getString("password", null)?.takeIf { it.isNotEmpty() }
+            cachedUsername = u
+            cachedPassword = p
+            credentialsLoaded = true
+        }
+    }
+
     fun saveCredentials(context: Context, username: String, password: String) {
+        synchronized(this) {
+            cachedUsername = username.takeIf { it.isNotEmpty() }
+            cachedPassword = password.takeIf { it.isNotEmpty() }
+            credentialsLoaded = true
+        }
         getEncryptedPrefs(context)?.edit()?.apply {
             if (username.isEmpty()) remove(KEY_USERNAME) else putString(KEY_USERNAME, username)
             if (password.isEmpty()) remove(KEY_PASSWORD) else putString(KEY_PASSWORD, password)
@@ -86,22 +114,26 @@ object SecureCredentialManager {
     }
 
     fun getUsername(context: Context): String? {
-        migrateLegacyIfNeeded(context)
-        getEncryptedPrefs(context)?.getString(KEY_USERNAME, null)?.let { if (it.isNotEmpty()) return it }
-        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).getString("username", null)
+        ensureCredentialsLoaded(context)
+        return cachedUsername
     }
 
     fun getPassword(context: Context): String? {
-        migrateLegacyIfNeeded(context)
-        getEncryptedPrefs(context)?.getString(KEY_PASSWORD, null)?.let { if (it.isNotEmpty()) return it }
-        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).getString("password", null)
+        ensureCredentialsLoaded(context)
+        return cachedPassword
     }
 
     fun clearCredentials(context: Context) {
+        synchronized(this) {
+            cachedUsername = null
+            cachedPassword = null
+            credentialsLoaded = true
+        }
         getEncryptedPrefs(context)?.edit()?.clear()?.apply()
         context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE).edit()
             .remove("username")
             .remove("password")
+            .putBoolean("demo_mode", true)
             .apply()
     }
 }
