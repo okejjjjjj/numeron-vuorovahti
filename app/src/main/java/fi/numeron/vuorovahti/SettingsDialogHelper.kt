@@ -146,15 +146,19 @@ object SettingsDialogHelper {
             }
         }
 
+        val themeBgHex = UiStyleHelper.bgHex(context)
+        val themeCardHex = UiStyleHelper.cardHex(context)
+        val themeBorderHex = UiStyleHelper.borderHex(context)
+
         val rootContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#0F1722"))
+            setBackgroundColor(Color.parseColor(themeBgHex))
         }
 
         val headerBar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#182332"))
+            setBackgroundColor(Color.parseColor(themeCardHex))
             setPadding(dp(20), dp(18), dp(20), dp(14))
         }
         val headerTitleCol = LinearLayout(context).apply {
@@ -227,7 +231,7 @@ object SettingsDialogHelper {
         fun createSectionCard(title: String): LinearLayout {
             val card = LinearLayout(context).apply {
                 orientation = LinearLayout.VERTICAL
-                background = makeCardBg("#182332", "#2A394A", 12)
+                background = makeCardBg(themeCardHex, themeBorderHex, 12)
                 setPadding(dp(16), dp(14), dp(16), dp(16))
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -869,6 +873,41 @@ object SettingsDialogHelper {
         periodDetailsContainer.addView(editPeriodAnchor)
         calCard.addView(periodDetailsContainer)
 
+        val initialShowHolidays = prefs.getBoolean("show_finnish_holidays", true)
+        val switchShowHolidays = createToggleRow(
+            parent = calCard,
+            title = if (en) "Show Finnish public holidays" else "Näytä Suomen arkipyhät kalenterissa",
+            subtitle = if (en) "Highlights national holidays in red on the Shifts calendar" else "Korostaa arkipyhät punaisella Vuorot-kalenterissa",
+            initialChecked = initialShowHolidays
+        )
+
+        val initialShortRest = prefs.getBoolean("show_short_rest_warning", true)
+        val switchShortRest = createToggleRow(
+            parent = calCard,
+            title = if (en) "Short rest warning (< 11 h)" else "Varoita lyhyestä lepoajasta (< 11 h)",
+            subtitle = if (en) "Marks days where rest between consecutive shifts is under 11 hours" else "Näyttää varoitusmerkin, jos peräkkäisten vuorojen väli on alle 11 tuntia",
+            initialChecked = initialShortRest
+        )
+
+        calCard.addView(
+            createLabel(if (en) "One-tap alarm lead time before shift (min)" else "Pikaherätys ennen vuoron alkua (min)")
+        )
+        val editAlarmLead = EditText(context).apply {
+            setText(prefs.getInt("alarm_lead_minutes", 75).toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            isSingleLine = true
+            styleEditText(this)
+        }
+        calCard.addView(editAlarmLead)
+
+        val initialAmoled = prefs.getBoolean("amoled_black_theme", false)
+        val switchAmoledTheme = createToggleRow(
+            parent = calCard,
+            title = if (en) "AMOLED black theme" else "AMOLED-musta teema",
+            subtitle = if (en) "Pure black background for OLED screens and night shifts" else "Täysmusta tausta OLED-näytöille ja yövuoroihin",
+            initialChecked = initialAmoled
+        )
+
         // === KORTTI 4: MUISTUTUKSET JA ILMOITUKSET ===
         val actionCard = createSectionCard(if (en) "Reminders and notifications" else "Muistutukset ja ilmoitukset")
 
@@ -896,6 +935,31 @@ object SettingsDialogHelper {
         reminderDetailsContainer.addView(editReminder)
 
         actionCard.addView(reminderDetailsContainer)
+
+        val initialGuardEnabled = prefs.getBoolean("forgotten_stamp_guard_enabled", true)
+        val guardDetailsContainer = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (initialGuardEnabled) View.VISIBLE else View.GONE
+        }
+        val switchForgottenGuard = createToggleRow(
+            parent = actionCard,
+            title = if (en) "Forgot-to-stamp safety check" else "Unohditko leimata? -turvavahti",
+            subtitle = if (en) "Checks stamp status after shift start/end and alerts if a stamp is missing" else "Tarkistaa leimaustilan vuoron alun/lopun jälkeen ja muistuttaa jos leimaus puuttuu",
+            initialChecked = initialGuardEnabled
+        ) { enabled ->
+            guardDetailsContainer.visibility = if (enabled) View.VISIBLE else View.GONE
+        }
+        guardDetailsContainer.addView(
+            createLabel(if (en) "Safety check delay after shift start/end (min)" else "Tarkistusviive vuoron alun/lopun jälkeen (min)")
+        )
+        val editGuardMinutes = EditText(context).apply {
+            setText(prefs.getInt("forgotten_stamp_guard_minutes", 15).toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            isSingleLine = true
+            styleEditText(this)
+        }
+        guardDetailsContainer.addView(editGuardMinutes)
+        actionCard.addView(guardDetailsContainer)
 
         val switchTrackRequests = createToggleRow(
             parent = actionCard,
@@ -1207,6 +1271,12 @@ object SettingsDialogHelper {
             val newShiftReminders = switchShiftReminders.isChecked
             val newTrackRequests = switchTrackRequests.isChecked
             val newShowShiftPeriods = switchShowShiftPeriods.isChecked
+            val newShowHolidays = switchShowHolidays.isChecked
+            val newShortRest = switchShortRest.isChecked
+            val newAmoledTheme = switchAmoledTheme.isChecked
+            val alarmLeadMins = (editAlarmLead.text.toString().toIntOrNull() ?: 75).coerceIn(5, 240)
+            val newGuardEnabled = switchForgottenGuard.isChecked
+            val guardMins = (editGuardMinutes.text.toString().toIntOrNull() ?: 15).coerceIn(5, 60)
             val rawAnchorInput = editPeriodAnchor.text.toString().trim()
             val parsedAnchorIso = try {
                 val parsedDate = if (rawAnchorInput.contains(".")) {
@@ -1240,6 +1310,12 @@ object SettingsDialogHelper {
                 .putBoolean("track_requests", newTrackRequests)
                 .putBoolean("show_shift_periods", newShowShiftPeriods)
                 .putString("shift_period_anchor_iso", parsedAnchorIso)
+                .putBoolean("show_finnish_holidays", newShowHolidays)
+                .putBoolean("show_short_rest_warning", newShortRest)
+                .putBoolean("amoled_black_theme", newAmoledTheme)
+                .putInt("alarm_lead_minutes", alarmLeadMins)
+                .putBoolean("forgotten_stamp_guard_enabled", newGuardEnabled)
+                .putInt("forgotten_stamp_guard_minutes", guardMins)
                 .putString("calendar_user_tag", userTag)
                 .putInt("reminder_minutes", reminderMins)
                 .putInt("color_morning_rgb", morningRgb)

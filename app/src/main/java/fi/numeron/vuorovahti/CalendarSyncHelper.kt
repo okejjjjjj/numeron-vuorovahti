@@ -550,6 +550,7 @@ object CalendarSyncHelper {
             .edit()
             .putString("cached_work_shifts_json", arr.toString())
             .apply()
+        ShiftWidgetProvider.updateAllWidgets(context)
     }
 
     fun hasCachedShifts(context: Context): Boolean {
@@ -678,8 +679,26 @@ object CalendarSyncHelper {
                 existingPi.cancel()
             }
         }
+        val oldGuardCodes = prefs.getStringSet("scheduled_guard_req_codes", emptySet()) ?: emptySet()
+        for (oldCodeStr in oldGuardCodes) {
+            val oldCode = oldCodeStr.toIntOrNull() ?: continue
+            val cancelIntent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+                action = ShiftReminderReceiver.ACTION_FORGOTTEN_STAMP_CHECK
+            }
+            val existingPi = PendingIntent.getBroadcast(
+                context,
+                oldCode,
+                cancelIntent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (existingPi != null) {
+                alarmManager.cancel(existingPi)
+                existingPi.cancel()
+            }
+        }
         prefs.edit()
             .remove("scheduled_alarm_req_codes")
+            .remove("scheduled_guard_req_codes")
             .remove("next_reminder_ms")
             .remove("next_reminder_label")
             .apply()
@@ -687,12 +706,15 @@ object CalendarSyncHelper {
 
     fun scheduleShiftReminders(context: Context, calendarId: Long? = getTargetCalendarId(context)) {
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
-        if (!prefs.getBoolean("shift_reminders_enabled", true)) {
+        val remindersEnabled = prefs.getBoolean("shift_reminders_enabled", true)
+        val guardEnabled = prefs.getBoolean("forgotten_stamp_guard_enabled", true)
+        if (!remindersEnabled && !guardEnabled) {
             cancelAllShiftReminders(context)
             return
         }
 
         val minutesBefore = prefs.getInt("reminder_minutes", 30)
+        val guardDelayMins = prefs.getInt("forgotten_stamp_guard_minutes", 15).coerceIn(5, 60)
         val userTag = getUserTag(context)
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = System.currentTimeMillis()
@@ -761,6 +783,7 @@ object CalendarSyncHelper {
         var earliestNextTriggerMs = Long.MAX_VALUE
         var earliestNextLabel = ""
         val newReqCodes = mutableSetOf<String>()
+        val newGuardCodes = mutableSetOf<String>()
 
         for (i in sortedShifts.indices) {
             val current = sortedShifts[i]
@@ -771,48 +794,80 @@ object CalendarSyncHelper {
             val continuesToNext = next != null && (next.startMs - current.endMs) in (-maxGapMs)..maxGapMs
 
             if (!continuesFromPrev) {
-                val startTrigger = current.startMs - (minutesBefore * 60_000L)
                 val startStr = Instant.ofEpochMilli(current.startMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                if (startTrigger > now) {
-                    val code = setExactAlarmSafe(
-                        context,
-                        alarmManager,
-                        startTrigger,
-                        current.displayTitle,
-                        startStr,
-                        isEnding = false,
-                        shiftStartMs = current.startMs
-                    )
-                    newReqCodes.add(code.toString())
-                    if (startTrigger < earliestNextTriggerMs) {
-                        earliestNextTriggerMs = startTrigger
-                        earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
-                    }
-                } else if (now <= current.startMs + 10L * 60_000L && current.endMs - now > 30L * 60_000L) {
-                    // Vuoro on alkamassa hetken kuluttua tai juuri alkanut eikä sisäänleimausmuistutusta ole vielä lähetetty
-                    val alreadyNotifiedStart = prefs.getLong("notified_ongoing_start_ms", 0L)
-                    if (alreadyNotifiedStart != current.startMs) {
-                        prefs.edit().putLong("notified_ongoing_start_ms", current.startMs).apply()
-                        ShiftReminderReceiver().showReminderNotification(
-                            context = context,
-                            shiftTitle = current.displayTitle,
-                            timeStr = startStr,
+                if (remindersEnabled) {
+                    val startTrigger = current.startMs - (minutesBefore * 60_000L)
+                    if (startTrigger > now) {
+                        val code = setExactAlarmSafe(
+                            context,
+                            alarmManager,
+                            startTrigger,
+                            current.displayTitle,
+                            startStr,
                             isEnding = false,
-                            rescheduleNext = false
+                            shiftStartMs = current.startMs
                         )
+                        newReqCodes.add(code.toString())
+                        if (startTrigger < earliestNextTriggerMs) {
+                            earliestNextTriggerMs = startTrigger
+                            earliestNextLabel = "Sisään (${current.displayTitle}, vuoro klo $startStr)"
+                        }
+                    } else if (now <= current.startMs + 10L * 60_000L && current.endMs - now > 30L * 60_000L) {
+                        // Vuoro on alkamassa hetken kuluttua tai juuri alkanut eikä sisäänleimausmuistutusta ole vielä lähetetty
+                        val alreadyNotifiedStart = prefs.getLong("notified_ongoing_start_ms", 0L)
+                        if (alreadyNotifiedStart != current.startMs) {
+                            prefs.edit().putLong("notified_ongoing_start_ms", current.startMs).apply()
+                            ShiftReminderReceiver().showReminderNotification(
+                                context = context,
+                                shiftTitle = current.displayTitle,
+                                timeStr = startStr,
+                                isEnding = false,
+                                rescheduleNext = false
+                            )
+                        }
+                    }
+                }
+                if (guardEnabled) {
+                    val guardStartTrigger = current.startMs + (guardDelayMins * 60_000L)
+                    if (guardStartTrigger > now) {
+                        val gCode = setForgottenGuardAlarmSafe(
+                            context,
+                            alarmManager,
+                            guardStartTrigger,
+                            current.displayTitle,
+                            startStr,
+                            isEnding = false
+                        )
+                        newGuardCodes.add(gCode.toString())
                     }
                 }
             }
 
             if (!continuesToNext) {
-                val endTrigger = current.endMs - (minutesBefore * 60_000L)
-                if (endTrigger > now) {
-                    val endStr = Instant.ofEpochMilli(current.endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
-                    val code = setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
-                    newReqCodes.add(code.toString())
-                    if (endTrigger < earliestNextTriggerMs) {
-                        earliestNextTriggerMs = endTrigger
-                        earliestNextLabel = "Ulos (${current.displayTitle}, päättyy klo $endStr)"
+                val endStr = Instant.ofEpochMilli(current.endMs).atZone(ZoneId.systemDefault()).toLocalTime().format(timeFmt)
+                if (remindersEnabled) {
+                    val endTrigger = current.endMs - (minutesBefore * 60_000L)
+                    if (endTrigger > now) {
+                        val code = setExactAlarmSafe(context, alarmManager, endTrigger, current.displayTitle, endStr, isEnding = true)
+                        newReqCodes.add(code.toString())
+                        if (endTrigger < earliestNextTriggerMs) {
+                            earliestNextTriggerMs = endTrigger
+                            earliestNextLabel = "Ulos (${current.displayTitle}, päättyy klo $endStr)"
+                        }
+                    }
+                }
+                if (guardEnabled) {
+                    val guardEndTrigger = current.endMs + (guardDelayMins * 60_000L)
+                    if (guardEndTrigger > now) {
+                        val gCode = setForgottenGuardAlarmSafe(
+                            context,
+                            alarmManager,
+                            guardEndTrigger,
+                            current.displayTitle,
+                            endStr,
+                            isEnding = true
+                        )
+                        newGuardCodes.add(gCode.toString())
                     }
                 }
             }
@@ -838,8 +893,29 @@ object CalendarSyncHelper {
             }
         }
 
+        val oldGuardCodes = prefs.getStringSet("scheduled_guard_req_codes", emptySet()) ?: emptySet()
+        for (oldCodeStr in oldGuardCodes) {
+            if (oldCodeStr !in newGuardCodes) {
+                val oldCode = oldCodeStr.toIntOrNull() ?: continue
+                val cancelIntent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+                    action = ShiftReminderReceiver.ACTION_FORGOTTEN_STAMP_CHECK
+                }
+                val existingPi = PendingIntent.getBroadcast(
+                    context,
+                    oldCode,
+                    cancelIntent,
+                    PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                )
+                if (existingPi != null) {
+                    alarmManager.cancel(existingPi)
+                    existingPi.cancel()
+                }
+            }
+        }
+
         prefs.edit().apply {
             putStringSet("scheduled_alarm_req_codes", newReqCodes)
+            putStringSet("scheduled_guard_req_codes", newGuardCodes)
             if (earliestNextTriggerMs < Long.MAX_VALUE) {
                 putLong("next_reminder_ms", earliestNextTriggerMs)
                 putString("next_reminder_label", earliestNextLabel)
@@ -876,6 +952,35 @@ object CalendarSyncHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        try {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+        } catch (_: SecurityException) {
+            alarmManager.set(AlarmManager.RTC_WAKEUP, triggerMs, pi)
+        }
+        return reqCode
+    }
+
+    private fun setForgottenGuardAlarmSafe(
+        context: Context,
+        alarmManager: AlarmManager,
+        triggerMs: Long,
+        title: String,
+        timeStr: String,
+        isEnding: Boolean
+    ): Int {
+        val reqCode = 500_000 + (((triggerMs / 60_000L).toInt() and 0x3FFFF) * 2) + (if (isEnding) 1 else 0)
+        val intent = Intent(context, ShiftReminderReceiver.InternalReceiver::class.java).apply {
+            action = ShiftReminderReceiver.ACTION_FORGOTTEN_STAMP_CHECK
+            putExtra("SHIFT_TITLE", title)
+            putExtra("SHIFT_TIME", timeStr)
+            putExtra("IS_ENDING", isEnding)
+        }
+        val pi = PendingIntent.getBroadcast(
+            context,
+            reqCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         try {
             alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerMs, pi)
         } catch (_: SecurityException) {

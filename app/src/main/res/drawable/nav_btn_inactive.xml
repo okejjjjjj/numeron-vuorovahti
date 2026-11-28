@@ -3,9 +3,9 @@
     android:color="#3338BDF8">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#182332" />
-            <stroke android:width="1dp" android:color="#2A394A" />
-            <corners android:radius="10dp" />
+            <solid android:color="#141E2B" />
+            <stroke android:width="1dp" android:color="#243242" />
+            <corners android:radius="11dp" />
         </shape>
     </item>
 </ripple>

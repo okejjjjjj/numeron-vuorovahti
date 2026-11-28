@@ -101,8 +101,8 @@ class QuickStampActivity : AppCompatActivity() {
         }
 
         val cardBg = GradientDrawable().apply {
-            setColor(Color.parseColor("#182332"))
-            setStroke(dp(1), Color.parseColor("#2A394A"))
+            setColor(Color.parseColor(UiStyleHelper.cardHex(this@QuickStampActivity)))
+            setStroke(dp(1), Color.parseColor(UiStyleHelper.borderHex(this@QuickStampActivity)))
             cornerRadius = dp(18).toFloat()
         }
 
@@ -173,8 +173,8 @@ class QuickStampActivity : AppCompatActivity() {
         card.addView(statusText)
 
         val greetingBg = GradientDrawable().apply {
-            setColor(Color.parseColor("#111923"))
-            setStroke(dp(1), Color.parseColor("#2A394A"))
+            setColor(Color.parseColor(UiStyleHelper.cardAltHex(this@QuickStampActivity)))
+            setStroke(dp(1), Color.parseColor(UiStyleHelper.borderHex(this@QuickStampActivity)))
             cornerRadius = dp(10).toFloat()
         }
 
@@ -524,6 +524,8 @@ class QuickStampActivity : AppCompatActivity() {
 
             when (result) {
                 is StampSubmitResult.Success -> {
+                    ShiftWidgetProvider.updateAllWidgets(this@QuickStampActivity)
+                    QuickStampTileService.requestTileUpdate(this@QuickStampActivity)
                     val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
                     showFinalState(
                         title = if (en) "Stamp confirmed" else "Leimaus vahvistettu",
@@ -898,6 +900,8 @@ class QuickStampActivity : AppCompatActivity() {
                     )
                 ) {
                     CookieManager.getInstance().flush()
+                    ShiftWidgetProvider.updateAllWidgets(this@QuickStampActivity)
+                    QuickStampTileService.requestTileUpdate(this@QuickStampActivity)
                     val nowTime = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
                     showFinalState(
                         title = "Leimaus vahvistettu",

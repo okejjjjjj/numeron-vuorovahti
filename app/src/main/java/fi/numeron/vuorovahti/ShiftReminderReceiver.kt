@@ -60,6 +60,43 @@ class ShiftReminderReceiver : BroadcastReceiver() {
                 return
             }
 
+            if (action == ACTION_FORGOTTEN_STAMP_CHECK) {
+                val appCtx = context.applicationContext
+                val prefs = appCtx.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+                if (!prefs.getBoolean("forgotten_stamp_guard_enabled", true) || DemoModeHelper.isDemoEnabled(appCtx)) {
+                    return
+                }
+                val title = intent.getStringExtra("SHIFT_TITLE") ?: if (DemoModeHelper.isEnglish(appCtx)) "Work Shift" else "Työvuoro"
+                val timeStr = intent.getStringExtra("SHIFT_TIME") ?: ""
+                val isEnding = intent.getBooleanExtra("IS_ENDING", false)
+
+                val pendingResult = goAsync()
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        if (BackgroundAuthHelper.isCredentialBlocked(appCtx)) return@launch
+                        val state = kotlinx.coroutines.withTimeoutOrNull(12_000L) {
+                            NumeronApiClient.fetchStampingState(appCtx, forceRefreshSession = false)
+                        } ?: return@launch
+                        ShiftWidgetProvider.updateAllWidgets(appCtx)
+                        QuickStampTileService.requestTileUpdate(appCtx)
+
+                        val missedIn = !isEnding && state.nextDirection.equals("IN", ignoreCase = true)
+                        val missedOut = isEnding && state.nextDirection.equals("OUT", ignoreCase = true)
+                        if (missedIn || missedOut) {
+                            ShiftReminderReceiver().showForgottenStampGuardNotification(
+                                context = appCtx,
+                                shiftTitle = title,
+                                timeStr = timeStr,
+                                isEnding = isEnding
+                            )
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+                return
+            }
+
             if (action != ACTION_SHIFT_REMINDER) return
 
             val title = intent.getStringExtra("SHIFT_TITLE") ?: if (DemoModeHelper.isEnglish(context)) "Work Shift" else "Työvuoro"
@@ -215,9 +252,111 @@ class ShiftReminderReceiver : BroadcastReceiver() {
         nm.notify(notifId, notification)
     }
 
+    fun showForgottenStampGuardNotification(
+        context: Context,
+        shiftTitle: String,
+        timeStr: String,
+        isEnding: Boolean
+    ) {
+        if (!canPostNotifications(context)) return
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val channelId = "numeron_vuorovahti_reminders"
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    channelId,
+                    "Työvuoro- ja kalenteri-ilmoitukset",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
+        }
+
+        val en = DemoModeHelper.isEnglish(context)
+        val notifId = if (isEnding) NOTIF_ID_FORGOTTEN_GUARD_OUT else NOTIF_ID_FORGOTTEN_GUARD_IN
+        val contentTitle = if (en) {
+            if (isEnding) "⚠ Forgot to clock out? ($timeStr)" else "⚠ Forgot to clock in? ($timeStr)"
+        } else {
+            if (isEnding) "⚠ Unohditko leimata ulos? ($timeStr)" else "⚠ Unohditko leimata sisään? ($timeStr)"
+        }
+        val subtitleText = if (en) {
+            if (isEnding) "Still clocked in • $shiftTitle" else "Not clocked in yet • $shiftTitle"
+        } else {
+            if (isEnding) "Olet yhä leimattuna sisään • $shiftTitle" else "Sisäänleimaus puuttuu • $shiftTitle"
+        }
+        val fullButtonLabel = if (en) {
+            if (isEnding) "CLOCK OUT NOW" else "CLOCK IN NOW"
+        } else {
+            if (isEnding) "LEIMAA ULOS NYT" else "LEIMAA SISÄÄN NYT"
+        }
+        val shortButtonLabel = if (en) {
+            if (isEnding) "OUT" else "IN"
+        } else {
+            if (isEnding) "ULOS" else "SISÄÄN"
+        }
+        val btnBgRes = if (isEnding) R.drawable.bg_notif_btn_out else R.drawable.bg_notif_btn_in
+
+        val stampIntent = Intent(context, QuickStampActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("AUTO_STAMP", true)
+            putExtra("IS_ENDING", isEnding)
+            putExtra("IS_TEST", false)
+            putExtra("NOTIF_ID", notifId)
+        }
+        val stampPi = PendingIntent.getActivity(
+            context,
+            notifId,
+            stampIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val openAppPi = PendingIntent.getActivity(
+            context,
+            notifId + 10,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val collapsedView = RemoteViews(context.packageName, R.layout.notification_stamp_collapsed).apply {
+            setTextViewText(R.id.notifTitleCollapsed, contentTitle)
+            setTextViewText(R.id.notifSubtitleCollapsed, subtitleText)
+            setTextViewText(R.id.btnNotifStampCollapsed, shortButtonLabel)
+            setInt(R.id.btnNotifStampCollapsed, "setBackgroundResource", btnBgRes)
+            setOnClickPendingIntent(R.id.btnNotifStampCollapsed, stampPi)
+        }
+
+        val expandedView = RemoteViews(context.packageName, R.layout.notification_stamp_expanded).apply {
+            setTextViewText(R.id.notifTitle, contentTitle)
+            setTextViewText(R.id.notifSubtitle, subtitleText)
+            setTextViewText(R.id.btnNotifStamp, fullButtonLabel)
+            setInt(R.id.btnNotifStamp, "setBackgroundResource", btnBgRes)
+            setOnClickPendingIntent(R.id.btnNotifStamp, stampPi)
+        }
+
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(contentTitle)
+            .setContentText(subtitleText)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(collapsedView)
+            .setCustomBigContentView(expandedView)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openAppPi)
+            .build()
+
+        nm.notify(notifId, notification)
+    }
+
     companion object {
         const val ACTION_SHIFT_REMINDER = "fi.numeron.vuorovahti.ACTION_SHIFT_REMINDER"
+        const val ACTION_FORGOTTEN_STAMP_CHECK = "fi.numeron.vuorovahti.ACTION_FORGOTTEN_STAMP_CHECK"
         const val ACTION_REVERT_ALL_CALENDAR_CHANGES = "fi.numeron.vuorovahti.ACTION_REVERT_ALL_CALENDAR_CHANGES"
+        const val NOTIF_ID_FORGOTTEN_GUARD_IN = 3001
+        const val NOTIF_ID_FORGOTTEN_GUARD_OUT = 3002
         const val NOTIF_ID_CALENDAR_CHANGES = 4001
 
         fun canPostNotifications(context: Context): Boolean {
@@ -577,6 +716,8 @@ class BackgroundSyncWorker(
             prefs.edit()
                 .putLong("last_valid_session_ms", System.currentTimeMillis())
                 .apply()
+            ShiftWidgetProvider.updateAllWidgets(appContext)
+            QuickStampTileService.requestTileUpdate(appContext)
             ShiftReminderReceiver.ensureBackgroundSyncScheduled(appContext, forceReplace = true)
             Result.success()
         } else {

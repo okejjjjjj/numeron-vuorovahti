@@ -37,8 +37,10 @@ class NativeRequestsView(
     private var lastRenderedFilter: String? = null
     private var lastRenderedLangEn: Boolean? = null
     private var lastRenderedDemo: Boolean? = null
+    private var lastRenderedAmoled: Boolean? = null
     private val memoryByFilter = mutableMapOf<String, Pair<List<PersonRequestItem>, Long>>()
 
+    private val topCard: LinearLayout
     private val swipeRefresh: SwipeRefreshLayout
     private val txtTitle: TextView
     private val btnAdd: Button
@@ -61,9 +63,9 @@ class NativeRequestsView(
         setBackgroundColor(Color.parseColor("#0F1722"))
         setPadding(dp(10), dp(10), dp(10), dp(4))
 
-        val topCard = LinearLayout(context).apply {
+        topCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
+            background = UiStyleHelper.roundedBg(context, UiStyleHelper.cardHex(context), UiStyleHelper.borderHex(context), 12f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
         }
 
@@ -164,6 +166,20 @@ class NativeRequestsView(
         scroll.addView(listContainer, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         swipeRefresh.addView(scroll)
         addView(swipeRefresh, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+        applyThemeColors()
+    }
+
+    fun applyThemeColors() {
+        val bg = UiStyleHelper.bgHex(context)
+        val card = UiStyleHelper.cardHex(context)
+        val headerBtn = UiStyleHelper.headerCellHex(context)
+        val border = UiStyleHelper.borderHex(context)
+        val borderStrong = UiStyleHelper.borderStrongHex(context)
+
+        setBackgroundColor(Color.parseColor(bg))
+        UiStyleHelper.configureSwipeRefresh(swipeRefresh)
+        topCard.background = UiStyleHelper.roundedBg(context, card, border, 12f)
+        btnRefresh.background = UiStyleHelper.rippleRoundedBg(context, headerBtn, borderStrong, 8f)
     }
 
     private fun makeFilterButton(filterKey: String): Button {
@@ -184,12 +200,14 @@ class NativeRequestsView(
     }
 
     fun onShow(forceNetwork: Boolean = false) {
+        applyThemeColors()
         updateLocalizedLabels()
         updateFilterStyles()
         loadRequests(forceNetwork = forceNetwork, fromSwipe = false)
     }
 
     fun refreshAfterWebEdit() {
+        applyThemeColors()
         updateLocalizedLabels()
         loadRequests(forceNetwork = true, fromSwipe = false)
     }
@@ -213,8 +231,8 @@ class NativeRequestsView(
             val selected = (key == currentFilter)
             btn.background = UiStyleHelper.rippleRoundedBg(
                 context,
-                if (selected) "#1982C4" else "#111923",
-                if (selected) "#38BDF8" else "#2A394A",
+                if (selected) "#1982C4" else UiStyleHelper.cardAltHex(context),
+                if (selected) "#38BDF8" else UiStyleHelper.borderHex(context),
                 8f
             )
             btn.setTextColor(if (selected) Color.WHITE else Color.parseColor("#CBD5E1"))
@@ -247,11 +265,13 @@ class NativeRequestsView(
     private fun renderRequestsIfChanged(items: List<PersonRequestItem>, forceRender: Boolean = false) {
         val en = DemoModeHelper.isEnglish(context)
         val isDemo = DemoModeHelper.isDemoEnabled(context)
+        val amoled = UiStyleHelper.isAmoled(context)
         if (!forceRender &&
             items == lastRenderedItems &&
             currentFilter == lastRenderedFilter &&
             en == lastRenderedLangEn &&
-            isDemo == lastRenderedDemo
+            isDemo == lastRenderedDemo &&
+            amoled == lastRenderedAmoled
         ) {
             return
         }
@@ -259,6 +279,7 @@ class NativeRequestsView(
         lastRenderedFilter = currentFilter
         lastRenderedLangEn = en
         lastRenderedDemo = isDemo
+        lastRenderedAmoled = amoled
         renderRequests(items)
     }
 
@@ -407,7 +428,7 @@ class NativeRequestsView(
                 setTextColor(Color.parseColor("#94A3B8"))
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
                 gravity = Gravity.CENTER
-                background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
+                background = UiStyleHelper.roundedBg(context, UiStyleHelper.cardHex(context), UiStyleHelper.borderHex(context), 12f)
                 setPadding(dp(16), dp(24), dp(16), dp(24))
             }
             listContainer.addView(emptyCard, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
@@ -428,7 +449,7 @@ class NativeRequestsView(
             // Kortti jossa 4dp tilaväripalkki vasemmassa reunassa + Ripple
             val cardOuter = LinearLayout(context).apply {
                 orientation = HORIZONTAL
-                background = UiStyleHelper.rippleRoundedBg(context, "#182332", "#2A394A", 12f)
+                background = UiStyleHelper.rippleRoundedBg(context, UiStyleHelper.cardHex(context), UiStyleHelper.borderHex(context), 12f)
                 setPadding(dp(10), dp(12), dp(14), dp(12))
                 setOnClickListener {
                     if (isDemo) {

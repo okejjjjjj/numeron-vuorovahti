@@ -17,6 +17,29 @@ import java.time.format.DateTimeFormatter
 
 object UiStyleHelper {
 
+    fun isAmoled(context: Context): Boolean {
+        return context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
+            .getBoolean("amoled_black_theme", false)
+    }
+
+    fun bgHex(context: Context): String = if (isAmoled(context)) "#000000" else "#0F1722"
+    fun barHex(context: Context): String = if (isAmoled(context)) "#000000" else "#0B111A"
+    fun cardHex(context: Context): String = if (isAmoled(context)) "#0B0E14" else "#182332"
+    fun cardAltHex(context: Context): String = if (isAmoled(context)) "#05070A" else "#111923"
+    fun headerCellHex(context: Context): String = if (isAmoled(context)) "#111722" else "#233040"
+    fun weekendHeaderHex(context: Context): String = if (isAmoled(context)) "#0E1624" else "#1E2B3D"
+    fun borderHex(context: Context): String = if (isAmoled(context)) "#1F2937" else "#2A394A"
+    fun borderStrongHex(context: Context): String = if (isAmoled(context)) "#2B384A" else "#37475A"
+    fun weekendCellHex(context: Context): String = if (isAmoled(context)) "#080C12" else "#15202E"
+    fun pastCellHex(context: Context): String = if (isAmoled(context)) "#040608" else "#121A24"
+    fun pastWeekendCellHex(context: Context): String = if (isAmoled(context)) "#06090E" else "#111924"
+    fun otherMonthCellHex(context: Context): String = if (isAmoled(context)) "#020304" else "#101720"
+    fun weekColHex(context: Context): String = if (isAmoled(context)) "#06080C" else "#131C28"
+    fun periodBarStartHex(context: Context): String = if (isAmoled(context)) "#0C1522" else "#162436"
+    fun periodBarMidHex(context: Context): String = if (isAmoled(context)) "#070B12" else "#121B28"
+    fun holidayCellHex(context: Context): String = if (isAmoled(context)) "#190B0E" else "#241822"
+    fun todayCellHex(context: Context): String = if (isAmoled(context)) "#102844" else "#1E3A5F"
+
     fun dp(context: Context, value: Int): Int {
         return TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_DIP,
@@ -121,7 +144,7 @@ object UiStyleHelper {
     }
 
     fun configureSwipeRefresh(srl: SwipeRefreshLayout) {
-        srl.setProgressBackgroundColorSchemeColor(Color.parseColor("#182332"))
+        srl.setProgressBackgroundColorSchemeColor(Color.parseColor(cardHex(srl.context)))
         srl.setColorSchemeColors(
             Color.parseColor("#38BDF8"),
             Color.parseColor("#22C55E")

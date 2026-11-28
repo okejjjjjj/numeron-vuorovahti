@@ -8,6 +8,8 @@ import android.os.Looper
 import android.text.Editable
 import android.text.InputFilter
 import android.text.TextWatcher
+import android.transition.AutoTransition
+import android.transition.TransitionManager
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
@@ -52,6 +54,7 @@ class NativeStampView(
     private var lastRenderedNextShift: String? = null
     private var lastRenderedLangEn: Boolean? = null
     private var lastRenderedDemo: Boolean? = null
+    private var lastRenderedAmoled: Boolean? = null
     private var cachedNextShiftText: String? = null
     private var loadJob: Job? = null
 
@@ -64,6 +67,10 @@ class NativeStampView(
     }
 
     private val swipeRefresh: SwipeRefreshLayout
+    private val todayCard: LinearLayout
+    private val stampCard: LinearLayout
+    private val historyCard: LinearLayout
+
     private val txtTodayCaption: TextView
     private val btnRefresh: Button
     private val progressBar: ProgressBar
@@ -72,6 +79,11 @@ class NativeStampView(
     private val txtShiftTimes: TextView
     private val txtShiftWorkplace: TextView
     private val txtShiftDetails: TextView
+    private val shiftProgressContainer: LinearLayout
+    private val txtShiftRemaining: TextView
+    private val shiftProgressTrack: LinearLayout
+    private val shiftProgressFill: View
+    private val shiftProgressRest: View
     private val txtNextShift: TextView
 
     private val txtStampCaption: TextView
@@ -90,10 +102,8 @@ class NativeStampView(
 
     init {
         orientation = VERTICAL
-        setBackgroundColor(Color.parseColor("#0F1722"))
 
         swipeRefresh = SwipeRefreshLayout(context).apply {
-            UiStyleHelper.configureSwipeRefresh(this)
             setOnRefreshListener { loadState(forceNetwork = true, fromSwipe = true) }
         }
 
@@ -106,9 +116,8 @@ class NativeStampView(
         }
 
         // === KORTTI 1: TÄNÄÄN ===
-        val todayCard = LinearLayout(context).apply {
+        todayCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
             setPadding(dp(14), dp(12), dp(14), dp(14))
         }
 
@@ -142,7 +151,6 @@ class NativeStampView(
             text = "↻"
             setTextColor(Color.parseColor("#38BDF8"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-            background = UiStyleHelper.rippleRoundedBg(context, "#233040", "#37475A", 8f)
             setPadding(0, 0, 0, 0)
             minHeight = 0
             minimumHeight = dp(32)
@@ -191,10 +199,34 @@ class NativeStampView(
         }
         todayCard.addView(txtShiftDetails, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        // Vuoron edistymispalkki (näkyy sisäänleimattuna kun vuorolle on kellonajat)
+        shiftProgressContainer = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = View.GONE
+            setPadding(0, dp(10), 0, 0)
+        }
+        txtShiftRemaining = TextView(context).apply {
+            setTextColor(Color.parseColor("#94A3B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, dp(5))
+        }
+        shiftProgressContainer.addView(txtShiftRemaining, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
+        shiftProgressTrack = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            weightSum = 1f
+        }
+        shiftProgressFill = View(context)
+        shiftProgressRest = View(context)
+        shiftProgressTrack.addView(shiftProgressFill, LayoutParams(0, LayoutParams.MATCH_PARENT, 0f))
+        shiftProgressTrack.addView(shiftProgressRest, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        shiftProgressContainer.addView(shiftProgressTrack, LayoutParams(LayoutParams.MATCH_PARENT, dp(5)))
+        todayCard.addView(shiftProgressContainer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
         txtNextShift = TextView(context).apply {
             setTextColor(Color.parseColor("#E2E8F0"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = UiStyleHelper.roundedBg(context, "#111923", "#2A394A", 8f)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             visibility = View.GONE
         }
@@ -213,9 +245,8 @@ class NativeStampView(
         )
 
         // === KORTTI 2: LEIMAUS (nappi heti ylhäällä peukalon alla) ===
-        val stampCard = LinearLayout(context).apply {
+        stampCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
             setPadding(dp(14), dp(12), dp(14), dp(10))
         }
 
@@ -247,17 +278,23 @@ class NativeStampView(
             setPadding(0, dp(8), 0, dp(2))
         }
 
-        // Kompakti syykoodi + lisätieto -avausrivi
+        // Kompakti syykoodi + lisätieto -avausrivi (TransitionManager-mikroanimaatio)
         btnOptionsToggle = Button(context).apply {
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             setTextColor(Color.parseColor("#CBD5E1"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = UiStyleHelper.rippleRoundedBg(context, "#111923", "#2A394A", 8f)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             minHeight = 0
             minimumHeight = dp(38)
             setOnClickListener {
+                try {
+                    TransitionManager.beginDelayedTransition(
+                        stampCard,
+                        AutoTransition().apply { duration = 170L }
+                    )
+                } catch (_: Exception) {
+                }
                 isOptionsExpanded = !isOptionsExpanded
                 optionsContainer.visibility = if (isOptionsExpanded) View.VISIBLE else View.GONE
                 updateOptionsToggleText()
@@ -282,7 +319,6 @@ class NativeStampView(
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             setTextColor(Color.parseColor("#F1F5F9"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            background = UiStyleHelper.rippleRoundedBg(context, "#111923", "#37475A", 8f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setOnClickListener { showReasonCodeDialog() }
         }
@@ -304,7 +340,6 @@ class NativeStampView(
             setTextColor(Color.WHITE)
             setHintTextColor(Color.parseColor("#64748B"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            background = UiStyleHelper.roundedBg(context, "#111923", "#37475A", 8f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             isSingleLine = true
             filters = arrayOf(InputFilter.LengthFilter(255))
@@ -363,9 +398,8 @@ class NativeStampView(
         )
 
         // === KORTTI 3: VIIMEISIMMÄT LEIMAUKSET ===
-        val historyCard = LinearLayout(context).apply {
+        historyCard = LinearLayout(context).apply {
             orientation = VERTICAL
-            background = UiStyleHelper.roundedBg(context, "#182332", "#2A394A", 12f)
             setPadding(dp(14), dp(12), dp(14), dp(10))
         }
 
@@ -402,6 +436,29 @@ class NativeStampView(
         scroll.addView(content, FrameLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
         swipeRefresh.addView(scroll)
         addView(swipeRefresh, LayoutParams(LayoutParams.MATCH_PARENT, 0, 1f))
+
+        applyThemeColors()
+    }
+
+    fun applyThemeColors() {
+        val bg = UiStyleHelper.bgHex(context)
+        val card = UiStyleHelper.cardHex(context)
+        val cardAlt = UiStyleHelper.cardAltHex(context)
+        val headerBtn = UiStyleHelper.headerCellHex(context)
+        val border = UiStyleHelper.borderHex(context)
+        val borderStrong = UiStyleHelper.borderStrongHex(context)
+
+        setBackgroundColor(Color.parseColor(bg))
+        UiStyleHelper.configureSwipeRefresh(swipeRefresh)
+        todayCard.background = UiStyleHelper.roundedBg(context, card, border, 12f)
+        stampCard.background = UiStyleHelper.roundedBg(context, card, border, 12f)
+        historyCard.background = UiStyleHelper.roundedBg(context, card, border, 12f)
+        btnRefresh.background = UiStyleHelper.rippleRoundedBg(context, headerBtn, borderStrong, 8f)
+        txtNextShift.background = UiStyleHelper.roundedBg(context, cardAlt, border, 8f)
+        btnOptionsToggle.background = UiStyleHelper.rippleRoundedBg(context, cardAlt, border, 8f)
+        btnReasonSelector.background = UiStyleHelper.rippleRoundedBg(context, cardAlt, borderStrong, 8f)
+        editComment.background = UiStyleHelper.roundedBg(context, cardAlt, borderStrong, 8f)
+        shiftProgressTrack.background = UiStyleHelper.roundedBg(context, cardAlt, border, 99f, 0)
     }
 
     override fun onAttachedToWindow() {
@@ -416,16 +473,19 @@ class NativeStampView(
     }
 
     fun onShow(forceNetwork: Boolean = false) {
+        applyThemeColors()
         updateLocalizedLabels()
         loadState(forceNetwork = forceNetwork, fromSwipe = false)
     }
 
     fun refreshFromNetwork() {
+        applyThemeColors()
         updateLocalizedLabels()
         loadState(forceNetwork = true, fromSwipe = false)
     }
 
     fun performAutoStamp(wantIn: Boolean, onFinished: () -> Unit) {
+        applyThemeColors()
         updateLocalizedLabels()
         val en = DemoModeHelper.isEnglish(context)
         if (DemoModeHelper.isDemoEnabled(context)) {
@@ -434,6 +494,8 @@ class NativeStampView(
             val dirLabel = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
             if (wantIn != currentlyIn) {
                 recordDemoStamp(wantIn)
+                ShiftWidgetProvider.updateAllWidgets(context)
+                QuickStampTileService.requestTileUpdate(context)
                 Toast.makeText(
                     context,
                     if (en) "Demo mode: Clocked $dirLabel" else "Demotila: Leimattu ($dirLabel)",
@@ -476,6 +538,8 @@ class NativeStampView(
                         lastRenderedState = null
                         renderState(it)
                     }
+                    ShiftWidgetProvider.updateAllWidgets(context)
+                    QuickStampTileService.requestTileUpdate(context)
                     Toast.makeText(
                         context,
                         if (en) "Stamp confirmed ($dirLabel)" else "Leimaus vahvistettu ($dirLabel)",
@@ -551,11 +615,13 @@ class NativeStampView(
     private fun renderStateIfChanged(state: StampingPageState, forceRender: Boolean = false) {
         val en = DemoModeHelper.isEnglish(context)
         val isDemo = DemoModeHelper.isDemoEnabled(context)
+        val amoled = UiStyleHelper.isAmoled(context)
         if (!forceRender &&
             isSameVisualState(lastRenderedState, state) &&
             lastRenderedNextShift == cachedNextShiftText &&
             lastRenderedLangEn == en &&
-            lastRenderedDemo == isDemo
+            lastRenderedDemo == isDemo &&
+            lastRenderedAmoled == amoled
         ) {
             updateWorkingStatusPill()
             updateOptionsToggleText()
@@ -565,6 +631,7 @@ class NativeStampView(
         lastRenderedNextShift = cachedNextShiftText
         lastRenderedLangEn = en
         lastRenderedDemo = isDemo
+        lastRenderedAmoled = amoled
         renderState(state)
     }
 
@@ -600,6 +667,7 @@ class NativeStampView(
             progressBar.visibility = View.GONE
             txtStatus.text = ""
             txtWorkingPill.visibility = View.GONE
+            shiftProgressContainer.visibility = View.GONE
             txtNextShift.visibility = View.GONE
             txtShiftTimes.visibility = View.VISIBLE
             txtShiftTimes.text = if (en) "Welcome" else "Tervetuloa"
@@ -689,6 +757,8 @@ class NativeStampView(
                 }
                 txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, fetchedAt, isCache = false)
                 renderStateIfChanged(fresh)
+                ShiftWidgetProvider.updateAllWidgets(context)
+                QuickStampTileService.requestTileUpdate(context)
             } else {
                 txtStatus.text = if (cached != null) {
                     UiStyleHelper.formatUpdatedLabel(context, cachedAtMs, isCache = true)
@@ -795,16 +865,103 @@ class NativeStampView(
         return LocalDateTime.of(date, time)
     }
 
+    private fun parseShiftBounds(shiftTimes: String, referenceInDt: LocalDateTime?): Pair<LocalDateTime, LocalDateTime>? {
+        val m = Regex("(\\d{1,2}):(\\d{2})\\s*[-–—]\\s*(\\d{1,2}):(\\d{2})").find(shiftTimes) ?: return null
+        val sTime = try {
+            LocalTime.of(m.groupValues[1].toInt(), m.groupValues[2].toInt())
+        } catch (_: Exception) {
+            return null
+        }
+        val eTime = try {
+            LocalTime.of(m.groupValues[3].toInt(), m.groupValues[4].toInt())
+        } catch (_: Exception) {
+            return null
+        }
+        val baseDate = referenceInDt?.toLocalDate() ?: LocalDate.now()
+        var startDt = LocalDateTime.of(baseDate, sTime)
+        var endDt = LocalDateTime.of(if (eTime.isBefore(sTime)) baseDate.plusDays(1) else baseDate, eTime)
+        val now = LocalDateTime.now()
+        // Jos yövuoro alkoi eilen ja päättyy tänä aamuna
+        if (referenceInDt == null && eTime.isBefore(sTime) && now.toLocalTime().isBefore(eTime.plusHours(2))) {
+            startDt = startDt.minusDays(1)
+            endDt = endDt.minusDays(1)
+        }
+        return startDt to endDt
+    }
+
+    private fun updateShiftProgressBar(state: StampingPageState, inDt: LocalDateTime?) {
+        val en = DemoModeHelper.isEnglish(context)
+        if (!state.nextDirection.equals("OUT", ignoreCase = true) || state.shiftTimes.isBlank()) {
+            shiftProgressContainer.visibility = View.GONE
+            return
+        }
+        val bounds = parseShiftBounds(state.shiftTimes, inDt)
+        if (bounds == null) {
+            shiftProgressContainer.visibility = View.GONE
+            return
+        }
+        val (shiftStart, shiftEnd) = bounds
+        val totalMins = Duration.between(shiftStart, shiftEnd).toMinutes()
+        if (totalMins <= 0L) {
+            shiftProgressContainer.visibility = View.GONE
+            return
+        }
+        val now = LocalDateTime.now()
+        val elapsedMins = Duration.between(shiftStart, now).toMinutes()
+        val remainingMins = Duration.between(now, shiftEnd).toMinutes()
+        val ratio = (elapsedMins.toFloat() / totalMins.toFloat()).coerceIn(0f, 1f)
+        val pct = (ratio * 100f).toInt().coerceIn(0, 100)
+
+        fun fmtDur(mins: Long): String {
+            val h = mins / 60L
+            val m = mins % 60L
+            return if (en) {
+                if (h > 0L) "${h}h ${m}m" else "${m}m"
+            } else {
+                if (h > 0L) "$h h $m min" else "$m min"
+            }
+        }
+
+        val statusLabel = when {
+            remainingMins > 0L -> {
+                if (en) "Remaining ${fmtDur(remainingMins)} • $pct%" else "Jäljellä ${fmtDur(remainingMins)} • $pct %"
+            }
+            remainingMins == 0L -> {
+                if (en) "Shift complete • 100%" else "Vuoro täynnä • 100 %"
+            }
+            else -> {
+                val over = -remainingMins
+                if (en) "Overtime +${fmtDur(over)}" else "Ylitöillä +${fmtDur(over)}"
+            }
+        }
+        txtShiftRemaining.text = statusLabel
+        val fillColorHex = when {
+            remainingMins < 0L -> "#F59E0B"
+            ratio >= 0.85f -> "#22C55E"
+            else -> "#38BDF8"
+        }
+        shiftProgressFill.background = UiStyleHelper.roundedBg(context, fillColorHex, fillColorHex, 99f, 0)
+
+        val fillWeight = ratio.coerceIn(0.02f, 1f)
+        (shiftProgressFill.layoutParams as LayoutParams).weight = fillWeight
+        (shiftProgressRest.layoutParams as LayoutParams).weight = (1f - fillWeight).coerceAtLeast(0f)
+        shiftProgressTrack.requestLayout()
+        shiftProgressContainer.visibility = View.VISIBLE
+    }
+
     private fun updateWorkingStatusPill() {
         val state = currentState
         if (state == null || !state.nextDirection.equals("OUT", ignoreCase = true)) {
             txtWorkingPill.visibility = View.GONE
+            shiftProgressContainer.visibility = View.GONE
             return
         }
         val en = DemoModeHelper.isEnglish(context)
         val latestIn = state.latestStamps.firstOrNull { it.isIn }
         val inDt = latestIn?.let { parseStampRowDateTime(it) }
         val now = LocalDateTime.now()
+
+        updateShiftProgressBar(state, inDt)
 
         if (inDt != null && !inDt.isAfter(now.plusMinutes(2))) {
             val mins = Duration.between(inDt, now).toMinutes().coerceAtLeast(0L)
@@ -862,6 +1019,7 @@ class NativeStampView(
         stampsListContainer.removeAllViews()
         val en = DemoModeHelper.isEnglish(context)
         val isDemo = DemoModeHelper.isDemoEnabled(context)
+        val dividerColor = Color.parseColor(UiStyleHelper.borderHex(context))
 
         if (rows.isEmpty()) {
             stampsListContainer.addView(
@@ -879,7 +1037,7 @@ class NativeStampView(
             val row = rows[i]
             if (i > 0) {
                 val divider = View(context).apply {
-                    setBackgroundColor(Color.parseColor("#2A394A"))
+                    setBackgroundColor(dividerColor)
                 }
                 stampsListContainer.addView(divider, LayoutParams(LayoutParams.MATCH_PARENT, 1))
             }
@@ -999,6 +1157,8 @@ class NativeStampView(
             val wantIn = !currentlyIn
             recordDemoStamp(wantIn)
             editComment.setText("")
+            ShiftWidgetProvider.updateAllWidgets(context)
+            QuickStampTileService.requestTileUpdate(context)
             val dirLabel = if (en) (if (wantIn) "In" else "Out") else (if (wantIn) "Sisään" else "Ulos")
             Toast.makeText(
                 context,
@@ -1042,6 +1202,8 @@ class NativeStampView(
                         txtStatus.text = UiStyleHelper.formatUpdatedLabel(context, lastSuccessfulStampMs, isCache = false)
                         renderStateIfChanged(it, forceRender = true)
                     }
+                    ShiftWidgetProvider.updateAllWidgets(context)
+                    QuickStampTileService.requestTileUpdate(context)
                     Toast.makeText(
                         context,
                         if (en) "Stamp confirmed ($dirLabel)" else "Leimaus vahvistettu ($dirLabel)",

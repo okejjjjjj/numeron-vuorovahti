@@ -113,14 +113,12 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        window.statusBarColor = Color.parseColor("#0F1722")
-        window.navigationBarColor = Color.parseColor("#0F1722")
         androidx.core.view.WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
         }
         val contentFrame = findViewById<ViewGroup>(android.R.id.content)
-        contentFrame.setBackgroundColor(Color.parseColor("#0F1722"))
+        applyAppThemeColors()
         val activityRoot = contentFrame.getChildAt(0)
         if (activityRoot != null) {
             androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(activityRoot) { v, windowInsets ->
@@ -377,6 +375,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun applyAppThemeColors() {
+        val bg = Color.parseColor(UiStyleHelper.bgHex(this))
+        val bar = Color.parseColor(UiStyleHelper.barHex(this))
+        val divider = Color.parseColor(UiStyleHelper.borderHex(this))
+        val card = Color.parseColor(UiStyleHelper.cardHex(this))
+
+        window.statusBarColor = bg
+        window.navigationBarColor = bar
+        findViewById<ViewGroup>(android.R.id.content)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.activityRoot)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.contentContainer)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.webViewHost)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.webViewSlot)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.webOverlayHeader)?.setBackgroundColor(card)
+        findViewById<View>(R.id.nativeStampContainer)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.nativeShiftsContainer)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.nativeRequestsContainer)?.setBackgroundColor(bg)
+        findViewById<View>(R.id.bottomNavDivider)?.setBackgroundColor(divider)
+        findViewById<View>(R.id.bottomNavBar)?.setBackgroundColor(bar)
+        nativeStampView?.applyThemeColors()
+        nativeShiftsView?.applyThemeColors()
+        nativeRequestsView?.applyThemeColors()
+    }
+
+    private fun animateTabReveal(target: View) {
+        target.animate().cancel()
+        target.alpha = 0.25f
+        target.visibility = View.VISIBLE
+        target.animate()
+            .alpha(1f)
+            .setDuration(120L)
+            .start()
+    }
+
     private fun getBaseUrl(): String {
         return UrlNormalizer.getSavedBaseUrl(this)
     }
@@ -569,9 +601,10 @@ class MainActivity : AppCompatActivity() {
 
         when (tab) {
             Tab.STAMP -> {
+                val wasVisible = nativeStampContainer.visibility == View.VISIBLE
                 nativeShiftsContainer.visibility = View.GONE
                 nativeRequestsContainer.visibility = View.GONE
-                nativeStampContainer.visibility = View.VISIBLE
+                if (!wasVisible) animateTabReveal(nativeStampContainer) else nativeStampContainer.visibility = View.VISIBLE
                 val stampView = ensureNativeStampView()
                 if (pendingAction == Action.STAMP_IN || pendingAction == Action.STAMP_OUT) {
                     val wantIn = (pendingAction == Action.STAMP_IN)
@@ -584,15 +617,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             Tab.SHIFTS -> {
+                val wasVisible = nativeShiftsContainer.visibility == View.VISIBLE
                 nativeStampContainer.visibility = View.GONE
                 nativeRequestsContainer.visibility = View.GONE
-                nativeShiftsContainer.visibility = View.VISIBLE
+                if (!wasVisible) animateTabReveal(nativeShiftsContainer) else nativeShiftsContainer.visibility = View.VISIBLE
                 ensureNativeShiftsView().onShow(forceNetwork = false)
             }
             Tab.REQUESTS -> {
+                val wasVisible = nativeRequestsContainer.visibility == View.VISIBLE
                 nativeStampContainer.visibility = View.GONE
                 nativeShiftsContainer.visibility = View.GONE
-                nativeRequestsContainer.visibility = View.VISIBLE
+                if (!wasVisible) animateTabReveal(nativeRequestsContainer) else nativeRequestsContainer.visibility = View.VISIBLE
                 ensureNativeRequestsView().onShow(forceNetwork = false)
             }
         }
@@ -622,8 +657,11 @@ class MainActivity : AppCompatActivity() {
                 onManageChanges = { CalendarChangeTracker.showManageChangesDialog(this) },
                 onTestNotification = { triggerTestReminderNotification() },
                 onSaved = {
+                    applyAppThemeColors()
                     CalendarSyncHelper.scheduleShiftReminders(this)
                     ShiftReminderReceiver.ensureBackgroundSyncScheduled(this)
+                    ShiftWidgetProvider.updateAllWidgets(this)
+                    QuickStampTileService.requestTileUpdate(this)
                     navigateToTab(currentTab)
                 }
             )
@@ -668,9 +706,17 @@ class MainActivity : AppCompatActivity() {
             if (btn == activeBtn) {
                 btn.setBackgroundResource(R.drawable.nav_btn_active)
                 btn.setTextColor(0xFFFFFFFF.toInt())
+                androidx.core.widget.TextViewCompat.setCompoundDrawableTintList(
+                    btn,
+                    ColorStateList.valueOf(Color.parseColor("#38BDF8"))
+                )
             } else {
                 btn.setBackgroundResource(R.drawable.nav_btn_inactive)
-                btn.setTextColor(0xFFE0E6ED.toInt())
+                btn.setTextColor(Color.parseColor("#CBD5E1"))
+                androidx.core.widget.TextViewCompat.setCompoundDrawableTintList(
+                    btn,
+                    ColorStateList.valueOf(Color.parseColor("#94A3B8"))
+                )
             }
         }
     }
