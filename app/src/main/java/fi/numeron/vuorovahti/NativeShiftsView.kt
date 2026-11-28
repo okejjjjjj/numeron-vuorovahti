@@ -741,20 +741,20 @@ class NativeShiftsView(
             }
             summaryBox.addView(
                 TextView(context).apply {
-                    text = "$hoursStr h  •  ${stats.shiftCount} $word"
+                    text = "${stats.shiftCount} $word  •  $hoursStr h"
                     setTextColor(Color.WHITE)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
                     setTypeface(null, Typeface.BOLD)
                 }
             )
             val parts = mutableListOf<String>()
-            if (stats.morningCount > 0) parts.add(if (en) "${stats.morningCount} morning" else "${stats.morningCount} aamua")
-            if (stats.eveningCount > 0) parts.add(if (en) "${stats.eveningCount} evening" else "${stats.eveningCount} iltaa")
-            if (stats.nightCount > 0) parts.add(if (en) "${stats.nightCount} night" else "${stats.nightCount} yötä")
+            if (stats.morningCount > 0) parts.add(if (en) "${stats.morningCount} morn" else "${stats.morningCount} aamu")
+            if (stats.eveningCount > 0) parts.add(if (en) "${stats.eveningCount} eve" else "${stats.eveningCount} ilta")
+            if (stats.nightCount > 0) parts.add(if (en) "${stats.nightCount} night" else "${stats.nightCount} yö")
             if (parts.isNotEmpty()) {
                 summaryBox.addView(
                     TextView(context).apply {
-                        text = parts.joinToString(" • ")
+                        text = parts.joinToString(" / ")
                         setTextColor(Color.parseColor("#CBD5E1"))
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
                         setPadding(0, dp(4), 0, 0)
@@ -927,18 +927,30 @@ class NativeShiftsView(
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                     setTypeface(null, if (isPeriodStartRow) Typeface.BOLD else Typeface.NORMAL)
                 }
-                periodBar.addView(pTv, LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
+                periodBar.addView(pTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
 
                 if (pStats.shiftCount > 0) {
                     val pHours = ScheduleShareHelper.formatHours(pStats.totalMinutes, en)
                     val unitShort = if (en) "sh" else "v"
+                    val pBreakdownParts = mutableListOf<String>()
+                    if (pStats.morningCount > 0) pBreakdownParts.add(if (en) "${pStats.morningCount} morn" else "${pStats.morningCount} aamu")
+                    if (pStats.eveningCount > 0) pBreakdownParts.add(if (en) "${pStats.eveningCount} eve" else "${pStats.eveningCount} ilta")
+                    if (pStats.nightCount > 0) pBreakdownParts.add(if (en) "${pStats.nightCount} night" else "${pStats.nightCount} yö")
+                    val pBreakdownSuffix = if (pBreakdownParts.isNotEmpty()) " • ${pBreakdownParts.joinToString(" / ")}" else ""
+
                     val hTv = TextView(context).apply {
-                        text = "$pHours h • ${pStats.shiftCount} $unitShort"
+                        text = "${pStats.shiftCount} $unitShort • $pHours h$pBreakdownSuffix"
+                        gravity = Gravity.END
                         setTextColor(Color.parseColor(if (isPeriodStartRow) "#E2E8F0" else "#94A3B8"))
-                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                         setTypeface(null, Typeface.BOLD)
                     }
-                    periodBar.addView(hTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
+                    periodBar.addView(
+                        hTv,
+                        LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
+                            marginStart = dp(6)
+                        }
+                    )
                 }
                 gridContainer.addView(periodBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
             }
