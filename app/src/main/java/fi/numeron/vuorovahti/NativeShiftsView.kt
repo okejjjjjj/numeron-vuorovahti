@@ -57,7 +57,7 @@ class NativeShiftsView(
     private var lastSessionEpoch: Long = -1L
     private var lastRenderedRenderKey: String? = null
     private var lastRenderedData: MonthDisplayData? = null
-    private var lastRenderedAdjacentSize: Int = -1
+    private var lastRenderedAdjacentMap: Map<LocalDate, CalendarDisplayDay>? = null
     private val memoryMonths = LinkedHashMap<YearMonth, Pair<MonthDisplayData, Long>>()
 
     private var swipeDownX: Float = 0f
@@ -398,13 +398,13 @@ class NativeShiftsView(
     private fun renderCalendarGridIfChanged(forceRender: Boolean = false) {
         val key = buildRenderKey()
         val data = currentData
-        val adjSize = adjacentDayMap.size
-        if (!forceRender && key == lastRenderedRenderKey && data == lastRenderedData && adjSize == lastRenderedAdjacentSize) {
+        val adj = adjacentDayMap
+        if (!forceRender && key == lastRenderedRenderKey && data == lastRenderedData && adj == lastRenderedAdjacentMap) {
             return
         }
         lastRenderedRenderKey = key
         lastRenderedData = data
-        lastRenderedAdjacentSize = adjSize
+        lastRenderedAdjacentMap = adj
         renderCalendarGrid()
     }
 
@@ -421,44 +421,46 @@ class NativeShiftsView(
         if (DemoModeHelper.isDemoEnabled(context)) return
         val baseUrl = UrlNormalizer.getSavedBaseUrl(context)
         if (baseUrl.isBlank()) return
-        val nextYm = baseYm.plusMonths(1)
+
         val nowMs = System.currentTimeMillis()
-        val existingMem = memoryMonths[nextYm]
-        if (existingMem != null && (nowMs - existingMem.second) < 5L * 60_000L) return
+        val targets = listOf(baseYm.plusMonths(1), baseYm.minusMonths(1)).filter { targetYm ->
+            val existingMem = memoryMonths[targetYm]
+            existingMem == null || (nowMs - existingMem.second) >= 5L * 60_000L
+        }
+        if (targets.isEmpty()) return
 
         prefetchJob?.cancel()
         prefetchJob = scope.launch {
-            val diskAgeOk = withContext(Dispatchers.IO) {
-                val savedMs = NumeronApiClient.getMonthCacheSavedAtMs(context, nextYm.year, nextYm.monthValue)
-                if (savedMs > 0L && (System.currentTimeMillis() - savedMs) < 10L * 60_000L) {
-                    val diskData = NumeronApiClient.loadMonthDisplayCache(context, nextYm.year, nextYm.monthValue)
-                    diskData to savedMs
-                } else {
-                    null
+            var anyUpdated = false
+            for (targetYm in targets) {
+                val diskAgeOk = withContext(Dispatchers.IO) {
+                    val savedMs = NumeronApiClient.getMonthCacheSavedAtMs(context, targetYm.year, targetYm.monthValue)
+                    if (savedMs > 0L && (System.currentTimeMillis() - savedMs) < 10L * 60_000L) {
+                        val diskData = NumeronApiClient.loadMonthDisplayCache(context, targetYm.year, targetYm.monthValue)
+                        diskData to savedMs
+                    } else {
+                        null
+                    }
                 }
-            }
-            if (diskAgeOk != null && diskAgeOk.first != null) {
-                storeMemoryMonth(nextYm, diskAgeOk.first!!, diskAgeOk.second)
-                if (displayedMonth == baseYm) {
-                    val adjPair = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
-                    adjacentDayMap = adjPair.first
-                    adjacentLoadedMonths = adjPair.second
-                    renderCalendarGridIfChanged()
+                if (diskAgeOk != null && diskAgeOk.first != null) {
+                    storeMemoryMonth(targetYm, diskAgeOk.first!!, diskAgeOk.second)
+                    anyUpdated = true
+                    continue
                 }
-                return@launch
-            }
 
-            val html = NumeronApiClient.fetchMonthCalendarHtml(context, nextYm.year, nextYm.monthValue)
-                ?: return@launch
-            val parsed = withContext(Dispatchers.Default) {
-                NumeronParser.parseMonthForDisplay(html)
-            } ?: return@launch
-            withContext(Dispatchers.IO) {
-                NumeronApiClient.saveMonthDisplayCache(context, parsed)
-                PeriodBalanceManager.recordMonthSnapshot(context, parsed)
+                val html = NumeronApiClient.fetchMonthCalendarHtml(context, targetYm.year, targetYm.monthValue)
+                    ?: continue
+                val parsed = withContext(Dispatchers.Default) {
+                    NumeronParser.parseMonthForDisplay(html)
+                } ?: continue
+                withContext(Dispatchers.IO) {
+                    NumeronApiClient.saveMonthDisplayCache(context, parsed)
+                    PeriodBalanceManager.recordMonthSnapshot(context, parsed)
+                }
+                storeMemoryMonth(targetYm, parsed, System.currentTimeMillis())
+                anyUpdated = true
             }
-            storeMemoryMonth(nextYm, parsed, System.currentTimeMillis())
-            if (displayedMonth == baseYm) {
+            if (anyUpdated && displayedMonth == baseYm) {
                 val adjPair = withContext(Dispatchers.IO) { loadAdjacentMonthsCacheSync(baseYm) }
                 adjacentDayMap = adjPair.first
                 adjacentLoadedMonths = adjPair.second
@@ -1019,7 +1021,6 @@ class NativeShiftsView(
         val en = DemoModeHelper.isEnglish(context)
         val ym = displayedMonth
         val today = LocalDate.now()
-        val dayMap = currentData?.days.orEmpty()
         val combinedMap = buildCombinedDayMap()
 
         val prefs = context.getSharedPreferences("NumeronPrefs", Context.MODE_PRIVATE)
@@ -1228,19 +1229,20 @@ class NativeShiftsView(
             for (offset in 0..6) {
                 val date = weekStart.plusDays(offset.toLong())
                 val isCurrentMonth = (date.monthValue == ym.monthValue && date.year == ym.year)
+                val contentAlpha = if (isCurrentMonth) 1f else 0.45f
                 val isToday = (date == today)
                 val isPast = date.isBefore(today)
                 val isWeekend = (offset == 5 || offset == 6)
-                val holidayName = if (showHolidays && isCurrentMonth) FinnishHolidays.getHolidayName(date, en) else null
-                val dayData = dayMap[date]
-                val dayBalance = if (isCurrentMonth) periodBalance?.dayDetails?.get(date) else null
+                val holidayName = if (showHolidays) FinnishHolidays.getHolidayName(date, en) else null
+                val dayData = combinedMap[date]
+                val dayBalance = periodBalance?.dayDetails?.get(date)
                 if (isCurrentMonth && periodBalance != null) {
                     monthHasTrackedBalance = true
                     if (dayBalance != null) {
                         monthBalanceDiff += dayBalance.diffMinutes
                     }
                 }
-                val shortRestMins = if (showShortRest && isCurrentMonth) computeShortRestMinutes(date, combinedMap) else null
+                val shortRestMins = if (showShortRest) computeShortRestMinutes(date, combinedMap) else null
 
                 if (isCurrentMonth && dayData != null) {
                     for (shift in dayData.shifts) {
@@ -1272,16 +1274,10 @@ class NativeShiftsView(
 
                 val cell = LinearLayout(context).apply {
                     orientation = VERTICAL
-                    background = if (isCurrentMonth) {
-                        UiStyleHelper.rippleCellBg(context, cellBgColor, cellBorderColor)
-                    } else {
-                        UiStyleHelper.cellBg(context, cellBgColor, cellBorderColor)
-                    }
+                    background = UiStyleHelper.rippleCellBg(context, cellBgColor, cellBorderColor)
                     setPadding(dp(2), dp(2), dp(2), dp(3))
                     minimumHeight = dp(72)
-                    if (isCurrentMonth) {
-                        setOnClickListener { showDayDetailsDialog(date, dayData, holidayName, shortRestMins, dayBalance) }
-                    }
+                    setOnClickListener { showDayDetailsDialog(date, dayData, holidayName, shortRestMins, dayBalance) }
                 }
 
                 // Päivänumero + lyhyt lepoaika -merkki + kommenttipallukka
@@ -1293,6 +1289,8 @@ class NativeShiftsView(
                     text = date.dayOfMonth.toString()
                     setTextColor(
                         when {
+                            !isCurrentMonth && holidayName != null -> Color.parseColor("#8C4A52")
+                            !isCurrentMonth && isWeekend -> Color.parseColor("#556B85")
                             !isCurrentMonth -> Color.parseColor("#64748B")
                             isToday -> Color.parseColor("#38BDF8")
                             holidayName != null -> Color.parseColor("#F87171")
@@ -1312,6 +1310,7 @@ class NativeShiftsView(
                         setTextColor(Color.parseColor("#FBBF24"))
                         setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
                         setPadding(0, 0, dp(2), 0)
+                        alpha = contentAlpha
                     }
                     topRow.addView(warnTv, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
                 }
@@ -1322,6 +1321,7 @@ class NativeShiftsView(
                             shape = GradientDrawable.OVAL
                             setColor(Color.parseColor("#F59E0B"))
                         }
+                        alpha = contentAlpha
                     }
                     topRow.addView(
                         dot,
@@ -1342,15 +1342,16 @@ class NativeShiftsView(
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.END
                         setPadding(dp(2), 0, dp(1), dp(1))
+                        alpha = contentAlpha
                     }
                     cell.addView(holTv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
                 }
 
-                // Poissaolot (yhtenäiset lomapalkit peräkkäisille päiville)
+                // Poissaolot (yhtenäiset lomapalkit peräkkäisille päiville myös kuukausirajan yli)
                 val prevDate = date.minusDays(1)
                 val nextDate = date.plusDays(1)
-                val prevAbsences = if (offset > 0) dayMap[prevDate]?.absences.orEmpty() else emptyList()
-                val nextAbsences = if (offset < 6) dayMap[nextDate]?.absences.orEmpty() else emptyList()
+                val prevAbsences = if (offset > 0) combinedMap[prevDate]?.absences.orEmpty() else emptyList()
+                val nextAbsences = if (offset < 6) combinedMap[nextDate]?.absences.orEmpty() else emptyList()
 
                 dayData?.absences?.forEach { absItem ->
                     if (absItem.kind == "sick" &&
@@ -1363,6 +1364,7 @@ class NativeShiftsView(
                             gravity = Gravity.CENTER
                             background = UiStyleHelper.roundedBg(context, "#991B1B", "#F87171", 4f)
                             setPadding(dp(2), dp(2), dp(2), dp(2))
+                            alpha = contentAlpha
                         }
                         sickBox.addView(
                             TextView(context).apply {
@@ -1416,6 +1418,7 @@ class NativeShiftsView(
                                 cornerRadii = floatArrayOf(rL, rL, rR, rR, rR, rR, rL, rL)
                             }
                             setPadding(if (connectedLeft) 0 else dp(3), dp(1), if (connectedRight) 0 else dp(3), dp(1))
+                            alpha = contentAlpha
                         }
                         cell.addView(
                             badge,
@@ -1426,7 +1429,7 @@ class NativeShiftsView(
                     }
                 }
 
-                // Työvuorot asetusten värikoodeilla
+                // Työvuorot asetusten värikoodeilla (muun kuukauden päivät himmennettynä)
                 dayData?.shifts?.forEach { shift ->
                     val bgRgb = pickShiftRgb(shift, morningRgb, eveningRgb, nightRgb)
                     val fgColor = contrastColor(bgRgb)
@@ -1444,6 +1447,7 @@ class NativeShiftsView(
                             setColor(bgRgb)
                         }
                         setPadding(dp(2), dp(2), dp(2), dp(2))
+                        alpha = contentAlpha
                     }
                     cell.addView(
                         badge,
@@ -1464,6 +1468,7 @@ class NativeShiftsView(
                         ellipsize = TextUtils.TruncateAt.END
                         background = UiStyleHelper.roundedBg(context, "#2E1F47", "#8B5CF6", 4f)
                         setPadding(dp(3), dp(1), dp(3), dp(1))
+                        alpha = contentAlpha
                     }
                     cell.addView(
                         badge,
