@@ -232,6 +232,12 @@ class NativeStampView(
         }
         stampCard.addView(btnPunch, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        optionsContainer = LinearLayout(context).apply {
+            orientation = VERTICAL
+            visibility = View.GONE
+            setPadding(0, dp(8), 0, dp(2))
+        }
+
         // Kompakti syykoodi + lisätieto -avausrivi
         btnOptionsToggle = Button(context).apply {
             isAllCaps = false
@@ -254,12 +260,6 @@ class NativeStampView(
                 topMargin = dp(10)
             }
         )
-
-        optionsContainer = LinearLayout(context).apply {
-            orientation = VERTICAL
-            visibility = View.GONE
-            setPadding(0, dp(8), 0, dp(2))
-        }
 
         txtReasonLabel = TextView(context).apply {
             setTextColor(Color.parseColor("#CBD5E1"))
